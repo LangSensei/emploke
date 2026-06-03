@@ -1,5 +1,5 @@
 /**
- * File-based task brief + details contract — see issue #109.
+ * File-based task brief + details contract.
  *
  * The Task layer materializes the user-supplied `brief` (+ optional
  * `details`) to a file inside the task workdir (`TASK.md`) and creates
@@ -12,10 +12,10 @@
  * statement separator. Any user-supplied LF in the spawn argv would
  * truncate the copilot CLI's argument list, dropping
  * `--output-format json`, `--session-id`, `--allow-all` etc., causing
- * silent task degradation (Bug A in #109). Moving user bytes out of
- * argv eliminates that class of bug entirely — the framing prompt
- * is a fixed single-line ASCII string we author ourselves, so there
- * are no user-controlled bytes in argv ever.
+ * silent task degradation. Moving user bytes out of argv eliminates
+ * that class of bug entirely — the framing prompt is a fixed
+ * single-line ASCII string we author ourselves, so there are no
+ * user-controlled bytes in argv ever.
  *
  * The runtime layer remains unchanged: it still receives `prompt` as
  * a single argv element via {@link import("@emploke/runtime").LaunchHeadlessOpts}.
@@ -58,9 +58,10 @@ export function assertFramingPromptIsSafe(s: string): void {
 }
 
 // Startup-time invariant: prevents a future maintainer from
-// accidentally reintroducing Bug A by editing the constant to span
-// multiple lines. Fires at module-import time so the failure is
-// loud and the test suite catches it on every run.
+// accidentally introducing an unsafe framing prompt by editing the
+// constant to span multiple lines or include non-ASCII bytes. Fires
+// at module-import time so the failure is loud and the test suite
+// catches it on every run.
 assertFramingPromptIsSafe(TASK_FRAMING_PROMPT_COPILOT);
 
 /**

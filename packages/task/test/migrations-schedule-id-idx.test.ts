@@ -1,10 +1,9 @@
 /**
- * PR 1 of #61: the `tasks_schedule_id_idx` functional index must
- * exist on a freshly-migrated database. This is the on-disk
- * counterpart to the `MIGRATIONS` array — the inventory test only
- * proves the SQL text round-trips into `migrations.ts`; this test
- * proves the SQL actually runs and the index is queryable via
- * SQLite's catalog.
+ * The `tasks_schedule_id_idx` functional index must exist on a
+ * freshly-migrated database. This is the on-disk counterpart to the
+ * `MIGRATIONS` array — the inventory test only proves the SQL text
+ * round-trips into `migrations.ts`; this test proves the SQL
+ * actually runs and the index is queryable via SQLite's catalog.
  */
 
 import { describe, expect, it } from "vitest";

@@ -2,14 +2,16 @@
  * Port interfaces consumed by @emploke/task. Defined here (not imported
  * from the catalog package) so this package depends on catalog only by
  * structural typing — any object satisfying these shapes works. Mirrors
- * the established pattern in @emploke/runtime (cf. runtime/src/types.ts:1-15).
+ * the established pattern in @emploke/runtime.
  *
  * Catalog's CatalogService, AgentResolveResult, BlockedReason,
  * etc. satisfy these interfaces structurally; passing catalog values
  * through type-checks without any adapter layer.
  *
  * Not-found discrimination is via `null` return from `getAgentEntry`,
- * NEVER via `instanceof CatalogAgentNotFoundError`. See README / Decision #9.
+ * NEVER via a typed `instanceof CatalogAgentNotFoundError` check.
+ * The port deliberately exposes no error class — any error thrown
+ * by `resolveAgent` is treated as a 500 by `resolveDispatchAgent`.
  */
 
 import type { ResolvedAgent } from "@emploke/runtime";

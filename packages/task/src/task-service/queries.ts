@@ -34,9 +34,9 @@ export async function listTasks(
     return d !== 0 ? d : b.id.localeCompare(a.id);
   });
 
-  // Per ADR-002: list() no longer fans out one runtime.readMetadata
-  // call per row — at workspace scale that saturated the libuv pool
-  // and serialised purge fs.rm. `lastActiveAtRuntime` enrichment
+  // Runtime metadata enrichment fans out one runtime.readMetadata
+  // call per row, which at workspace scale saturated the libuv pool
+  // and serialised purge fs.rm; `lastActiveAtRuntime` enrichment
   // now lives on `get()` and only fires when status==='running'.
   return tasks;
 }
@@ -58,9 +58,9 @@ export async function getTask(ctx: TaskServiceCtx, id: string): Promise<TaskEnti
   assertValidTaskId(id);
   const task = await ctx.repository.read(id);
   if (task === null) return null;
-  // ADR-002: only running tasks have a meaningful
-  // `lastActiveAtRuntime`. For terminal tasks the runtime state
-  // dir may already be gone (purge runs in background).
+  // Only running tasks have a meaningful `lastActiveAtRuntime`. For
+  // terminal tasks the runtime state dir may already be gone (purge
+  // runs in background).
   if (task.status !== "running") return task;
   return enrichWithRuntimeMetadata(ctx, task);
 }
@@ -122,10 +122,9 @@ export async function resolveArtifactPath(
  * implement `readMetadata`, returns null, or throws (warn-logged).
  *
  * Legacy `metadata.title` / `metadata.userTitled` keys are NOT
- * injected here — post-#109 the Copilot-generated session `name`
- * reflects the framing prompt, not the user's task; the
- * `TaskEntity.brief` field is the source of truth for the display
- * label.
+ * injected here — the Copilot-generated session `name` reflects the
+ * framing prompt, not the user's task; the `TaskEntity.brief` field
+ * is the source of truth for the display label.
  */
 async function enrichWithRuntimeMetadata(
   ctx: TaskServiceCtx,

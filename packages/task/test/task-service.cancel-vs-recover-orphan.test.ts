@@ -1,20 +1,18 @@
 /**
- * R-10 / ADR-001 §3.8 #9 — T2 cancel-vs-recover-orphan.
+ * cancel-vs-recover-orphan: pin the workspace-context ordering
+ * invariant that recoverOrphaned() runs to completion before any
+ * cancel(id) call can see a still-running orphan row. Without this
+ * ordering pin, a refactor that lazy-loads `recoverOrphaned()`
+ * could let cancel(id) race the orphan-sweep and produce
+ * inconsistent terminal kinds.
  *
- * Pins workspace-context ordering: recoverOrphaned() runs to
- * completion before any cancel(id) call can see a still-running
- * orphan row. Without this ordering pin, a refactor that lazy-loads
- * `recoverOrphaned()` could let cancel(id) race the orphan-sweep
- * and produce inconsistent terminal kinds.
- *
- * The ADR's wording suggests pinning the route-layer ordering in
- * server/test/, but the actual ordering invariant — "recoverOrphaned
- * completes synchronously before user calls" — is testable at the
- * TaskService layer. We mirror the production sequence (pre-write
- * `running` row → construct manager → await recoverOrphaned() →
- * cancel) and assert that by the time cancel runs, the row is
- * already terminal (failure:orphan), so cancel throws
- * InvalidTransition.
+ * The route-layer counterpart belongs in server tests, but the
+ * actual ordering invariant — "recoverOrphaned completes
+ * synchronously before user calls" — is testable at the TaskService
+ * layer. We mirror the production sequence (pre-write `running` row
+ * → construct manager → await recoverOrphaned() → cancel) and
+ * assert that by the time cancel runs, the row is already terminal
+ * (failure:orphan), so cancel throws InvalidTransition.
  */
 
 import { mkdir } from "node:fs/promises";

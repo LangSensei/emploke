@@ -1,13 +1,11 @@
 /**
- * ADR-001 §3.8 #3 — cancel-orphan.
- *
- * Pre-write a `running` row WITHOUT going through dispatch (so the
- * manager's `live` map has no entry for it), then call cancel(id).
- * The cancel routes through `applyTerminal` with a synthesised
- * orphan-cancel decision so the persisted shape matches the
- * normal-path output. Asserts: status='cancelled',
- * cancellation.kind='orphan', metadata.exitCode=null,
- * metadata.exitSignal=null, plus the operator-visible warn.
+ * cancel-orphan path: pre-write a `running` row WITHOUT going
+ * through dispatch (so the manager's `live` map has no entry for
+ * it), then call cancel(id). The cancel routes through
+ * `applyTerminal` with a synthesised cascade-cancel decision so the
+ * persisted shape matches the normal-path output. Asserts:
+ * status='cancelled', cancellation.kind='cascade', exit code /
+ * signal NOT mirrored into metadata, plus the operator-visible warn.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -56,8 +54,8 @@ describe("TaskService.cancel — orphan path", () => {
       kind: "cascade",
       message: "cancelled (recovered from inconsistent state)",
     });
-    // v4 (issue #119) stopped mirroring exitCode/exitSignal into metadata;
-    // the orphan-cancel synthesises a cancellation payload only.
+    // exit code / signal are no longer mirrored into metadata; the
+    // orphan-cancel synthesises a cancellation payload only.
     expect(cancelled.metadata.exitCode).toBeUndefined();
     expect(cancelled.metadata.exitSignal).toBeUndefined();
 

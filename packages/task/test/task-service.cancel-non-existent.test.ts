@@ -1,8 +1,6 @@
 /**
- * ADR-001 §3.8 #5 — cancel-non-existent.
- *
- * cancel(id) on an id with no persisted row throws TaskNotFoundError.
- * The route layer maps that to 404.
+ * cancel(id) on an id with no persisted row throws
+ * {@link TaskNotFoundError}; the route layer maps that to 404.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

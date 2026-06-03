@@ -4,11 +4,13 @@ import path from "node:path";
 import type {
   AgentContentSource,
   LaunchCommand,
+  LaunchHeadlessOpts,
   ResolvedAgent,
   Runtime,
   RuntimeHandle,
 } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
+import type { Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Controllable rm-failure switch, shared with the node:fs/promises mock
@@ -56,6 +58,7 @@ import {
 import { TaskEntity } from "../src/task-entity.js";
 import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
+import { TERMINAL_TASK_STATUSES } from "../src/types.js";
 
 // ───── filesystem fixture lifecycle ────────────────────────
 
@@ -101,8 +104,9 @@ interface StubResolverOpts {
   /**
    * Map of agent name → blockedReason. When `getAgentEntry` is called
    * for one of these names it returns `status: "blocked"` so dispatch
-   * surfaces `EntryNotReadyError`. Used to test the status guard added
-   * in the issue #57 rework.
+   * surfaces `EntryNotReadyError`. Exercises the resolver-status
+   * guard that classifies blocked agents distinctly from unknown
+   * agents.
    */
   blockedAgents?: Record<string, BlockedReason>;
 }
@@ -189,8 +193,6 @@ class StubRuntime implements Runtime {
     mode: "resolve",
     value: "/tmp/session-default",
   };
-  /** True when dispatch is implemented; flip false to test "doesn't support tasks". */
-  dispatchSupported = true;
 
   /** Auto-fire exit on kill, mirroring real child_process behavior. */
   autoExitOnKill = false;
@@ -201,16 +203,41 @@ class StubRuntime implements Runtime {
   deleteStateError: Error | null = null;
 
   /**
-   * Optional canned response for `readMetadata`. When undefined the
-   * stub omits the `readMetadata` method entirely (mirroring runtimes
-   * that don't expose display metadata). Set to a literal value to
-   * exercise the manager's enrichment path; tests assert that
+   * Optional canned response for `readMetadata`. Read at call time so
+   * tests can mutate it after construction. `undefined` is treated as
+   * "no enrichment available" and returned as null, mirroring runtimes
+   * that don't expose display metadata; tests assert that
    * `metadata.title` / `metadata.userTitled` are NOT injected into
-   * the task even when the runtime supplies them — the task
-   * `brief` field is the source of truth post-#111.
+   * the task even when the runtime supplies them — the task `brief`
+   * field is the source of truth for the display label.
    */
   readMetadataResponse: import("@emploke/runtime").RuntimeSessionMetadata | null | undefined =
     undefined;
+
+  /**
+   * Optional canned response for `readActivity`. Read at call time so
+   * tests can mutate it after construction. `undefined` collapses to
+   * null at the method call.
+   */
+  readActivityResponse: import("@emploke/runtime").ActivityResult | null | undefined = undefined;
+  readActivityError: Error | null = null;
+  readActivityCallCount = 0;
+
+  /**
+   * Optional canned response for `getLastAgentActivity`. When unset,
+   * the method auto-derives the last agent activity from
+   * `readActivityResponse` (same predicate the copilot runtime
+   * applies — last assistant item wins) so existing tests that only
+   * configure `readActivityResponse` keep exercising the
+   * `collectSuccessPayload` path.
+   */
+  getLastAgentActivityResponse: import("@emploke/runtime").AgentActivity | null | undefined =
+    undefined;
+  getLastAgentActivityError: Error | null = null;
+  getLastAgentActivityCallCount = 0;
+
+  /** Per-call invocation counter for list-enrichment-scope assertions. */
+  readMetadataCallCount = 0;
 
   private nextId = 1;
   readonly handles: SpawnedHandle[] = [];
@@ -222,8 +249,67 @@ class StubRuntime implements Runtime {
     subprocessEnv?: NodeJS.ProcessEnv;
   }[] = [];
 
-  constructor(kind = "copilot") {
+  /**
+   * Optional Runtime surfaces — declared as fields so individual
+   * instances can opt out of supplying them. The constructor binds
+   * each one (unless explicitly suppressed) so tests can mutate the
+   * canned-response state at any time and the bound method picks it
+   * up at call time.
+   */
+  launchHeadless?: (opts: LaunchHeadlessOpts) => Promise<RuntimeHandle>;
+  readMetadata?: (
+    runtimeSessionId: string,
+  ) => Promise<import("@emploke/runtime").RuntimeSessionMetadata | null>;
+  readActivity?: (opts: {
+    runtimeSessionId: string;
+    before?: number;
+    after?: number;
+    limit?: number;
+  }) => Promise<import("@emploke/runtime").ActivityResult | null>;
+  getLastAgentActivity?: (
+    runtimeSessionId: string,
+  ) => Promise<import("@emploke/runtime").AgentActivity | null>;
+
+  constructor(kind = "copilot", opts: { withDispatch?: boolean } = {}) {
     this.kind = kind;
+    if (opts.withDispatch !== false) {
+      this.launchHeadless = (o) => this.spawnHandle(o);
+    }
+    this.readMetadata = async () => {
+      this.readMetadataCallCount++;
+      return this.readMetadataResponse ?? null;
+    };
+    this.readActivity = async () => {
+      this.readActivityCallCount++;
+      if (this.readActivityError !== null) {
+        const e = this.readActivityError;
+        throw e;
+      }
+      return this.readActivityResponse ?? null;
+    };
+    this.getLastAgentActivity = async () => {
+      this.getLastAgentActivityCallCount++;
+      if (this.getLastAgentActivityError !== null) {
+        const e = this.getLastAgentActivityError;
+        throw e;
+      }
+      if (this.getLastAgentActivityResponse !== undefined) {
+        return this.getLastAgentActivityResponse;
+      }
+      if (this.readActivityError !== null) {
+        const e = this.readActivityError;
+        throw e;
+      }
+      const result = this.readActivityResponse ?? null;
+      if (result === null) return null;
+      for (let i = result.activity.length - 1; i >= 0; i--) {
+        const item = result.activity[i];
+        if (item !== undefined && item.kind === "assistant") {
+          return { text: item.text, timestamp: item.timestamp };
+        }
+      }
+      return null;
+    };
   }
 
   async provision(): Promise<{ runtimeSessionId: string | null }> {
@@ -242,97 +328,6 @@ class StubRuntime implements Runtime {
       throw e;
     }
   }
-
-  // launchHeadless is set conditionally via Object.defineProperty so we can
-  // model "runtime doesn't implement it" cleanly.
-  get launchHeadless(): Runtime["launchHeadless"] | undefined {
-    if (!this.dispatchSupported) return undefined;
-    return async (opts) => this.spawnHandle(opts);
-  }
-
-  // readMetadata is only exposed when a canned response is configured,
-  // so tests that don't care about enrichment look like runtimes that
-  // simply don't implement the optional surface.
-  get readMetadata(): Runtime["readMetadata"] | undefined {
-    if (this.readMetadataResponse === undefined) return undefined;
-    return async () => {
-      this.readMetadataCallCount++;
-      return this.readMetadataResponse ?? null;
-    };
-  }
-
-  /**
-   * Optional canned response for `readActivity`. When undefined the
-   * stub omits `readActivity` (mirroring runtimes that don't expose
-   * structured activity). Set to an `ActivityResult` literal to
-   * exercise the manager's #181 `applyTerminal` payload assembly.
-   * Per-call invocation counter so #180 tests can assert
-   * "list() never called readActivity".
-   */
-  readActivityResponse: import("@emploke/runtime").ActivityResult | null | undefined = undefined;
-  readActivityError: Error | null = null;
-  readActivityCallCount = 0;
-  get readActivity(): Runtime["readActivity"] | undefined {
-    if (this.readActivityResponse === undefined && this.readActivityError === null)
-      return undefined;
-    return async () => {
-      this.readActivityCallCount++;
-      if (this.readActivityError !== null) {
-        const e = this.readActivityError;
-        throw e;
-      }
-      return this.readActivityResponse ?? null;
-    };
-  }
-
-  /**
-   * Optional canned response for `getLastAgentActivity`. Mirrors the
-   * shape of {@link readActivityResponse}: undefined → method absent
-   * (runtime doesn't implement the surface), null → method present
-   * but no agent activity yet, value → returned as-is.
-   *
-   * When `getLastAgentActivityResponse` is undefined but
-   * `readActivityResponse` is set, this stub auto-derives the agent
-   * activity from the canned activity stream so existing tests that
-   * only configure `readActivityResponse` keep exercising the
-   * `collectSuccessPayload` path.
-   */
-  getLastAgentActivityResponse: import("@emploke/runtime").AgentActivity | null | undefined =
-    undefined;
-  getLastAgentActivityError: Error | null = null;
-  getLastAgentActivityCallCount = 0;
-  get getLastAgentActivity(): Runtime["getLastAgentActivity"] | undefined {
-    const hasExplicit =
-      this.getLastAgentActivityResponse !== undefined || this.getLastAgentActivityError !== null;
-    const hasDerived = this.readActivityResponse !== undefined || this.readActivityError !== null;
-    if (!hasExplicit && !hasDerived) return undefined;
-    return async () => {
-      this.getLastAgentActivityCallCount++;
-      if (this.getLastAgentActivityError !== null) {
-        const e = this.getLastAgentActivityError;
-        throw e;
-      }
-      if (hasExplicit) return this.getLastAgentActivityResponse ?? null;
-      // Auto-derive from the readActivity stream — same predicate the
-      // copilot runtime applies (last assistant item wins).
-      if (this.readActivityError !== null) {
-        const e = this.readActivityError;
-        throw e;
-      }
-      const result = this.readActivityResponse ?? null;
-      if (result === null) return null;
-      for (let i = result.activity.length - 1; i >= 0; i--) {
-        const item = result.activity[i];
-        if (item !== undefined && item.kind === "assistant") {
-          return { text: item.text, timestamp: item.timestamp };
-        }
-      }
-      return null;
-    };
-  }
-
-  /** Per-call invocation counter for #180 assertions. */
-  readMetadataCallCount = 0;
 
   private async spawnHandle(opts: {
     workdir: string;
@@ -449,18 +444,20 @@ const seqRandom = (start = 1) => {
 
 const recorder = () => {
   // Matches pino's API shape: (meta, msg). Hand-rolled rather than
-  // pulled from `pino (was @emploke/logger; pkg folded into consumers)/testing.captureLogger` because these
-  // tests want a synchronous in-memory record (captureLogger goes
-  // through a real pino instance + Writable stream which can race
-  // assertion timing in tight loops).
+  // routed through a real pino instance + Writable stream because
+  // these tests want a synchronous in-memory record (a real stream
+  // can race assertion timing in tight loops).
   const calls: { msg: string; meta?: object }[] = [];
-  return {
-    logger: {
-      warn: (meta: object | string, msg?: string) => {
-        if (typeof meta === "string") calls.push({ msg: meta });
-        else calls.push({ msg: msg ?? "", meta });
-      },
+  // Minimal stub: TaskService only ever calls `warn`. Cast to
+  // `Logger` keeps the type system honest at the makeManager seam.
+  const logger = {
+    warn: (meta: object | string, msg?: string) => {
+      if (typeof meta === "string") calls.push({ msg: meta });
+      else calls.push({ msg: msg ?? "", meta });
     },
+  } as unknown as Logger;
+  return {
+    logger,
     calls,
   };
 };
@@ -483,11 +480,9 @@ const makeManager = async (
     registry?: RuntimeRegistry;
     now?: () => Date;
     randomBytes?: (n: number) => Buffer;
-    logger?: { warn: (meta: object | string, msg?: string) => void };
-    repository?: TaskRepository;
+    logger?: Logger;
     orm?: ReturnType<typeof openTestTaskDb>;
     workspaceId?: string;
-    subprocessEnv?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<{ m: TaskService; repo: TaskRepository; orm: ReturnType<typeof openTestTaskDb> }> => {
   const rt = overrides.runtime ?? new StubRuntime();
@@ -496,10 +491,7 @@ const makeManager = async (
   let repo: TaskRepository;
   if (overrides.orm !== undefined) {
     orm = overrides.orm;
-    repo = overrides.repository ?? new TaskRepository({ db: orm.db });
-  } else if (overrides.repository !== undefined) {
-    // Caller built a custom repo + ORM elsewhere; reuse them.
-    throw new Error("makeManager: pass `orm` alongside `repository`");
+    repo = new TaskRepository({ db: orm.db });
   } else {
     const built = makeRepo();
     orm = built.orm;
@@ -514,9 +506,8 @@ const makeManager = async (
     workspaceId: overrides.workspaceId ?? "default-ws-id",
     now: overrides.now ?? fixedNow("2026-05-08T01:05:00.000Z"),
     randomBytes: overrides.randomBytes ?? seqRandom(),
-    logger: overrides.logger,
+    ...(overrides.logger !== undefined ? { logger: overrides.logger } : {}),
     db: orm.db,
-    ...(overrides.subprocessEnv !== undefined ? { subprocessEnv: overrides.subprocessEnv } : {}),
   });
   return { m, repo, orm };
 };
@@ -540,15 +531,15 @@ describe("dispatch — happy path", () => {
     expect(t.id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
 
     expect(rt.dispatchCalls).toHaveLength(1);
-    // Per issue #109: the user's task body is no longer passed via
-    // the spawn argv — it lives in `<workdir>/TASK.md`. The runtime
-    // receives only the fixed framing prompt.
-    expect(rt.dispatchCalls[0].prompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
+    // The user's task body is no longer passed via the spawn argv —
+    // it lives in `<workdir>/TASK.md`. The runtime receives only the
+    // fixed framing prompt.
+    expect(rt.dispatchCalls[0]!.prompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
 
     const meta = readTaskRuntimeMetadata(t);
     expect(meta.workdir).toBe(path.join(tasksDir, t.id));
     expect(meta.runtime).toBe("copilot");
-    expect(meta.runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
+    expect(meta.runtimeSessionId).toBe(rt.handles[0]!.runtimeSessionId);
 
     // The task row in the repository matches the returned in-memory
     // task. (Replaces the old per-workdir `task.json` round-trip.)
@@ -569,9 +560,9 @@ describe("dispatch — happy path", () => {
   });
 });
 
-// ───── issue #109: file-based brief + details + workdir contract ─────
+// ───── file-based brief + details + workdir contract ─────
 
-describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
+describe("dispatch — TASK.md + workdir contract", () => {
   it("writes <workdir>/TASK.md as `# <brief>\\n` when no details given (UTF-8, no BOM)", async () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
@@ -590,7 +581,8 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
 
     // Multi-line + multi-byte UTF-8 (CJK + emoji) covers two things:
     //   1. LF inside details used to corrupt the spawn argv on
-    //      Windows (Bug A in #109). Now LF is fine in TASK.md.
+    //      Windows because cmd.exe treated LF inside `/c` payloads as
+    //      a statement separator. Now LF is fine in TASK.md.
     //   2. Non-ASCII bytes round-trip cleanly through writeFile.
     const details = "Line one.\nLine two.\n你好 🌳";
     const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "Plant a tree", details }));
@@ -623,8 +615,9 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
 
-    // Details that would have triggered Bug A — embedded LF, would
-    // have truncated the cmd.exe argv on Windows.
+    // Details with an embedded LF — would have truncated the
+    // cmd.exe argv on Windows when the user body was passed
+    // through the spawn argv.
     await m.dispatch(
       dispatchOf({
         agent: "demo",
@@ -634,7 +627,7 @@ describe("dispatch — TASK.md + workdir contract (issue #109)", () => {
     );
 
     expect(rt.dispatchCalls).toHaveLength(1);
-    const sentPrompt = rt.dispatchCalls[0].prompt;
+    const sentPrompt = rt.dispatchCalls[0]!.prompt;
     // Exactly the fixed copilot framing prompt — no user bytes leak in.
     expect(sentPrompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
     expect(sentPrompt.includes("\n")).toBe(false);
@@ -704,7 +697,7 @@ describe("formatTaskMd", () => {
 describe("dispatch — error paths", () => {
   it("wraps a generic resolver Error as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
     // A non-typed resolver failure (DB exploded, parser blew up, etc.)
-    // is a system fault, not a user error. Option II's contract: any
+    // is a system fault, not a user error. The port's contract: any
     // throw from `agentResolver.resolveAgent(...)` is classified as a
     // 500. The not-found path only fires when `getAgentEntry` returns
     // null. Destructive validation for the AgentResolutionFailedError
@@ -729,12 +722,12 @@ describe("dispatch — error paths", () => {
   });
 
   it("throws AgentNotFoundError when getAgentEntry returns null (unknown agent)", async () => {
-    // Option II discrimination: the resolver port reports "unknown"
-    // by returning null from getAgentEntry, NOT by throwing a typed
-    // not-found error. Tests the entry === null check in
-    // agent-resolver.ts. Destructive validation: deleting that check
-    // would let dispatch sail past into resolveAgent and surface a
-    // generic 500 instead of the user-facing 400.
+    // Unknown-agent discrimination: the resolver port reports
+    // "unknown" by returning null from getAgentEntry, NOT by
+    // throwing a typed not-found error. Tests the entry === null
+    // check in agent-resolver.ts. Destructive validation: deleting
+    // that check would let dispatch sail past into resolveAgent and
+    // surface a generic 500 instead of the user-facing 400.
     const { m } = await makeManager({
       agentResolver: stubAgentResolver(),
     });
@@ -756,11 +749,12 @@ describe("dispatch — error paths", () => {
   });
 
   it("wraps a foreign Error (even with name='AgentNotFoundError') from resolveAgent as AgentResolutionFailedError", async () => {
-    // Option II locked: the only signal for "agent does not exist" is
-    // a null return from getAgentEntry. ANY throw from resolveAgent
-    // (including a foreign Error spoofing `.name = 'AgentNotFoundError'`)
-    // is classified as a 500 system fault. This prevents name-spoofed
-    // foreign errors from masquerading as user-facing 400s.
+    // Resolver-throw classification is locked: the only signal for
+    // "agent does not exist" is a null return from getAgentEntry.
+    // ANY throw from resolveAgent (including a foreign Error
+    // spoofing `.name = 'AgentNotFoundError'`) is classified as a
+    // 500 system fault. This prevents name-spoofed foreign errors
+    // from masquerading as user-facing 400s.
     const foreign = new Error("agent not found in schedule package");
     foreign.name = "AgentNotFoundError";
     const { m } = await makeManager({
@@ -778,8 +772,7 @@ describe("dispatch — error paths", () => {
   });
 
   it("RuntimeDoesNotSupportTasksError when chosen runtime omits dispatch", async () => {
-    const rt = new StubRuntime();
-    rt.dispatchSupported = false;
+    const rt = new StubRuntime("copilot", { withDispatch: false });
     const { m } = await makeManager({ runtime: rt });
     await expect(m.dispatch(dispatchOf())).rejects.toBeInstanceOf(RuntimeDoesNotSupportTasksError);
     const entries = await safeReaddir(tasksDir);
@@ -851,12 +844,12 @@ describe("exit watcher", () => {
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
     expect(after.success?.output).toBeNull();
-    // v4 (issue #119) stopped mirroring exitCode/exitSignal into
-    // metadata; the success path has no per-exit telemetry to record.
+    // exit code / signal are never mirrored into metadata; the
+    // success path has no per-exit telemetry to record.
     const meta = readTaskRuntimeMetadata(after);
     expect(meta.exitCode).toBeUndefined();
     expect(meta.exitSignal).toBeUndefined();
@@ -867,7 +860,7 @@ describe("exit watcher", () => {
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: 17, signal: null });
+    void rt.handles[0]!.exit({ code: 17, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("failed");
     expect(after.failure?.kind).toBe("exited");
@@ -883,7 +876,7 @@ describe("exit watcher", () => {
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: null, signal: "SIGTERM" });
+    void rt.handles[0]!.exit({ code: null, signal: "SIGTERM" });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("failed");
     expect(after.failure?.kind).toBe("signal");
@@ -922,9 +915,9 @@ describe("liveCount", () => {
 
     // Drive the exit watcher to terminal and wait for the post-exit
     // persistence (which clears the LiveTask entry) to settle.
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
-    await rt.handles[0].persisted;
+    await rt.handles[0]!.persisted;
     expect(m.liveCount()).toBe(0);
   });
 
@@ -1098,7 +1091,7 @@ describe("get / list", () => {
 
       const onlyGemini = await m.list({ runtime: "gemini" });
       expect(onlyGemini).toHaveLength(1);
-      expect(readTaskRuntimeMetadata(onlyGemini[0]).runtime).toBe("gemini");
+      expect(readTaskRuntimeMetadata(onlyGemini[0]!).runtime).toBe("gemini");
     });
 
     it("filters by createdSince (lexicographic on ISO 8601)", async () => {
@@ -1117,24 +1110,24 @@ describe("get / list", () => {
 
       const recent = await m.list({ createdSince: cutoff });
       expect(recent).toHaveLength(1);
-      expect(recent[0].brief).toBe("new");
+      expect(recent[0]!.brief).toBe("new");
     });
 
-    it("filters by status set (running|success|failure|cancelled|not_started)", async () => {
+    it("filters by status set (running | succeeded | failed | cancelled)", async () => {
       const rt = new StubRuntime();
       const { m } = await makeManager({ runtime: rt });
       const a = await m.dispatch(dispatchOf({ brief: "a" }));
-      void rt.handles[0].exit({ code: 0, signal: null });
+      void rt.handles[0]!.exit({ code: 0, signal: null });
       await awaitTerminal(m, a.id);
       await m.dispatch(dispatchOf({ brief: "b" })); // stays running
 
       const onlyRunning = await m.list({ statuses: ["running"] });
       expect(onlyRunning).toHaveLength(1);
-      expect(onlyRunning[0].brief).toBe("b");
+      expect(onlyRunning[0]!.brief).toBe("b");
 
       const onlySuccess = await m.list({ statuses: ["succeeded"] });
       expect(onlySuccess).toHaveLength(1);
-      expect(onlySuccess[0].brief).toBe("a");
+      expect(onlySuccess[0]!.brief).toBe("a");
 
       const both = await m.list({ statuses: ["running", "succeeded"] });
       expect(both).toHaveLength(2);
@@ -1151,22 +1144,22 @@ describe("get / list", () => {
       await m.dispatch(dispatchOf({ agent: "writer", brief: "w1" }));
       await m.dispatch(dispatchOf({ agent: "reviewer", brief: "r1" }));
       const target = await m.dispatch(dispatchOf({ agent: "writer", brief: "w2" }));
-      void rt.handles[2].exit({ code: 0, signal: null });
+      void rt.handles[2]!.exit({ code: 0, signal: null });
       await awaitTerminal(m, target.id);
 
       const writersDone = await m.list({ agent: "writer", statuses: ["succeeded"] });
       expect(writersDone).toHaveLength(1);
-      expect(writersDone[0].brief).toBe("w2");
+      expect(writersDone[0]!.brief).toBe("w2");
     });
   });
 });
 
-describe("delete (terminal-only post ADR-001)", () => {
+describe("delete (terminal-only)", () => {
   it("default delete removes metadata; workdir preserved", async () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id);
@@ -1181,7 +1174,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id, { purge: true });
@@ -1196,18 +1189,18 @@ describe("delete (terminal-only post ADR-001)", () => {
   });
 
   it("purge: true also returns TaskNotFoundError when the row doesn't exist", async () => {
-    // ADR-001 removed the stat-based escape hatch — a workdir with no
-    // row is no longer wipeable through delete(); sqlite3 CLI is the
-    // recovery channel for that case (§3.5).
+    // delete() has no stat-based escape hatch — a workdir with no
+    // row is not wipeable through delete(); the sqlite3 CLI is the
+    // recovery channel for that case.
     const { m } = await makeManager();
     await expect(m.delete("20260101-deadbeef", { purge: true })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
   });
 
-  // Default mode reads via repository.read which throws CorruptedTaskError;
-  // ADR-001 removed the previous purge-tolerance for corrupted rows,
-  // so both default AND purge propagate the error now.
+  // Default mode reads via repository.read which throws
+  // CorruptedTaskError; there is no purge-tolerance for corrupted
+  // rows, so both default AND purge propagate the error.
   it("propagates CorruptedTaskError (operator sees the corruption)", async () => {
     const { m, orm } = await makeManager({ runtime: new StubRuntime() });
     const id = "20260101-deadbeef";
@@ -1241,7 +1234,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     expect(rt.deleteStateCalls).toEqual([]);
@@ -1249,7 +1242,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     await m._drainPendingPurgesForTest();
 
     expect(rt.deleteStateCalls).toHaveLength(1);
-    expect(rt.deleteStateCalls[0].runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
+    expect(rt.deleteStateCalls[0]!.runtimeSessionId).toBe(rt.handles[0]!.runtimeSessionId);
   });
 
   // Default (archive) mode preserves runtime state — only the row is dropped,
@@ -1259,7 +1252,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id);
@@ -1285,7 +1278,7 @@ describe("delete (terminal-only post ADR-001)", () => {
 
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id, { purge: true });
@@ -1315,7 +1308,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id, { purge: true });
@@ -1333,7 +1326,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const r = recorder();
     const { m } = await makeManager({ runtime: rt, logger: r.logger });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await expect(m.delete(t.id, { purge: true })).resolves.toBeUndefined();
@@ -1351,7 +1344,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     expect(warn).toBeDefined();
     const meta = warn?.meta as { taskId?: string; runtimeSessionId?: string; err?: unknown };
     expect(meta?.taskId).toBe(t.id);
-    expect(meta?.runtimeSessionId).toBe(rt.handles[0].runtimeSessionId);
+    expect(meta?.runtimeSessionId).toBe(rt.handles[0]!.runtimeSessionId);
     expect(meta?.err).toBeInstanceOf(Error);
   });
 
@@ -1361,7 +1354,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const r = recorder();
     const { m } = await makeManager({ runtime: rt, logger: r.logger });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     const rmError = new Error("simulated EBUSY on workdir rm");
@@ -1387,7 +1380,7 @@ describe("delete (terminal-only post ADR-001)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     await m.delete(t.id);
@@ -1431,21 +1424,22 @@ describe("shutdown", () => {
     await m.shutdown();
   });
 
-  // Regression for REV2-T2: a task that exits cleanly with code 0 at the
+  // Regression: a task that self-exits cleanly with code 0 at the
   // same instant shutdown() flips the global flag should NOT be
-  // mis-recorded as `failure: "server shutdown"`. Per-task `killedByUs`
-  // means only tasks we actually killed get the shutdown reason; a task
-  // that beat us to the punch with a clean exit still records `success`.
+  // mis-recorded as `failure: "server shutdown"`. Per-task
+  // `killReason` means only tasks we actually killed get the
+  // shutdown reason; a task that beat us to the punch with a clean
+  // exit still records `success`.
   it("does not misclassify a self-exiting task as 'server shutdown'", async () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
     // Trigger the natural success exit BEFORE invoking shutdown. The
-    // exit watcher's read of killedByUs happens AT exit time and sees
-    // false, so the task records success regardless of what shutdown()
+    // exit watcher's read of killReason happens AT exit time and sees
+    // null, so the task records success regardless of what shutdown()
     // does to other live tasks.
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
 
@@ -1457,11 +1451,11 @@ describe("shutdown", () => {
     expect(final?.failure).toBeUndefined();
   });
 
-  // Regression for REV2-T1: a dispatch that spawns mid-shutdown must
-  // not be left orphaned. The post-spawn `shuttingDown` re-check inside
-  // dispatch() should kill the just-spawned subprocess and roll back
-  // the workdir, surfacing the standard "shutting down" error to the
-  // caller.
+  // Regression: a dispatch that spawns mid-shutdown must not be
+  // left orphaned. The post-spawn `shuttingDown` re-check inside
+  // dispatch() should kill the just-spawned subprocess and roll
+  // back the workdir, surfacing the standard "shutting down" error
+  // to the caller.
   it("dispatch that races with shutdown kills the subprocess and rolls back", async () => {
     const rt = new StubRuntime();
     rt.autoExitOnKill = true;
@@ -1598,7 +1592,7 @@ async function awaitTerminal(m: TaskService, id: string): Promise<TaskEntity> {
   await waitFor(async () => {
     last = await m.get(id);
     if (last === null) return false;
-    return last.status !== "running" && last.status !== "not_started";
+    return (TERMINAL_TASK_STATUSES as readonly string[]).includes(last.status);
   });
   if (last === null) throw new Error(`awaitTerminal: task ${id} not found`);
   return last;
@@ -1606,62 +1600,23 @@ async function awaitTerminal(m: TaskService, id: string): Promise<TaskEntity> {
 
 // ═════ subprocess env injection ═════════════════════════════════
 //
-// Fixes the v0.3.2 footgun where AI-agent harnesses lost their
-// EMPLOKE_WORKSPACE between tool calls because each call ran in a
-// fresh shell. Env injection guarantees every task subprocess and
-// any child it spawns inherits the bag, so `emploke ...` calls made
-// from inside a task automatically know which workspace they belong
-// to without the human/agent having to set anything.
+// Per-task EMPLOKE_* fields plug a real footgun: AI-agent harnesses
+// that spawned fresh shells per tool call used to lose their
+// EMPLOKE_WORKSPACE between calls. Env injection guarantees every
+// task subprocess and any child it spawns inherits the bag, so
+// `emploke ...` calls made from inside a task automatically know
+// which workspace they belong to without the human/agent having to
+// set anything.
 //
-// Concurrency-safety contract (these tests pin it):
-//   1. The base bag passed at construction is shared by reference
-//      across all dispatches; it is NOT mutated by dispatch.
-//   2. Each dispatch builds a FRESH per-task object on top of the
-//      base — never reuses a previous dispatch's object.
-//   3. Per-task fields (EMPLOKE_WORK_ID) are unique per dispatch.
-//   4. Per-workspace fields (EMPLOKE_WORKSPACE, EMPLOKE_WORKSPACE_DIR)
-//      come from the manager's own immutable config.
-//   5. Two managers built for two different workspaces, dispatching
-//      concurrently, must produce disjoint env bags — no leakage.
+// Concurrency-safety contract (this test pins it):
+//   - Each dispatch builds a FRESH per-task env object on top of
+//     whatever cross-cutting env the runtime layered underneath —
+//     never reuses a previous dispatch's object.
+//   - Per-task fields (EMPLOKE_WORK_ID) are unique per dispatch.
+//   - Per-workspace fields (EMPLOKE_WORKSPACE, EMPLOKE_WORKSPACE_DIR)
+//     come from the manager's own immutable config.
 
 describe("dispatch — subprocess env injection", () => {
-  it.skip("threads EMPLOKE_* (env layering moved to runtime; needs runtime-level test)", async () => {
-    const rt = new StubRuntime();
-    const { m } = await makeManager({
-      runtime: rt,
-      workspaceId: "ws-uuid-alpha",
-      subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
-    });
-    const t = await m.dispatch(dispatchOf({ agent: "demo", brief: "go" }));
-
-    expect(rt.dispatchCalls).toHaveLength(1);
-    const env = rt.dispatchCalls[0].subprocessEnv;
-    expect(env).toBeDefined();
-    expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
-    expect(env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
-    // workspaceDir defaults to tasksDir in the test harness.
-    expect(env?.EMPLOKE_WORKSPACE_DIR).toBe(tasksDir);
-    expect(env?.EMPLOKE_WORK_KIND).toBe("task");
-    expect(env?.EMPLOKE_WORK_ID).toBe(t.id);
-    // Per-task workdir lives at <tasksDir>/<id>/ — it's the cwd the
-    // runtime spawns into AND the value an agent should treat as
-    // "my own outputs go here".
-    expect(env?.EMPLOKE_WORK_DIR).toBe(rt.dispatchCalls[0].workdir);
-  });
-
-  it.skip("omits EMPLOKE_WORKSPACE (workspaceId now required)", async () => {
-    const rt = new StubRuntime();
-    const { m } = await makeManager({ runtime: rt });
-    await m.dispatch(dispatchOf({ agent: "demo", brief: "go" }));
-
-    const env = rt.dispatchCalls[0].subprocessEnv;
-    expect(env).toBeDefined();
-    expect("EMPLOKE_WORKSPACE" in (env ?? {})).toBe(false);
-    // Per-task fields are still set even without a workspaceId.
-    expect(env?.EMPLOKE_WORKSPACE_DIR).toBe(tasksDir);
-    expect(env?.EMPLOKE_WORK_ID).toMatch(/^\d{8}-[0-9a-f]{8}$/);
-  });
-
   it("two concurrent dispatches on the same manager get disjoint EMPLOKE_WORK_IDs (no shared bag)", async () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({
@@ -1684,77 +1639,22 @@ describe("dispatch — subprocess env injection", () => {
     }
     // The two env objects are distinct instances — proves we don't
     // reuse a memoised per-manager bag.
-    expect(rt.dispatchCalls[0].subprocessEnv).not.toBe(rt.dispatchCalls[1].subprocessEnv);
-  });
-
-  it.skip("two managers isolated env bags (env layering moved to runtime)", async () => {
-    // Same shared base (mimics what WorkspaceContextRegistry does in
-    // production: one frozen base passed by reference into every
-    // per-workspace manager). Concurrency-safety means workspace A's
-    // dispatch and workspace B's dispatch must NEVER cross-contaminate
-    // — even though they share the base bag by reference.
-    const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
-
-    const rtA = new StubRuntime();
-    const { m: managerA } = await makeManager({
-      runtime: rtA,
-      workspaceId: "ws-A",
-      subprocessEnv: sharedBase,
-    });
-
-    const rtB = new StubRuntime();
-    const { m: managerB } = await makeManager({
-      runtime: rtB,
-      workspaceId: "ws-B",
-      subprocessEnv: sharedBase,
-    });
-
-    await Promise.all([
-      managerA.dispatch(dispatchOf({ agent: "demo", brief: "x" })),
-      managerB.dispatch(dispatchOf({ agent: "demo", brief: "y" })),
-    ]);
-
-    expect(rtA.dispatchCalls[0].subprocessEnv?.EMPLOKE_WORKSPACE).toBe("ws-A");
-    expect(rtB.dispatchCalls[0].subprocessEnv?.EMPLOKE_WORKSPACE).toBe("ws-B");
-    // Frozen base survived without mutation: still has only the
-    // server URL, no workspace fields leaked into it.
-    expect(Object.keys(sharedBase)).toEqual(["EMPLOKE_SERVER"]);
-    // Both dispatches saw the shared base layered correctly.
-    expect(rtA.dispatchCalls[0].subprocessEnv?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
-    expect(rtB.dispatchCalls[0].subprocessEnv?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
-  });
-
-  it.skip("layered fields override base (env layering moved to runtime)", async () => {
-    // Pathological config: base accidentally has a stale workspace
-    // pinned. The manager's own workspaceId must still win — base is
-    // a default, not a hard pin.
-    const rt = new StubRuntime();
-    const { m } = await makeManager({
-      runtime: rt,
-      workspaceId: "real-workspace",
-      subprocessEnv: {
-        EMPLOKE_WORKSPACE: "stale-from-base",
-        EMPLOKE_SERVER: "http://127.0.0.1:8787",
-      },
-    });
-    await m.dispatch(dispatchOf({ agent: "demo", brief: "x" }));
-    const env = rt.dispatchCalls[0].subprocessEnv;
-    expect(env?.EMPLOKE_WORKSPACE).toBe("real-workspace");
-    expect(env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    expect(rt.dispatchCalls[0]!.subprocessEnv).not.toBe(rt.dispatchCalls[1]!.subprocessEnv);
   });
 });
 
-// ───── runtime metadata enrichment (post-#111 cleanup) ─────
+// ───── runtime metadata enrichment ─────
 
 describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", () => {
-  // Post-#111: Copilot's auto-generated session `name` reflects the
-  // framing prompt rather than the user's task, so deriving a task
-  // headline from runtime metadata is actively misleading. The
-  // first-class `TaskEntity.brief` field is now the only source of truth
-  // for the displayed label. The runtime layer's `readMetadata`
-  // surface is preserved (Session still uses it for `preview` via
+  // Copilot's auto-generated session `name` reflects the framing
+  // prompt rather than the user's task, so deriving a task headline
+  // from runtime metadata is actively misleading. The first-class
+  // `TaskEntity.brief` field is the only source of truth for the
+  // displayed label. The runtime layer's `readMetadata` surface is
+  // preserved (Session still uses it for `preview` via
   // `readCopilotWorkspaceYaml`), but the task manager's enrichment
-  // path no longer folds `title` / `userTitled` into the metadata bag.
+  // path no longer folds `title` / `userTitled` into the metadata
+  // bag.
   it("does NOT inject metadata.title even when the runtime supplies one", async () => {
     const rt = new StubRuntime();
     rt.readMetadataResponse = {
@@ -1816,9 +1716,9 @@ describe("enrichWithRuntimeMetadata — title / userTitled removed for tasks", (
   });
 });
 
-// ───── issue #181 — TaskSuccess output + artifacts at terminal time ────
+// ───── TaskSuccess output + artifacts at terminal time ────
 
-describe("applyTerminal succeeded — output + artifacts capture (#181)", () => {
+describe("applyTerminal succeeded — output + artifacts capture", () => {
   // Helper: build an ActivityResult with N items, the last `assistant`
   // text controllable. Mirrors the runtime contract.
   const mkActivity = (items: import("@emploke/runtime").ActivityItem[]) => ({
@@ -1846,7 +1746,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
       ]),
     );
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
     expect(after.success?.output).toBe("hello world");
@@ -1869,7 +1769,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
       fs.writeFile(path.join(meta.workdir as string, TASK_ARTIFACT_SUBDIR, "x.txt"), "x"),
     );
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.success?.output).toBeNull();
     expect(after.success?.artifacts).toHaveLength(1);
@@ -1881,7 +1781,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
     // Distinct from "" (which would mean "the agent explicitly emitted
@@ -1898,7 +1798,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     const { m } = await makeManager({ runtime: rt, logger: r.logger });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
     expect(after.success?.output).toBeNull();
@@ -1917,18 +1817,18 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
       force: true,
     });
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.status).toBe("succeeded");
     expect(after.success?.artifacts).toEqual([]);
   });
 
-  it("output is capped from the tail when assistant text exceeds the cap (head is preserved — regression for iter-2 B2)", async () => {
+  it("output is capped from the tail when assistant text exceeds the cap (head is preserved)", async () => {
     const rt = new StubRuntime();
     // Build a long message whose head is the most informative part —
-    // mirroring real summaries like "Done. PR opened at <url>". The
-    // earlier `slice(-500)` bug would drop this head. The fix's head
-    // cap must preserve it.
+    // mirroring real summaries like "Done. PR opened at <url>". A
+    // tail-preserving slice would drop this head. The head cap must
+    // preserve it.
     const HEAD = "Done. PR opened at **https://github.com/LangSensei/emploke/pull/186**.\n";
     const long = HEAD + "X".repeat(10_000);
     rt.readActivityResponse = mkActivity([
@@ -1937,7 +1837,7 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     const out = after.success?.output ?? "";
     // 1. Head is intact (the original bug's fingerprint).
@@ -1957,15 +1857,15 @@ describe("applyTerminal succeeded — output + artifacts capture (#181)", () => 
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
 
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     const after = await awaitTerminal(m, t.id);
     expect(after.success?.output).toBe(msg);
   });
 });
 
-// ───── issue #180 / ADR-002 — list / get enrichment scoping ────────────
+// ───── list / get enrichment scoping ────────────
 
-describe("list() does NOT call runtime.readMetadata (ADR-002)", () => {
+describe("list() does NOT call runtime.readMetadata", () => {
   it("returns rows verbatim even when readMetadata would throw", async () => {
     const rt = new StubRuntime();
     rt.readMetadataResponse = {
@@ -1987,7 +1887,7 @@ describe("list() does NOT call runtime.readMetadata (ADR-002)", () => {
   });
 });
 
-describe("get() enrichment is scoped to running tasks (ADR-002)", () => {
+describe("get() enrichment is scoped to running tasks", () => {
   it("running task → enrich (readMetadata is called)", async () => {
     const rt = new StubRuntime();
     rt.readMetadataResponse = {
@@ -2013,7 +1913,7 @@ describe("get() enrichment is scoped to running tasks (ADR-002)", () => {
     };
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
     rt.readMetadataCallCount = 0;
     const refreshed = await m.get(t.id);
@@ -2023,7 +1923,7 @@ describe("get() enrichment is scoped to running tasks (ADR-002)", () => {
   });
 });
 
-describe("background purges run serially (ADR-002)", () => {
+describe("background purges run serially", () => {
   it("N concurrent deletes pin at most one runtime.deleteState in flight", async () => {
     const rt = new StubRuntime();
     // Track in-flight deleteState invocations to assert serial execution.
@@ -2045,7 +1945,7 @@ describe("background purges run serially (ADR-002)", () => {
     const ids: string[] = [];
     for (let i = 0; i < 4; i++) {
       const t = await m.dispatch(dispatchOf({ brief: `Task ${i}` }));
-      void rt.handles[i].exit({ code: 0, signal: null });
+      void rt.handles[i]!.exit({ code: 0, signal: null });
       await awaitTerminal(m, t.id);
       ids.push(t.id);
     }
@@ -2058,9 +1958,9 @@ describe("background purges run serially (ADR-002)", () => {
   });
 });
 
-// ───── issue #181 — TaskService.resolveArtifactPath ────────────────────
+// ───── TaskService.resolveArtifactPath ────────────────────
 
-describe("resolveArtifactPath (#181)", () => {
+describe("resolveArtifactPath", () => {
   it("running task → null", async () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
@@ -2077,7 +1977,7 @@ describe("resolveArtifactPath (#181)", () => {
     await import("node:fs/promises").then((fs) =>
       fs.writeFile(path.join(artDir, "report.html"), "<h1/>"),
     );
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
 
     const resolved = await m.resolveArtifactPath(t.id, "report.html");
@@ -2088,7 +1988,7 @@ describe("resolveArtifactPath (#181)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
     expect(await m.resolveArtifactPath(t.id, "not-listed.txt")).toBeNull();
   });
@@ -2097,7 +1997,7 @@ describe("resolveArtifactPath (#181)", () => {
     const rt = new StubRuntime();
     const { m } = await makeManager({ runtime: rt });
     const t = await m.dispatch(dispatchOf());
-    void rt.handles[0].exit({ code: 0, signal: null });
+    void rt.handles[0]!.exit({ code: 0, signal: null });
     await awaitTerminal(m, t.id);
     expect(await m.resolveArtifactPath(t.id, "..")).toBeNull();
     expect(await m.resolveArtifactPath(t.id, ".")).toBeNull();
@@ -2194,7 +2094,7 @@ describe("TaskService.deleteForSchedule (cascade-delete)", () => {
     expect(await m.get(live.id)).not.toBeNull();
 
     // Drain so the test fixture's afterEach doesn't see leaked timers.
-    const handle = rt.handles[rt.handles.length - 1];
+    const handle = rt.handles[rt.handles.length - 1]!;
     void handle.exit({ code: 0, signal: null });
     await awaitTerminal(m, live.id);
   });

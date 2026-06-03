@@ -1,5 +1,5 @@
 /**
- * PR 1 of #61: `TaskService.hasInFlightForSchedule(scheduleId)` is the
+ * `TaskService.hasInFlightForSchedule(scheduleId)` is the
  * concurrency=1 guard the scheduler uses to skip firing while a
  * previous fire of the same schedule is still running, AND the guard
  * the delete-schedule path uses to refuse delete while a fired task

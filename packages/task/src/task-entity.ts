@@ -50,11 +50,11 @@ export interface TaskCreateArgs {
  * `id` is required (the row's primary key); the rest are storage-side
  * fields that {@link Task.fromStored} validates before construction.
  *
- * v4 (issue #119): `startedAt` is required (post-migration every row
- * has a non-null value — new dispatches set it at create time, legacy
- * rows backfill from `createdAt`). The terminal-payload fields
- * (`success` / `failure` / `cancellation`) are typed unions, not flat
- * column tuples.
+ * `startedAt` is required: every persisted row has a non-null value
+ * — new dispatches set it at create time, and legacy rows backfill
+ * from `createdAt`. The terminal-payload fields (`success` /
+ * `failure` / `cancellation`) are typed unions, not flat column
+ * tuples.
  */
 export interface TaskFromStoredArgs {
   readonly id: string;
@@ -92,10 +92,10 @@ export interface TaskTransitionOpts {
  * ## Construction
  *
  * - {@link Task.create} — for new tasks. Mints id + createdAt by
- *   default. Status starts directly at `running` (v4 dropped the
- *   `not_started` placeholder — see {@link TaskStatus}). `startedAt`
- *   is set to `createdAt` at create time so the column can be
- *   `NOT NULL` in the schema.
+ *   default. Status starts directly at `running` (there is no
+ *   intermediate non-terminal state — see {@link TaskStatus}).
+ *   `startedAt` is set to `createdAt` at create time so the column
+ *   can be `NOT NULL` in the schema.
  * - {@link Task.fromStored} — for entities reconstructed from
  *   storage. Validates every field; throws {@link InvalidTaskIdError}
  *   (id syntax) or {@link CorruptedTaskError} (everything else).
@@ -129,10 +129,10 @@ export class TaskEntity {
 
   /**
    * Construct a fresh task in `running` status. `startedAt` is set to
-   * `createdAt` (v4 collapsed the `not_started` placeholder — there
-   * is no intermediate state between dispatch and the subprocess
-   * actually starting). Pure factory aside from the deterministic-
-   * seamed `generateTaskId` and `new Date().toISOString()`.
+   * `createdAt` — there is no intermediate non-terminal state
+   * between dispatch and the subprocess actually starting. Pure
+   * factory aside from the deterministic-seamed `generateTaskId` and
+   * `new Date().toISOString()`.
    */
   static create(args: TaskCreateArgs): TaskEntity {
     const id = args.id ?? generateTaskId();
@@ -361,7 +361,7 @@ export class TaskEntity {
    *
    * Optional fields (`details`, `endedAt`, `success`, `failure`,
    * `cancellation`) are omitted when unset to keep the wire shape
-   * minimal. `startedAt` is non-optional in v4 and always present.
+   * minimal. `startedAt` is non-optional and always present.
    *
    * Exactly one of `success` / `failure` / `cancellation` is present
    * for the matching terminal status; none appear for `running`.

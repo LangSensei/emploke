@@ -184,11 +184,9 @@ export class CorruptedTaskError extends TaskError {
  * the manager has begun shutting down. The HTTP route maps this to
  * **503 Service Unavailable** so callers (CLI, dashboard) can show a
  * one-shot "server is restarting" toast and retry once the new server
- * is up.
- *
- * Previously both `dispatch()` sites threw a bare `Error("…shutting
- * down…")` and fell through to the default 400 mapping; ADR-001
- * promoted this to a typed error so both verbs map cleanly to 503.
+ * is up. Both verbs throw the same typed error so the route layer
+ * maps each cleanly to 503 instead of falling through to a default
+ * 400.
  */
 export class ManagerShuttingDownError extends TaskError {
   override readonly name = "ManagerShuttingDownError";

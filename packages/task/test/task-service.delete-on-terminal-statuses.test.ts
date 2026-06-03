@@ -1,10 +1,8 @@
 /**
- * R-10 / ADR-001 §3.8 #12 — T5 delete-on-terminal-statuses.
- *
- * Positive coverage parallel to delete-requires-terminal's negative
- * coverage: delete a `success` task / a `failure` task / a
- * `cancelled` task — all succeed; row is removed, workdir preserved
- * (archive mode).
+ * delete-on-terminal-statuses (positive coverage parallel to
+ * delete-requires-terminal's negative coverage): delete a `success`
+ * task / a `failure` task / a `cancelled` task — all succeed; row
+ * is removed, workdir preserved (archive mode).
  */
 
 import { stat } from "node:fs/promises";
@@ -38,7 +36,7 @@ async function workdirExists(dir: string): Promise<boolean> {
 describe("TaskService.delete — every terminal status is deletable (archive mode)", () => {
   it("deletes a success task; row gone, workdir preserved", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "ok" });
-    fx.rt.handles[0].resolveExit({ code: 0, signal: null });
+    fx.rt.handles[0]!.resolveExit({ code: 0, signal: null });
     await awaitTerminal(fx.m, t.id);
 
     await fx.m.delete(t.id);
@@ -49,7 +47,7 @@ describe("TaskService.delete — every terminal status is deletable (archive mod
 
   it("deletes a failure task; row gone, workdir preserved", async () => {
     const t = await fx.m.dispatch({ agent: "demo", brief: "nope" });
-    fx.rt.handles[0].resolveExit({ code: 17, signal: null });
+    fx.rt.handles[0]!.resolveExit({ code: 17, signal: null });
     await awaitTerminal(fx.m, t.id);
 
     await fx.m.delete(t.id);

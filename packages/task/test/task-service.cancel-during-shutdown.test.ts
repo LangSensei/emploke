@@ -1,10 +1,9 @@
 /**
- * ADR-001 §3.8 #4 — cancel-during-shutdown.
- *
- * Fire shutdown() and cancel() concurrently for a live task. The
- * outcome is non-deterministic per ADR §3.1: shutdown might flip the
- * `shuttingDown` flag before cancel() takes its check, or cancel
- * might pass the check first. Either outcome is correct as long as:
+ * cancel-during-shutdown: fire shutdown() and cancel() concurrently
+ * for a live task. The outcome is non-deterministic: shutdown might
+ * flip the `shuttingDown` flag before cancel() takes its check, or
+ * cancel might pass the check first. Either outcome is correct as
+ * long as:
  *   - the persisted status is one of {cancelled, failure(kind:shutdown)}
  *   - cancel() either resolves to a cancelled TaskEntity, OR
  *   - cancel() rejects with ManagerShuttingDownError (shutdown won before
@@ -16,7 +15,7 @@
  *     finalised terminal status).
  *
  * Test passes if BOTH the persisted status and the cancel() outcome
- * match one of these ADR-blessed combinations.
+ * match one of these documented combinations.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

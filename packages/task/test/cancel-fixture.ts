@@ -1,11 +1,8 @@
 /**
- * Shared fixture for the cancel + delete-tightening test files.
- *
- * The 10 R-10 + ADR-001 §3.8 test files all need the same harness
- * (in-memory SQLite repo, tmp tasksDir, a runtime stub that lets the
- * test drive exit timing). Rather than copy the harness into each
- * test file, the shared bits live here. File name doesn't end in
- * `.test.ts` so vitest won't run it as a suite.
+ * Shared fixture for the cancel + delete test files — in-memory
+ * SQLite repo, tmp tasksDir, a runtime stub that lets the test drive
+ * exit timing. File name doesn't end in `.test.ts` so vitest won't
+ * run it as a suite.
  */
 
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -14,15 +11,18 @@ import path from "node:path";
 import type {
   AgentContentSource,
   LaunchCommand,
+  LaunchHeadlessOpts,
   ResolvedAgent,
   Runtime,
   RuntimeHandle,
 } from "@emploke/runtime";
 import { RuntimeRegistry } from "@emploke/runtime";
+import type { Logger } from "pino";
 import type { AgentResolverPort } from "../src/index.js";
 import { TaskService } from "../src/index.js";
 import { TaskRepository } from "../src/task-repository.js";
 import { openTestTaskDb } from "../src/testing.js";
+import { TERMINAL_TASK_STATUSES } from "../src/types.js";
 
 /**
  * Records every kill + lets the test drive the exit timing. By
@@ -44,15 +44,13 @@ export class TestRuntime implements Runtime {
   autoExitOnKill = false;
   private nextId = 0;
 
-  async provision(): Promise<{ runtimeSessionId: string | null }> {
-    return { runtimeSessionId: null };
-  }
-  async buildInteractiveLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
-    return { cmd: "stub", args: [], cwd: workdir, display: "stub" };
-  }
+  /** Records every call to deleteState so tests can assert on cleanup. */
+  readonly deleteStateCalls: { runtimeSessionId: string }[] = [];
 
-  get launchHeadless(): Runtime["launchHeadless"] {
-    return async (_opts) => {
+  launchHeadless?: (opts: LaunchHeadlessOpts) => Promise<RuntimeHandle>;
+
+  constructor() {
+    this.launchHeadless = async (_opts) => {
       const id = ++this.nextId;
       let resolveExit!: (info: { code: number | null; signal: NodeJS.Signals | null }) => void;
       const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((res) => {
@@ -80,6 +78,17 @@ export class TestRuntime implements Runtime {
       return handle;
     };
   }
+
+  async provision(): Promise<{ runtimeSessionId: string | null }> {
+    return { runtimeSessionId: null };
+  }
+  async buildInteractiveLaunch(_rsid: string | null, workdir: string): Promise<LaunchCommand> {
+    return { cmd: "stub", args: [], cwd: workdir, display: "stub" };
+  }
+
+  async deleteState(runtimeSessionId: string): Promise<void> {
+    this.deleteStateCalls.push({ runtimeSessionId });
+  }
 }
 
 export interface CancelFixture {
@@ -91,10 +100,7 @@ export interface CancelFixture {
 }
 
 export async function setupCancelFixture(
-  opts: {
-    autoExitOnKill?: boolean;
-    logger?: { warn: (m: object | string, s?: string) => void };
-  } = {},
+  opts: { autoExitOnKill?: boolean; logger?: Logger } = {},
 ): Promise<CancelFixture> {
   const workspaceDir = await mkdtemp(path.join(tmpdir(), "emploke-cancel-fx-"));
   const tasksDir = path.join(workspaceDir, "tasks");
@@ -165,30 +171,31 @@ export function fakeContentSource(): AgentContentSource {
 
 /**
  * Capture pino-shaped warn calls into an in-memory list. Hand-rolled
- * (rather than pino (was @emploke/logger; pkg folded into consumers)'s captureLogger) so assertions don't
- * race the real pino writable stream.
+ * so assertions see synchronous in-memory records without racing
+ * pino's writable stream.
  */
 export function captureLogger(): {
   calls: { msg: string; meta?: object }[];
-  logger: { warn: (m: object | string, s?: string) => void };
+  logger: Logger;
 } {
   const calls: { msg: string; meta?: object }[] = [];
-  return {
-    calls,
-    logger: {
-      warn: (meta: object | string, msg?: string) => {
-        if (typeof meta === "string") calls.push({ msg: meta });
-        else calls.push({ msg: msg ?? "", meta });
-      },
+  // Minimal pino-shape stub: TaskService only ever calls `warn`. The
+  // cast to `Logger` is intentional — implementing the entire pino
+  // surface here would be noise that no test exercises.
+  const logger = {
+    warn: (meta: object | string, msg?: string) => {
+      if (typeof meta === "string") calls.push({ msg: meta });
+      else calls.push({ msg: msg ?? "", meta });
     },
-  };
+  } as unknown as Logger;
+  return { calls, logger };
 }
 
 /** Poll the manager until the task has reached a terminal status. */
 export async function awaitTerminal(m: TaskService, id: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     const t = await m.get(id);
-    if (t !== null && t.status !== "running" && t.status !== "not_started") return;
+    if (t !== null && (TERMINAL_TASK_STATUSES as readonly string[]).includes(t.status)) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error(`awaitTerminal: task ${id} never reached terminal`);

@@ -1,7 +1,7 @@
 {
   "name": "@emploke/task",
   "version": "0.0.1",
-  "description": "Task — pure value type and state machine for emploke",
+  "description": "TaskService for autonomous agent runs - Drizzle-backed task registry, dispatch / cancel / delete lifecycle, runtime-driven exit watcher",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts && node ../../scripts/inline-migrations.mjs"

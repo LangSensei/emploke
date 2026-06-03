@@ -1,12 +1,10 @@
 /**
- * R-10 / ADR-001 §3.8 #11 — T4 cancel-orphan-metadata-shape.
- *
- * Finer-grained shape assertion than the cancel-orphan happy path:
- * the persisted row from the orphan path is byte-for-byte the same
- * structure as the normal path EXCEPT for `cancellation.kind ===
- * 'orphan'`. ADR-001 §3.4 calls this out as the R-4 shape-parity
- * requirement (orphan path routes through applyTerminal so the row
- * shape stays consistent).
+ * cancel-orphan-metadata-shape: finer-grained shape assertion than
+ * cancel-orphan's happy-path test — the persisted row from the
+ * orphan path matches the normal-path row byte-for-byte EXCEPT the
+ * cancellation discriminator. The orphan path routes through
+ * `applyTerminal` so the on-disk shape stays consistent with normal
+ * cancellation, and consumers can rely on a single read shape.
  */
 
 import { mkdir } from "node:fs/promises";
@@ -55,14 +53,16 @@ describe("TaskService.cancel — orphan path shape parity", () => {
     expect(normal.cancellation).toBeDefined();
     expect(orphan.cancellation).toBeDefined();
 
-    // The discriminator is the only deliberate difference. v4 folded
-    // the pre-v4 'orphan' cancellation kind into 'cascade'.
+    // The discriminator is the only deliberate difference: the
+    // orphan-recovery path records its cancellations as 'cascade'
+    // because no caller branches on a distinct orphan-cancellation
+    // kind.
     expect(normal.cancellation?.kind).toBe("user");
     expect(orphan.cancellation?.kind).toBe("cascade");
 
-    // v4 (issue #119): exitCode / exitSignal are no longer mirrored
-    // into metadata for either path — consumers read from the typed
-    // failure payload when relevant (cancellation has no exit info).
+    // exit code / signal are never mirrored into metadata for either
+    // path — consumers read from the typed failure payload when
+    // relevant (cancellation carries no exit info).
     expect("exitCode" in normal.metadata).toBe(false);
     expect("exitCode" in orphan.metadata).toBe(false);
 

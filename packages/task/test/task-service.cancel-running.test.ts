@@ -1,9 +1,7 @@
 /**
- * ADR-001 §3.8 #1 — cancel-running happy path.
- *
- * Dispatch a slow fixture, cancel it, assert the persisted row
- * carries the canonical user-cancellation payload and the timing
- * fields are set.
+ * cancel-running happy path: dispatch a slow fixture, cancel it,
+ * assert the persisted row carries the canonical user-cancellation
+ * payload and the timing fields are set.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,7 +33,7 @@ describe("TaskService.cancel — happy path", () => {
     expect(back?.cancellation).toEqual({ kind: "user", message: "cancelled by user" });
 
     // Subprocess was killed exactly once.
-    expect(fx.rt.handles[0].killed).toBe(true);
-    expect(fx.rt.handles[0].killCount).toBe(1);
+    expect(fx.rt.handles[0]!.killed).toBe(true);
+    expect(fx.rt.handles[0]!.killCount).toBe(1);
   });
 });

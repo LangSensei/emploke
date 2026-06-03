@@ -1,5 +1,5 @@
 /**
- * PR 1 of #61: `ListTaskOpts.scheduleId` filters to tasks whose
+ * `ListTaskOpts.scheduleId` filters to tasks whose
  * `metadata.scheduleId` matches the given value. AND-composes with
  * the other filters — in particular with `origin`, which is the
  * common dashboard combination ("recent fires for this schedule").
