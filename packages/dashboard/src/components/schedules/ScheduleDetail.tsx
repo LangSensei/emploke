@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   getSchedule,
   patchSchedule,
@@ -57,7 +56,6 @@ export function ScheduleDetail({
   onRequestEdit,
   onSelectFire,
 }: ScheduleDetailProps) {
-  const navigate = useNavigate();
   const [detail, setDetail] = useState<ScheduleDetailType | null>(null);
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,19 +136,16 @@ export function ScheduleDetail({
     setBusyAction("run");
     setError(null);
     try {
-      const { dispatchId } = await runSchedule(scheduleId);
+      await runSchedule(scheduleId);
       if (!mounted.current) return;
       setRecentRefresh((n) => n + 1);
-      navigate(
-        `/workspaces/${encodeURIComponent(currentWorkspaceId)}/runtime/tasks?taskId=${encodeURIComponent(dispatchId)}`,
-      );
     } catch (e) {
       if (!mounted.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (mounted.current) setBusyAction(null);
     }
-  }, [detail, busyAction, scheduleId, currentWorkspaceId, navigate]);
+  }, [detail, busyAction, scheduleId]);
 
   if (error && detail === null) {
     return (

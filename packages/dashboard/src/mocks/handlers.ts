@@ -344,11 +344,15 @@ export const handlers = [
   http.post(`/api/workspaces/${W}/schedules/:sid/run`, ({ params }) => {
     const row = schedulesState.find((s) => s.id === params.sid);
     if (!row) return notFound("schedule not found");
-    // Synthesise a freshly-running task so the "Recent fires" panel
-    // (which polls `/scheduled-tasks?scheduleId=…`) surfaces it on
-    // the next refresh, and the dashboard's deep-link navigate to
-    // `/runtime/tasks?taskId=<new>` shows a valid row instead of a
-    // 404 "not found" detail pane.
+    // Synthesise a freshly-running task so:
+    //   1. the "Recent fires" panel (which polls
+    //      `/scheduled-tasks?scheduleId=…`) surfaces it on the
+    //      next refresh triggered by the parent's `refreshToken`
+    //      bump after Run now;
+    //   2. clicking the row swaps the right-pane into Mode B
+    //      (`FireTaskDetailPane`), which fetches the task by id
+    //      and renders it inside the schedules page (no
+    //      cross-page navigation).
     synthFireSeq += 1;
     const dispatchId = `sched-${row.id}-run-${synthFireSeq}`;
     const firedAt = new Date().toISOString();
