@@ -16,7 +16,7 @@ import {
   SessionNotFoundError,
 } from "./errors.js";
 import { safeJoinUnderRoot, sessionsRoot } from "./paths.js";
-import type { AgentResolverPort } from "./ports.js";
+import type { AgentResolverPort, SpawnFn } from "./ports.js";
 import type { SessionEntity } from "./session-entity.js";
 import { SessionRepository } from "./session-repository.js";
 import type {
@@ -26,7 +26,6 @@ import type {
   ListSessionOpts,
   Session,
   SessionServiceConfig,
-  SpawnFn,
   SpawnSessionResult,
 } from "./types.js";
 import { assertValidSessionId, generateSessionId } from "./validate.js";
@@ -44,10 +43,8 @@ const MAX_CREATE_RETRIES = 5;
  * `preview`) is recomputed per call from the runtime registry; workdir
  * paths are resolved from the workspace layout.
  *
- * The manager owns no DDD ceremony: no aggregate factories, no value
- * objects, no domain events, no command/handler indirection. Each
- * method is a plain async function that combines the repository, the
- * runtime adapter, and on-disk workdir operations directly.
+ * Each method is a plain async function that combines the repository,
+ * the runtime adapter, and on-disk workdir operations directly.
  */
 export class SessionService {
   private readonly agentResolver: AgentResolverPort;
@@ -84,11 +81,12 @@ export class SessionService {
       throw new AgentNotFoundError(String(agentName));
     }
 
-    // Option II discrimination: null-check via getAgentEntry first,
-    // generic catch on resolveAgent for system faults. No
-    // `instanceof CatalogAgentNotFoundError` branch. TOCTOU: if the
-    // agent disappears between the two calls the failure surfaces as
-    // AgentResolutionFailedError (500); accepted per Decision #9.
+    // First check existence via `getAgentEntry` (null = not in
+    // catalog → 400 AgentNotFoundError); only then resolve. Any throw
+    // from `resolveAgent` is a system fault (500
+    // AgentResolutionFailedError). If the agent disappears between the
+    // two calls (TOCTOU), the failure surfaces as the 500 path — the
+    // caller sees "resolution failed" rather than "not found".
     const entry = await this.agentResolver.getAgentEntry(agentName);
     if (entry === null) {
       throw new AgentNotFoundError(agentName);
@@ -160,12 +158,11 @@ export class SessionService {
         lastLaunchMode: null,
       };
     } catch (err) {
-      // Roll back in reverse order: workdir, then runtime state.
-      // The earlier shape only removed the workdir, leaking runtime
-      // state if `repo.insert` failed after `runtime.provision`
-      // succeeded (the runtime had already minted a session id and
-      // possibly recorded state under <copilotStateDir>/<id>/). Best
-      // effort — primary error is what the caller cares about.
+      // Roll back in reverse order: remove the workdir, then ask the
+      // runtime to drop whatever state it may have written under
+      // <copilotStateDir>/<runtimeSessionId>/ during provision. Both
+      // steps are best-effort: cleanup failures are logged but the
+      // original error is what propagates to the caller.
       await safeRm(workdir, this.logger);
       if (provisionedRuntimeSessionId !== null) {
         try {
@@ -344,8 +341,7 @@ export class SessionService {
    *     (`NoTerminalFoundError`, `TerminalSpawnFailedError`,
    *     `UnsupportedPlatformError`), the class's stable `name`
    *     property (set as `override readonly name = "..."`) flows
-   *     through unchanged, preserving the wire contract historically
-   *     produced by the api-side `spawnErrorCode` helper.
+   *     through unchanged.
    *
    * Throws (rather than returning `{ ok: false }`) only when no
    * `spawnFn` was supplied at compose time — i.e. misconfiguration
@@ -389,15 +385,12 @@ export class SessionService {
         display: cmd.display,
       };
     } catch (err) {
-      // Error-class mapping uses `err.name` ONLY — no `instanceof`
-      // checks against terminal-pkg classes. This is byte-identical
-      // to the previous api-side `spawnErrorCode` mapping because
-      // the terminal pkg's three error classes set their `name`
-      // property as `override readonly name = "..."` on the class,
-      // so `err.name` returns the same string `instanceof` would
-      // have selected. The name-only path lets `@emploke/session`
-      // honour the architecture fence (no value imports of
-      // `@emploke/terminal`).
+      // Map by `err.name` only — no `instanceof` against terminal-pkg
+      // classes — so this pkg can honour the architecture fence and
+      // avoid value-importing `@emploke/terminal`. The terminal pkg's
+      // error classes all set `override readonly name = "..."`, so
+      // reading `err.name` returns the same stable string an
+      // `instanceof` branch would select.
       return {
         ok: false as const,
         error: err instanceof Error ? err.message : String(err),
@@ -434,17 +427,6 @@ export class SessionService {
     out.EMPLOKE_WORK_ID = sessionId;
     out.EMPLOKE_WORK_DIR = sessionWorkdir;
     return out;
-  }
-
-  // ─── close ───────────────────────────────────────────────
-
-  /**
-   * Released the manager's hold on the ORM. After `close()` the manager
-   * must not be used. ORM lifecycle is owned by the caller — this is a
-   * no-op today, retained for API symmetry with the rest of the pkg.
-   */
-  close(): void {
-    // intentionally empty
   }
 
   // ─── internals ───────────────────────────────────────────
@@ -548,7 +530,3 @@ async function safeRm(p: string, logger: Logger): Promise<void> {
 function defaultRandomBytes(n: number): Buffer {
   return cryptoRandomBytes(n);
 }
-
-// Re-export public sub-utilities for callers that want them.
-export { safeJoinUnderRoot } from "./paths.js";
-export { assertValidSessionId, generateSessionId, SESSION_ID_RE } from "./validate.js";

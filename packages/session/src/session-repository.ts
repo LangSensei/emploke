@@ -30,7 +30,7 @@ export interface ListSessionStateOpts {
  * The service composes the wire-shape
  * {@link import("./types.js").Session} DTO by adding `workdir`
  * (computed from layout) and live `lastActiveAt` / `preview` (read
- * from the runtime). See `docs/pkg-template.md` "Repository contract".
+ * from the runtime).
  */
 export class SessionRepository {
   private readonly db: Db;

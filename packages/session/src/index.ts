@@ -6,8 +6,14 @@
  * per-workspace `workspace.db`. Activity (lastActiveAt, preview) is
  * read fresh from the runtime on every list/get call.
  *
- * The package never spawns processes — `buildInteractiveLaunch()`
- * returns a shell-runnable `LaunchCommand`.
+ * The package's default `buildInteractiveLaunch()` returns a
+ * shell-runnable `LaunchCommand` without touching any process. When a
+ * `SpawnFn` is supplied to `composeSessionModule`, the same launch
+ * command can be handed directly to that spawner via
+ * `SessionService.spawnInteractive(sid, opts)`. The session pkg never
+ * value- or type-imports `@emploke/terminal`; the production
+ * `SpawnFn` impl lives there and is wired by `composeApplication` in
+ * `@emploke/api`.
  */
 
 // Re-export runtime errors callers commonly want to catch alongside session errors.
@@ -32,7 +38,12 @@ export {
   SessionIdAllocationFailedError,
   SessionNotFoundError,
 } from "./errors.js";
-export type { AgentEntry, AgentResolverPort } from "./ports.js";
+export type {
+  AgentEntry,
+  AgentResolverPort,
+  SpawnFn,
+  SpawnInteractiveResult,
+} from "./ports.js";
 // `SessionRow` (Drizzle `$inferSelect` alias) is intentionally NOT
 // re-exported. It is an implementation detail of the persistence
 // layer; external callers should consume the `Session` DTO below
@@ -50,7 +61,5 @@ export type {
   ListSessionOpts,
   Session,
   SessionServiceConfig,
-  SpawnFn,
-  SpawnInteractiveResult,
   SpawnSessionResult,
 } from "./types.js";
