@@ -1,44 +1,13 @@
-import type { AgentContentSource, LaunchCommand, RuntimeRegistry } from "@emploke/runtime";
+import type { AgentContentSource, RuntimeRegistry } from "@emploke/runtime";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
-import type { AgentResolverPort } from "./ports.js";
+import type { AgentResolverPort, SpawnFn } from "./ports.js";
 import type * as schema from "./schema.js";
 
 /** Re-export `LaunchCommand` so call sites only need one import. */
 export type { LaunchCommand } from "@emploke/runtime";
 
 type Db = BetterSQLite3Database<typeof schema>;
-
-/**
- * Structural result shape returned by an injected {@link SpawnFn}.
- *
- * Deliberately a minimal interface — `launcher` is typed `string` here
- * (not the closed `Launcher` union from `@emploke/terminal`) so this
- * package never imports `@emploke/terminal`, even type-only. Today's
- * production wiring passes `spawnTerminal` from `@emploke/terminal`,
- * whose `SpawnTerminalResult = { launcher: Launcher }` is structurally
- * assignable here because `Launcher` is a `string` subtype.
- *
- * Consumers that need the narrower union (e.g. dashboard rendering)
- * import from `@emploke/terminal` directly.
- */
-export interface SpawnInteractiveResult {
-  readonly launcher: string;
-}
-
-/**
- * Injection seam for the terminal spawner. Wired by `composeApplication`
- * (in `@emploke/api`), which value-imports `@emploke/terminal`'s
- * `spawnTerminal` and threads it through `composeSessionModule` →
- * `SessionService` constructor. Session itself never value-imports
- * (or even type-imports) terminal, so the cross-domain architecture
- * fence (`packages/e2e/test/architecture/inter-service-imports.test.ts`)
- * stays intact and session does not need terminal in its dep graph.
- *
- * Structurally typed: `spawnTerminal` from `@emploke/terminal`, a test
- * fake, or any alternative spawner with the same shape is acceptable.
- */
-export type SpawnFn = (cmd: LaunchCommand) => Promise<SpawnInteractiveResult>;
 
 /**
  * Result of {@link import("./session-service.js").SessionService.spawnInteractive}.
@@ -81,9 +50,9 @@ export interface Session {
 }
 
 /**
- * Configuration for SessionService. After the de-DDD simplification,
- * persistence is supplied directly as a Drizzle handle (one per
- * workspace, owned by the @emploke/api orchestrator).
+ * Configuration for SessionService. Persistence is supplied directly
+ * as a Drizzle handle (one per workspace, owned by the @emploke/api
+ * orchestrator).
  */
 export interface SessionServiceConfig {
   /** Resolves agents at create() time (structural — catalog satisfies it). */

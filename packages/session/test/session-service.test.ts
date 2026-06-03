@@ -148,7 +148,6 @@ class StubRuntime implements Runtime {
     workspaceDir: string;
   }[] = [];
 
-  /** Defaults to a stable UUID for determinism. */
   /** Defaults to a stable UUID. Set to `"per-call"` to mint a new uuid per provision. */
   provisionId: string | null = "12345678-1234-1234-1234-1234567890ab";
   /** If set, provision throws this. */
@@ -168,6 +167,8 @@ class StubRuntime implements Runtime {
   readMetadataError: Error | null = null;
   /** If set, deleteState throws this. */
   deleteStateError: Error | null = null;
+  /** If set, buildInteractiveLaunch returns this on `launch.env`. */
+  launchEnv: Readonly<Record<string, string>> | null = null;
 
   constructor(kind = "copilot") {
     this.kind = kind;
@@ -213,6 +214,7 @@ class StubRuntime implements Runtime {
       args: runtimeSessionId === null ? [] : [`--id=${runtimeSessionId}`],
       cwd: workdir,
       display: `stub ${workdir}`,
+      ...(this.launchEnv !== null ? { env: this.launchEnv } : {}),
     };
   }
 
@@ -238,9 +240,8 @@ const seqRandom = () => {
 };
 
 const recorder = () => {
-  // Matches pino's API shape: (meta, msg). See task/test/manager.test.ts
-  // for the rationale (tight-loop assertion timing rules out a real
-  // pino-backed captureLogger here).
+  // Matches pino's API shape: (meta, msg). Tight-loop assertion
+  // timing rules out a real pino-backed captureLogger here.
   const calls: { msg: string; meta?: object }[] = [];
   return {
     logger: {
@@ -312,13 +313,12 @@ describe("create()", () => {
   });
 
   it("throws AgentNotFoundError when getAgentEntry returns null (unknown agent)", async () => {
-    // Option II discrimination (Decision #9): the resolver port
-    // reports "unknown" by returning null from getAgentEntry, NOT by
-    // throwing a typed not-found error. Destructive validation for
-    // the `entry === null` check in session-service.ts's create()
-    // flow: deleting it would let the call sail into resolveAgent
-    // and surface as a 500 AgentResolutionFailedError instead of
-    // the user-facing 400.
+    // The resolver port reports "unknown" by returning null from
+    // getAgentEntry, NOT by throwing a typed not-found error.
+    // Destructive validation for the `entry === null` check in
+    // session-service.ts's create() flow: deleting it would let the
+    // call sail into resolveAgent and surface as a 500
+    // AgentResolutionFailedError instead of the user-facing 400.
     const m = await buildManager({
       agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
@@ -337,11 +337,11 @@ describe("create()", () => {
 
   it("wraps a generic resolver error from resolveAgent as AgentResolutionFailedError (NOT AgentNotFoundError)", async () => {
     // A non-typed resolver failure (DB exploded, parser blew up,
-    // etc.) is a system fault, not a user error. Option II's
-    // contract: any throw from `agentResolver.resolveAgent(...)` is
-    // classified as a 500. The not-found path only fires when
-    // `getAgentEntry` returns null. Destructive validation for the
-    // AgentResolutionFailedError throw site in session-service.ts.
+    // etc.) is a system fault, not a user error. Any throw from
+    // `agentResolver.resolveAgent(...)` is classified as a 500. The
+    // not-found path only fires when `getAgentEntry` returns null.
+    // Destructive validation for the AgentResolutionFailedError throw
+    // site in session-service.ts.
     const foreign = new Error("DB exploded");
     const m = await buildManager({
       agentResolver: stubAgentResolver({
@@ -370,20 +370,6 @@ describe("create()", () => {
     await expect(m.create({ agent: "demo", runtime: "gemini" })).rejects.toBeInstanceOf(
       UnknownRuntimeError,
     );
-  });
-
-  it.skip("uses defaultRuntime override (removed feature)", async () => {
-    const claudeRt = new StubRuntime("claude");
-    const reg = new RuntimeRegistry();
-    reg.register(claudeRt);
-    const m = await buildManager({
-      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
-      runtimeRegistry: reg,
-      defaultRuntime: "claude",
-      workspaceDir: scratch,
-    });
-    const s = await m.create({ agent: "demo" });
-    expect(s.runtime).toBe("claude");
   });
 
   it("cleans up workdir on provisioner failure", async () => {
@@ -415,11 +401,10 @@ describe("create()", () => {
 // ───── list ──────────────────────────────────────────────────
 
 describe("list()", () => {
-  it("returns empty when sessionsDir does not exist", async () => {
+  it("returns empty when no rows exist", async () => {
     const m = await buildManager({
       agentResolver: stubAgentResolver(),
       runtimeRegistry: makeRegistry(new StubRuntime()),
-      sessionsDir: path.join(sessionsDir, "missing"),
       workspaceDir: scratch,
     });
     expect(await m.list()).toEqual([]);
@@ -436,10 +421,7 @@ describe("list()", () => {
     });
     await m.create({ agent: "demo" });
     // Directories on disk with no SQLite row are invisible to list()
-    // — the repository drives the listing, not a directory scan. The
-    // old FS-backed tests covered the same scenario via "dirs without
-    // session.json"; the SQLite version of the same invariant is
-    // "dirs without a row".
+    // — the repository drives the listing, not a directory scan.
     await mkdir(path.join(sessionsDir, "20260101-deadbeef"), { recursive: true });
     await mkdir(path.join(sessionsDir, "not-a-session"), { recursive: true });
     const out = await m.list();
@@ -563,35 +545,7 @@ describe("list()", () => {
     expect(r.calls.some((c) => c.msg.includes("unregistered runtime"))).toBe(true);
   });
 
-  // NOTE: the old "discovery" behaviour (provisionId=null, runtime
-  // mints + returns an id later via refresh) is intentionally not
-  // covered by the new Runtime contract — `readMetadata` requires a
-  // pre-known `runtimeSessionId`. A future Gemini-style adapter will
-  // add a separate `discoverRuntimeSessionId(workdir)` hook for that
-  // case; tracked separately. For now, this case test is deferred.
-  it.skip("persists discovered runtimeSessionId back to the repository (gemini-style)", async () => {
-    const rt = new StubRuntime();
-    rt.provisionId = null;
-    rt.readMetadataResult = {
-      lastActiveAt: "2026-05-08T02:00:00.000Z",
-      title: null,
-      userTitled: false,
-    };
-    const orm = makeDb();
-    const m = await buildManager({
-      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
-      runtimeRegistry: makeRegistry(rt),
-      workspaceDir: scratch,
-      db: orm.db,
-    });
-    const s = await m.create({ agent: "demo" });
-    const [out] = await m.list();
-    expect(out?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
-    const persisted = await new SessionRepository({ db: orm.db }).findById(s.id);
-    expect(persisted?.runtimeSessionId).toBe("33333333-3333-3333-3333-333333333333");
-  });
-
-  it("sorts never-launched sessions first, then active by lastActiveAt desc (#43)", async () => {
+  it("sorts never-launched sessions first, then active by lastActiveAt desc", async () => {
     const rt = new StubRuntime();
     const m = await buildManager({
       agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
@@ -826,26 +780,6 @@ describe("buildInteractiveLaunch()", () => {
     expect(rt.buildLaunchCalls[0]?.workspaceDir).toBe(scratch);
   });
 
-  // Same discovery limitation as above — defer until the Gemini
-  // adapter PR designs the discoverRuntimeSessionId hook.
-  it.skip("calls runtime.refresh first so a discovery-runtime can mint an id", async () => {
-    const rt = new StubRuntime();
-    rt.provisionId = null;
-    rt.readMetadataResult = {
-      lastActiveAt: "2026-05-08T02:00:00.000Z",
-      title: null,
-      userTitled: false,
-    };
-    const m = await buildManager({
-      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
-      runtimeRegistry: makeRegistry(rt),
-      workspaceDir: scratch,
-    });
-    const s = await m.create({ agent: "demo" });
-    const c = await m.buildInteractiveLaunch(s.id);
-    expect(c.args).toEqual(["--id=abcdef12-3456-7890-abcd-ef1234567890"]);
-  });
-
   it("throws SessionNotFoundError for unknown", async () => {
     const m = await buildManager({
       agentResolver: stubAgentResolver(),
@@ -878,14 +812,10 @@ describe("buildInteractiveLaunch()", () => {
   });
 
   it("buildLaunch's lastLaunchMode write does not clobber a concurrent runtimeSessionId update", async () => {
-    // Reproduces issue #56's interlock: while `buildLaunch` is in
-    // flight, a parallel writer (e.g. a future discovery-runtime's
-    // `refreshSession` save, or any other `repository.save` path)
-    // updates `runtimeSessionId`. The old read-merge-save in
-    // `buildLaunch` would silently overwrite that update with the
-    // value it had read at the start. The new `patchLastLaunchMode`
-    // path scopes its write to a single column, so both updates
-    // survive.
+    // Concurrent-writer contract: while `buildInteractiveLaunch` is in
+    // flight, a parallel writer (e.g. a direct drizzle update on
+    // `runtime_session_id`) must not be clobbered. `patchLastLaunchMode`
+    // scopes its write to a single column, so both updates survive.
     const rt = new StubRuntime();
     const orm = makeDb();
     const m = new SessionService({
@@ -919,27 +849,24 @@ describe("buildInteractiveLaunch()", () => {
 
   // ─── env injection ──────────────────────────────────────────────
   //
-  // SessionService layers a self-describing env bag onto the
-  // LaunchCommand returned by the runtime so the shell that ends up
-  // running `copilot --session-id <id>` (and any nested `emploke ...`
-  // calls the user makes inside it) inherits the workspace identity.
-  // See SessionServiceConfig.subprocessEnv for the rationale; same
-  // contract as TaskService.
+  // SessionService layers per-session work-context env
+  // (EMPLOKE_WORKSPACE / EMPLOKE_WORKSPACE_DIR / EMPLOKE_WORK_KIND /
+  // EMPLOKE_WORK_ID / EMPLOKE_WORK_DIR) onto the LaunchCommand env
+  // produced by the runtime adapter. The runtime owns cross-cutting env
+  // (EMPLOKE_SERVER, EMPLOKE_SHARED_DIR, …); this layer is purely
+  // per-session.
 
-  it.skip("layers EMPLOKE_* env onto LaunchCommand (env source changed  needs rewrite)", async () => {
+  it("layers all five EMPLOKE_* keys onto LaunchCommand.env with the right values", async () => {
     const rt = new StubRuntime();
-    const m = new SessionService({
+    const m = await buildManager({
       agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
       workspaceId: "ws-uuid-alpha",
-      subprocessEnv: { EMPLOKE_SERVER: "http://127.0.0.1:8787" },
-      db: makeDb().db,
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
     expect(launch.env).toBeDefined();
-    expect(launch.env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
     expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-alpha");
     expect(launch.env?.EMPLOKE_WORKSPACE_DIR).toBe(scratch);
     expect(launch.env?.EMPLOKE_WORK_KIND).toBe("session");
@@ -950,57 +877,73 @@ describe("buildInteractiveLaunch()", () => {
     expect(launch.env?.EMPLOKE_WORK_DIR).toBe(s.workdir);
   });
 
-  it.skip("omits EMPLOKE_WORKSPACE (back-compat  workspaceId now required)", async () => {
+  it("preserves runtime-supplied env and layers per-session keys on top", async () => {
     const rt = new StubRuntime();
-    const m = new SessionService({
+    // The runtime owns cross-cutting env (EMPLOKE_SERVER,
+    // EMPLOKE_SHARED_DIR, …) via its config. Here we simulate that by
+    // returning a launch.env from the StubRuntime; SessionService must
+    // pass it through unchanged and layer the per-session keys on top.
+    rt.launchEnv = {
+      EMPLOKE_SERVER: "http://127.0.0.1:8787",
+      EMPLOKE_SHARED_DIR: "/abs/shared",
+    };
+    const m = await buildManager({
       agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
       runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
-      db: makeDb().db,
+      workspaceId: "ws-uuid-beta",
     });
     const s = await m.create({ agent: "demo" });
     const launch = await m.buildInteractiveLaunch(s.id);
-    // Per-session fields still populated even without a workspaceId.
-    expect(launch.env?.EMPLOKE_WORKSPACE_DIR).toBe(scratch);
+    expect(launch.env).toBeDefined();
+    // Runtime-supplied keys flow through untouched.
+    expect(launch.env?.EMPLOKE_SERVER).toBe("http://127.0.0.1:8787");
+    expect(launch.env?.EMPLOKE_SHARED_DIR).toBe("/abs/shared");
+    // Per-session keys are layered on top.
+    expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-beta");
     expect(launch.env?.EMPLOKE_WORK_ID).toBe(s.id);
-    expect("EMPLOKE_WORKSPACE" in (launch.env ?? {})).toBe(false);
   });
 
-  it.skip("two managers produce isolated launch envs (env layering moved to runtime)", async () => {
-    // Mimics what WorkspaceContextRegistry does: one shared frozen base
-    // passed by reference into every per-workspace SessionService.
-    // The base must NEVER be mutated by buildInteractiveLaunch; per-
-    // session fields go on a fresh layer on top.
-    const sharedBase = Object.freeze({ EMPLOKE_SERVER: "http://127.0.0.1:8787" });
-
-    const mA = new SessionService({
+  it("per-session keys WIN on collision with runtime-supplied keys", async () => {
+    const rt = new StubRuntime();
+    rt.launchEnv = {
+      EMPLOKE_WORKSPACE: "runtime-wrong",
+      EMPLOKE_WORK_KIND: "task",
+      EMPLOKE_WORK_DIR: "/runtime/wrong",
+    };
+    const m = await buildManager({
       agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
-      runtimeRegistry: makeRegistry(new StubRuntime()),
+      runtimeRegistry: makeRegistry(rt),
       workspaceDir: scratch,
-      workspaceId: "ws-A",
-      subprocessEnv: sharedBase,
-      db: makeDb().db,
+      workspaceId: "ws-uuid-delta",
     });
-    const mB = new SessionService({
-      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
-      runtimeRegistry: makeRegistry(new StubRuntime()),
-      workspaceDir: scratch,
-      workspaceId: "ws-B",
-      subprocessEnv: sharedBase,
-      db: makeDb().db,
-    });
+    const s = await m.create({ agent: "demo" });
+    const launch = await m.buildInteractiveLaunch(s.id);
+    expect(launch.env?.EMPLOKE_WORKSPACE).toBe("ws-uuid-delta");
+    expect(launch.env?.EMPLOKE_WORK_KIND).toBe("session");
+    expect(launch.env?.EMPLOKE_WORK_DIR).toBe(s.workdir);
+  });
 
-    const sA = await mA.create({ agent: "demo" });
-    const sB = await mB.create({ agent: "demo" });
-    const [lA, lB] = await Promise.all([
-      mA.buildInteractiveLaunch(sA.id),
-      mB.buildInteractiveLaunch(sB.id),
+  it("stamps EMPLOKE_WORK_KIND='session' and EMPLOKE_WORK_ID=<sid> for the session under launch", async () => {
+    const rt = new StubRuntime();
+    const m = await buildManager({
+      agentResolver: stubAgentResolver({ agents: { demo: fakeAgentResolve("demo") } }),
+      runtimeRegistry: makeRegistry(rt),
+      workspaceDir: scratch,
+      workspaceId: "ws-uuid-gamma",
+    });
+    const s1 = await m.create({ agent: "demo" });
+    const s2 = await m.create({ agent: "demo" });
+    const [l1, l2] = await Promise.all([
+      m.buildInteractiveLaunch(s1.id),
+      m.buildInteractiveLaunch(s2.id),
     ]);
-
-    expect(lA.env?.EMPLOKE_WORKSPACE).toBe("ws-A");
-    expect(lB.env?.EMPLOKE_WORKSPACE).toBe("ws-B");
-    // Frozen base survived without mutation.
-    expect(Object.keys(sharedBase)).toEqual(["EMPLOKE_SERVER"]);
+    expect(l1.env?.EMPLOKE_WORK_KIND).toBe("session");
+    expect(l2.env?.EMPLOKE_WORK_KIND).toBe("session");
+    // Each launch carries its own session id (no cross-contamination).
+    expect(l1.env?.EMPLOKE_WORK_ID).toBe(s1.id);
+    expect(l2.env?.EMPLOKE_WORK_ID).toBe(s2.id);
+    expect(l1.env?.EMPLOKE_WORK_ID).not.toBe(l2.env?.EMPLOKE_WORK_ID);
   });
 });
 
@@ -1195,6 +1138,3 @@ describe("spawnInteractive()", () => {
     await expect(m.spawnInteractive(s.id)).rejects.toThrow(/no spawnFn/);
   });
 });
-
-// Suppress unused imports warning for vi (kept available for future tests).
-void vi;

@@ -3,10 +3,9 @@ import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3"
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
 import { applySessionMigrations } from "./migrations.js";
-import type { AgentResolverPort } from "./ports.js";
+import type { AgentResolverPort, SpawnFn } from "./ports.js";
 import * as schema from "./schema.js";
 import { SessionService } from "./session-service.js";
-import type { SpawnFn } from "./types.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -37,7 +36,7 @@ export async function composeSessionModule(opts: SessionModuleOptions): Promise<
   const sqlite: BetterSqliteDatabase = new Database(opts.dbFile);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("synchronous = NORMAL");
-  // No `foreign_keys = ON`  schema has no FK constraints; the
+  // No `foreign_keys = ON` -- schema has no FK constraints; the
   // pragma without FKs is a no-op and would mislead readers.
   sqlite.pragma("busy_timeout = 5000");
   const db: Db = drizzle(sqlite, { schema });
