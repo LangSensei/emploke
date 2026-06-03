@@ -8,8 +8,9 @@ DTOs, out-of-band IPC files, `EMPLOKE_HOME` resolution) live in the
 sibling T2 package `@emploke/contracts`; `@emploke/api` re-exports
 the whole `@emploke/contracts` barrel so the in-process server boot
 path (`@emploke/server`) imports both halves from a single
-specifier. Pairs with `@emploke/server` (HTTP transport) and the
-surfaces (`@emploke/terminal`, `@emploke/dashboard`,
+specifier. Pairs with `@emploke/server` (HTTP transport),
+`@emploke/terminal` (the host-side spawner threaded as a `SpawnFn`
+port), and the user-facing surfaces (`@emploke/dashboard`,
 `@emploke/cli`).
 
 `@emploke/dashboard` and `@emploke/cli` must NOT import from
@@ -17,13 +18,13 @@ surfaces (`@emploke/terminal`, `@emploke/dashboard`,
 structural fence is enforced by
 `packages/e2e/test/architecture/tier-invisibility.test.ts`).
 
-This package was reshaped in 0.6.0: the legacy orchestration-root and
-wire-contracts packages were first merged into `@emploke/api`, then
-the wire contracts were extracted back out into a separate
-`@emploke/contracts` package to give the surfaces structural
-isolation from orchestration code. See
-[`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)
-for the rationale.
+Orchestration (`composeApplication`, `WorkspaceContext`) and wire
+contracts (routes, request / response shapes, path helpers) live in
+sibling T2 pkgs: orchestration here, contracts in `@emploke/contracts`.
+The split gives the surfaces (`@emploke/dashboard`, `@emploke/cli`)
+a structural fence against pulling orchestration code into their
+bundles. See
+[`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model).
 
 ## Internal layout
 
@@ -54,6 +55,8 @@ const app = await composeApplication({
   logger,                                       // optional pino
 });
 
+app.workspaceService;                            // WorkspaceService -- direct access for read-only listing / getLastOpenedId / etc.
+
 // Orchestration (Stripe-style hybrid params)
 await app.registerWorkspace({ name, workspaceDir? });
 await app.renameWorkspace(id, { newName });
@@ -73,18 +76,25 @@ app.loadedContexts();                            // snapshot of currently-loaded
 await app.close();                               // closes every per-workspace context, then the global registry
 ```
 
+Orchestration mutations (`registerWorkspace`, `renameWorkspace`,
+`unregisterWorkspace`, `reloadWorkspace`) go through the `Application`
+methods (which invalidate the per-workspace context) rather than
+calling `workspaceService.register` etc. directly.
+
 ## WorkspaceContext fields
 
 Field naming follows the Stripe convention — singular for a
 single-entity registry, plural for a collection / surface that exposes
 list-like operations:
 
-| Field      | Type             | Why singular / plural                                    |
-| ---------- | ---------------- | -------------------------------------------------------- |
-| `workspace`| `Workspace`      | one workspace                                            |
-| `catalog`  | `CatalogService` | one catalog (the registry)                               |
-| `sessions` | `SessionService` | many sessions per workspace; service is the collection   |
-| `tasks`    | `TaskService`    | many tasks per workspace                                 |
+| Field      | Type                  | Why singular / plural                                    |
+| ---------- | --------------------- | -------------------------------------------------------- |
+| `workspace`| `Workspace`           | one workspace                                            |
+| `catalog`  | `CatalogService`      | one catalog (the registry)                               |
+| `sessions` | `SessionService`      | many sessions per workspace; service is the collection   |
+| `tasks`    | `TaskService`         | many tasks per workspace                                 |
+| `schedules`| `ScheduleService`     | many schedules per workspace; cron-driven task dispatch substrate |
+| `close()`  | `() => Promise<void>` | closes the four service handles in reverse-of-compose order; idempotent |
 
 `sessions.spawnInteractive(sid, { remote? })` (a method on
 `SessionService` from `@emploke/session`) builds the session's
@@ -96,6 +106,10 @@ field is always populated so callers can show a copy-paste command
 even on spawn failure. The result type `SpawnSessionResult` is
 canonical in `@emploke/session`; `@emploke/api` re-exports it (with
 `@deprecated` JSDoc) for one minor cycle, then it goes away.
+
+`ctx.schedules.registerKind("task", ...)` is wired automatically by
+`composeApplication` (via `makeTaskKindHandler`); callers don't need
+to re-register the task kind on a freshly-loaded context.
 
 ## Concurrency invariants
 
@@ -133,8 +147,7 @@ Its sibling at T2 is `@emploke/contracts` (wire types). T0
 - `@emploke/workspace`, `@emploke/catalog`, `@emploke/session`,
   `@emploke/task`, `@emploke/runtime`, `@emploke/schedule`,
   `@emploke/terminal` (the last for `spawnTerminal` which is injected
-  into `composeSessionModule` as the canonical `SpawnFn`; see
-  `application.ts`).
+  into `composeSessionModule` as the canonical `SpawnFn`).
 
 `@emploke/api` MUST NOT import:
 

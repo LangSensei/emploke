@@ -27,7 +27,6 @@ export {
   type Application,
   type ApplicationOptions,
   composeApplication,
-  type SpawnFn,
   type SpawnSessionResult,
 } from "./application.js";
 export { makeTaskKindHandler, TaskScheduleTargetError } from "./wiring/schedule-task-handler.js";

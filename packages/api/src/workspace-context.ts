@@ -6,28 +6,15 @@ import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
 import {
   composeSessionModule,
   type SessionService,
-  type SpawnFn as SessionSpawnFn,
   type SpawnSessionResult as SessionSpawnSessionResult,
+  type SpawnFn,
 } from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
 
-export const silentLogger: Logger = pino({ level: "silent" });
-
-/**
- * Inject a fake terminal spawner. Tests pass a stub to avoid touching
- * the real host; production callers omit it to get the default
- * {@link import("@emploke/terminal").spawnTerminal} from `@emploke/terminal`.
- *
- * @deprecated Re-exported from `@emploke/session` for one minor cycle
- * to preserve the published type-import surface for external
- * consumers. New code SHOULD import `SpawnFn` from `@emploke/session`
- * directly. The api-side re-export will be removed in the next minor
- * after consumers migrate.
- */
-export type SpawnFn = SessionSpawnFn;
+const silentLogger: Logger = pino({ level: "silent" });
 
 /**
  * Result of {@link SessionService.spawnInteractive} — the canonical
@@ -282,8 +269,8 @@ export class WorkspaceContextRegistry {
       // Schedules are composed AFTER tasks so the kind handler's
       // `dispatch` / `hasInFlightForSchedule` / `deleteForSchedule`
       // can bridge to a live `TaskService`. The same workspace.db
-      // file is reused (WAL-mode shared connection per ADR-3);
-      // migrations are idempotent.
+      // file is reused (WAL-mode shared connection); migrations are
+      // idempotent.
       scheduleModule = await composeScheduleModule({
         dbFile,
         logger: this.logger,
@@ -321,10 +308,10 @@ export class WorkspaceContextRegistry {
       schedules: scheduleModule.service,
       async close() {
         // Per-module try/catch: a throw from one module's close()
-        // must NOT skip the others. Earlier shape chained awaits
-        // bare, so a `taskModule.close()` throw leaked the session +
-        // catalog SQLite handles. Same all-or-nothing disposal idiom
-        // as load()'s cleanup stack.
+        // must NOT skip the others. Without per-module catches a
+        // `taskModule.close()` throw would leak the session +
+        // catalog SQLite handles. Same all-or-nothing disposal
+        // idiom as load()'s cleanup stack.
         //
         // Ordering: schedule FIRST (reverse of compose). schedule's
         // close() awaits `service.shutdown()`, which clears the
@@ -334,9 +321,7 @@ export class WorkspaceContextRegistry {
         // Multi-error handling: the FIRST error is re-thrown so the
         // caller sees something; LATER errors are logged via the
         // pkg's `silentLogger`-or-injected logger so a wedged 2nd
-        // module isn't lost. Previously this loop iterated but
-        // discarded later errors via `void e`, contradicting the
-        // comment that promised operator logging.
+        // module isn't lost.
         const errors: unknown[] = [];
         try {
           await scheduleModule.close();

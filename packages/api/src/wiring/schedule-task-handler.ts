@@ -10,23 +10,20 @@ import { AgentNotFoundError, AgentResolutionFailedError, type TaskService } from
  * stays kind-agnostic; the task pkg stays unaware of schedules' SQL;
  * and the catalog pkg is consumed only here for agent existence.
  *
- * Responsibilities (all the kind-specific concerns that lived in the
- * pre-W3 schedule pkg are absorbed):
+ * Responsibilities (the kind-specific concerns the schedule pkg
+ * deliberately doesn't carry, absorbed here):
  *
- *   - task-target shape validation (was `assertValidTarget`'s task
- *     branch in `schedule-entity.ts`)
- *   - agent existence lookup (was `makeScheduleAgentValidator`)
- *   - RFC 7396 deep-merge of task target patches (was
- *     `mergeTaskTarget` in `schedule-entity.ts`)
- *   - origin/metadata synthesis for `TaskService.dispatch` (was the
- *     `task` branch in `ScheduleService.dispatch`)
+ *   - task-target shape validation
+ *   - agent existence lookup
+ *   - RFC 7396 deep-merge of task target patches
+ *   - origin/metadata synthesis for `TaskService.dispatch`
  *   - lifecycle pass-through for `hasInFlightForSchedule` /
  *     `deleteForSchedule`
  *
  * `validate(_, { changedKeys })` skips the async catalog lookup when
  * `agent` is not in `changedKeys` — this preserves the patch-when-
- * catalog-down property of the pre-W3 service (a sparse "edit only
- * brief" patch must not fail because the catalog is unhealthy).
+ * catalog-down invariant: a sparse "edit only brief" patch must not
+ * fail because the catalog is unhealthy.
  *
  * Agent errors are RAISED USING TASK-PKG'S CLASSES directly. The
  * schedule pkg no longer re-exports its own `AgentNotFoundError` /
