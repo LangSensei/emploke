@@ -63,7 +63,6 @@ function renderDetail() {
           path="/workspaces/:wsId/runtime/schedules"
           element={<SchedulesPage agents={[makeAgent("emploke/dev")]} currentWorkspaceId="ws-1" />}
         />
-        <Route path="/workspaces/:wsId/runtime/tasks" element={<div>Tasks page stub</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -175,6 +174,39 @@ describe("Schedule detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText(/dispatch blew up/)).toBeTruthy();
     });
+  });
+
+  it("stays on the schedule page after a successful Run now and refreshes Recent fires", async () => {
+    mockRunSchedule.mockResolvedValue({ dispatchId: "sched-x-run-1" });
+    // Prime listScheduledTasks: first call returns empty, second returns the new fire.
+    mockListScheduledTasks.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "sched-x-run-1",
+        agent: "emploke/dev",
+        brief: "Sample schedule (manual run)",
+        origin: "schedule",
+        status: "running",
+        metadata: { scheduleId: "sched-x" },
+        createdAt: "2026-05-28T09:05:00Z",
+        startedAt: "2026-05-28T09:05:01Z",
+      },
+    ]);
+    renderDetail();
+    // Wait for initial mount + initial fires fetch (empty list shown).
+    await screen.findByText(/Recent fires/);
+    // Click Run now.
+    fireEvent.click(await screen.findByTestId("schedule-detail-run-now"));
+    // runSchedule was called.
+    await waitFor(() => expect(mockRunSchedule).toHaveBeenCalledWith("sched-x"));
+    // Recent fires got a refresh fetch (parent bumped refreshToken).
+    await waitFor(() => expect(mockListScheduledTasks).toHaveBeenCalledTimes(2));
+    // The new fire row eventually surfaces.
+    await waitFor(() => expect(screen.getByText("sched-x-run-1")).toBeTruthy());
+    // CRUCIALLY: we did NOT leave the schedule page. The "Tasks page
+    // stub" route was removed, so any errant redirect would crash
+    // the test with "No routes matched". Additionally, the schedule
+    // detail Run-now button is still in the DOM.
+    expect(screen.getByTestId("schedule-detail-run-now")).toBeTruthy();
   });
 
   it("opens the delete confirm modal when Delete is clicked", async () => {
