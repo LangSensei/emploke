@@ -387,7 +387,7 @@ describe("tasksRoutes", () => {
     const m = stubManager({
       dispatch: vi.fn(async () => {
         throw new EntryNotReadyError("public/writer", {
-          blockedDeps: [{ kind: "skill", fqn: "public/missing-prereq" }],
+          blockedDeps: [{ fqn: "public/missing-prereq" }],
         });
       }),
     });
@@ -399,7 +399,7 @@ describe("tasksRoutes", () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.reason).toEqual({
-      blockedDeps: [{ kind: "skill", fqn: "public/missing-prereq" }],
+      blockedDeps: [{ fqn: "public/missing-prereq" }],
     });
   });
 

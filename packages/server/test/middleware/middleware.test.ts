@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accessLog } from "../../src/middleware/access-log.js";
 import { requestId } from "../../src/middleware/request-id.js";
@@ -26,7 +27,7 @@ afterEach(() => {
 });
 
 function buildApp() {
-  const app = new Hono();
+  const app = new Hono<{ Variables: { requestId: string; logger: Logger } }>();
   app.use("*", requestId());
   app.use("*", requestLogger(cap.logger));
   app.use("*", accessLog());

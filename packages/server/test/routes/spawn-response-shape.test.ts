@@ -22,9 +22,14 @@
  * error classes.
  */
 
-import type { LaunchCommand, WorkspaceContext } from "@emploke/api";
+import type { WorkspaceContext } from "@emploke/api";
 import type { CatalogService } from "@emploke/catalog";
-import { type Session, SessionService, type SessionServiceConfig } from "@emploke/session";
+import {
+  type LaunchCommand,
+  type Session,
+  SessionService,
+  type SessionServiceConfig,
+} from "@emploke/session";
 import { openTestSessionDb } from "@emploke/session/testing";
 import type { TaskService } from "@emploke/task";
 import {

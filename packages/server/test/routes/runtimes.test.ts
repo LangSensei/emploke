@@ -19,7 +19,7 @@ function stubRuntime(kind: string, capabilities?: { remoteSession?: boolean }) {
   return {
     kind,
     ...(capabilities !== undefined ? { capabilities } : {}),
-    provision: async () => "x",
+    provision: async () => ({ runtimeSessionId: "x" }),
     refresh: async () => null,
     buildInteractiveLaunch: async () => ({ cmd: "x", args: [], cwd: "/", display: "x" }),
     deleteState: async () => undefined,
