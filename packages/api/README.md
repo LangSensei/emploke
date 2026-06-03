@@ -104,8 +104,7 @@ and immediately hands it to the configured terminal spawner
 `composeApplication`'s `spawnFn` option). The returned `display`
 field is always populated so callers can show a copy-paste command
 even on spawn failure. The result type `SpawnSessionResult` is
-canonical in `@emploke/session`; `@emploke/api` re-exports it (with
-`@deprecated` JSDoc) for one minor cycle, then it goes away.
+canonical in `@emploke/session` — import it from there directly.
 
 `ctx.schedules.registerKind("task", ...)` is wired automatically by
 `composeApplication` (via `makeTaskKindHandler`); callers don't need
