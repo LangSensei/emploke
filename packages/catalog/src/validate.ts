@@ -24,23 +24,7 @@
 import { AgentFrontmatterError } from "./agent/errors.js";
 import { McpInvalidJsonError } from "./mcp/errors.js";
 import { SkillFrontmatterError } from "./skill/errors.js";
-
-/**
- * Resolved install body. Wire shape is identical (single `origin`
- * field), but the type alias is kept so downstream callers can
- * pattern-match against the validated form.
- */
-export interface SkillInstallBody {
-  readonly origin: string;
-}
-
-export interface AgentInstallBody {
-  readonly origin: string;
-}
-
-export interface McpInstallBody {
-  readonly origin: string;
-}
+import type { AgentInstallBody, McpInstallBody, SkillInstallBody } from "./types.js";
 
 const REQUEST_PATH = "<request>";
 

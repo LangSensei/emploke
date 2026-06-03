@@ -98,6 +98,7 @@ export {
 export type {
   Agent,
   AgentEntry,
+  AgentInstallBody,
   AgentMetadataPatch,
   AgentResolveResult,
   BlockedDep,
@@ -107,19 +108,18 @@ export type {
   DependencyRef,
   EntryStatus,
   Mcp,
+  McpInstallBody,
   MissingDep,
   ResolvedMcp,
   ResolvedSkill,
   Skill,
   SkillEntry,
+  SkillInstallBody,
   SkillMetadataPatch,
   SkillResolveResult,
 } from "./types.js";
 // ─── Install-body validators (HTTP boundary) ────────
 export {
-  type AgentInstallBody,
-  type McpInstallBody,
-  type SkillInstallBody,
   validateAgentInstallInput,
   validateMcpInstallInput,
   validateSkillInstallInput,

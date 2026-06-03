@@ -217,3 +217,20 @@ export interface AgentMetadataPatch {
     readonly mcps?: readonly string[];
   } | null;
 }
+
+/**
+ * Resolved install body. Wire shape is identical (single `origin`
+ * field), but the type alias is kept so downstream callers can
+ * pattern-match against the validated form.
+ */
+export interface SkillInstallBody {
+  readonly origin: string;
+}
+
+export interface AgentInstallBody {
+  readonly origin: string;
+}
+
+export interface McpInstallBody {
+  readonly origin: string;
+}
