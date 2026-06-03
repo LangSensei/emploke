@@ -118,9 +118,9 @@ export type RouteRes<R> = R extends RouteSpec<RouteRequest, infer Res> ? Res : n
  * of the `@emploke/workspace` aggregate — only the fields the dashboard /
  * CLI need; internal book-keeping fields stay private to the package.
  *
- * `workspaceDir` (was `workdir` pre-v2) is the workspace's root
- * directory; `workdir` is reserved for derived per-entity working
- * directories (`Session.workdir` / `Task.workdir`).
+ * `workspaceDir` is the workspace's root directory. The shorter name
+ * `workdir` is reserved for derived per-entity working directories
+ * (`Session.workdir` / `Task.workdir`).
  */
 export interface WorkspaceSummary {
   readonly id: string;
@@ -337,7 +337,7 @@ export interface SchedulePreviewQuery {
  *
  * Unscoped sibling of {@link SchedulePreviewQuery} for previewing an
  * arbitrary cron expression without a saved entity — used by the
- * dashboard's "New schedule" modal (issue #222). `expr` and `tz` are
+ * dashboard's "New schedule" modal. `expr` and `tz` are
  * required (route returns 400 if missing or blank); `n` is optional,
  * defaults to **5** (modal default; differs from `/:sid/preview`'s
  * default of 3), bounded `[1, 100]` with strict integer parsing.
@@ -442,7 +442,7 @@ export type SkillWithContent = SkillEntry & { readonly content: string };
 /** GET /api/workspaces/:id/catalog/agents/:name response. */
 export type AgentWithContent = AgentEntry & { readonly content: string };
 
-/** GET /api/workspaces/:id/catalog/{agents,skills}/:name/anchor response (issue #122). */
+/** GET /api/workspaces/:id/catalog/{agents,skills}/:name/anchor response. */
 export interface AnchorResponse {
   readonly content: string;
 }
@@ -524,8 +524,7 @@ export const ROUTES = {
   "health.get": defineRoute<Record<string, never>, HealthResponse>("GET", "/api/health"),
   "config.get": defineRoute<Record<string, never>, ServerConfig>("GET", "/api/config"),
   /**
-   * Returns each registered runtime's kind + capability bag. The
-   * previous `string[]` shape was bumped to objects in PR #55 so the
+   * Returns each registered runtime's kind + capability bag so
    * dashboard / CLI can branch on capability flags
    * (e.g. `capabilities.remoteSession`).
    */
@@ -596,8 +595,8 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks",
   ),
   /**
-   * Schedule-origin sibling of `tasks.list` (PR 1 of #61). Same
-   * response shape (`Task[]`) but the server constrains origin to
+   * Schedule-origin sibling of `tasks.list`. Same response shape
+   * (`Task[]`) but the server constrains origin to
    * `'schedule'` server-side; callers cannot widen via the URL. Each
    * origin's caller surface gets a route whose URL IS the contract.
    * Per-task surfaces (get, cancel, activity) stay on
@@ -673,7 +672,7 @@ export const ROUTES = {
     PreviewResult
   >("GET", "/api/workspaces/:id/schedules/:sid/preview"),
   /**
-   * Unscoped preview for an arbitrary `(expr, tz)` pair — issue #222.
+   * Unscoped preview for an arbitrary `(expr, tz)` pair.
    * Wraps `ScheduleService.preview(expr, tz, n)` directly without
    * an entity lookup so the dashboard's "New schedule" modal can
    * render `{ describe, nextRuns }` while the user is still typing.
@@ -698,9 +697,9 @@ export const ROUTES = {
     "/api/workspaces/:id/tasks/:tid",
   ),
   /**
-   * Cancel a running task — ADR-001 §3.6. POST (state transition;
-   * DELETE belongs to tasks.delete). No request body in v1
-   * (--reason flag is out of scope per ADR §5).
+   * Cancel a running task. POST is the verb because cancellation is
+   * a state transition; DELETE is reserved for tasks.delete. The
+   * route takes no request body.
    *
    * Status mappings:
    *   - 200 + Task — happy path; the response Task carries a
@@ -716,8 +715,8 @@ export const ROUTES = {
    *   - 404 — TaskNotFoundError (unknown id).
    *   - 409 — InvalidTransition; body is the structured envelope
    *     `{ error, code: 'InvalidTransition', status: <prev>,
-   *     transition: 'cancel' }` (R-6 pinned shape) so the dashboard
-   *     can branch typed on `code`.
+   *     transition: 'cancel' }` so the dashboard can branch typed on
+   *     `code`.
    *   - 503 — ManagerShuttingDownError (server is restarting). No
    *     `cancellation` is produced — the call refuses outright so the
    *     caller can retry once the manager is up.
@@ -770,8 +769,8 @@ export const ROUTES = {
   ),
 
   /**
-   * Issue #181 — serve a single artifact file produced by a terminal
-   * task. The `:name` segment must appear (by basename) in the task's
+   * Serve a single artifact file produced by a terminal task. The
+   * `:name` segment must appear (by basename) in the task's
    * `success.artifacts` array; anything else is 404. The route
    * additionally rejects names containing path separators or `..` as
    * a 400 defence-in-depth (the whitelist check is the actual

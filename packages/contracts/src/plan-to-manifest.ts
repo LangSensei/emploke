@@ -1,9 +1,9 @@
 /**
  * Wire shape consumed by the dashboard's `ResolveTree` component for
- * the install + sync flows. Lives in `@emploke/api`'s `contracts/`
- * directory so both the server's `planToManifest` projection AND the
- * dashboard / CLI clients can typecheck against the same shape without
- * one package value-importing the other.
+ * the install + sync flows. Lives in `@emploke/contracts` so both the
+ * server's `planToManifest` projection AND the dashboard / CLI
+ * clients can typecheck against the same shape without one package
+ * value-importing the other.
  *
  * Two-phase install + sync flow:
  *  - Install: dashboard POSTs `/skills/resolve` with `{ origin }` to

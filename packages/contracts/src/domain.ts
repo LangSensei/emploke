@@ -1,5 +1,5 @@
 /**
- * Re-exports of T0/T1 domain types that cross the HTTP wire.
+ * Re-exports of the domain types that cross the HTTP wire.
  *
  * Hosted here so dashboard and CLI can pull every shape they need
  * through `@emploke/contracts` without taking a workspace dep on
