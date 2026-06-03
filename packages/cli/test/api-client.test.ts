@@ -105,7 +105,7 @@ describe("ApiClient", () => {
     ]);
     await client.call("tasks.list", {
       params: { id: "ws-1" },
-      query: { agent: "writer", runtime: undefined, status: "running,success" },
+      query: { agent: "writer", status: "running,success" },
     });
     expect(calls[0]?.url).toContain("agent=writer");
     expect(calls[0]?.url).toContain("status=running%2Csuccess");

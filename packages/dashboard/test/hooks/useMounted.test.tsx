@@ -19,18 +19,30 @@ function Probe({ capture }: ProbeProps) {
 
 describe("useMounted", () => {
   it("returns a ref that is true while mounted", () => {
-    let captured: { current: boolean | null } | null = null;
-    render(<Probe capture={(ref) => (captured = ref)} />);
-    expect(captured).not.toBeNull();
-    expect(captured?.current).toBe(true);
+    const slot: { ref: { current: boolean | null } | null } = { ref: null };
+    render(
+      <Probe
+        capture={(r) => {
+          slot.ref = r;
+        }}
+      />,
+    );
+    expect(slot.ref).not.toBeNull();
+    expect(slot.ref?.current).toBe(true);
   });
 
   it("flips the ref to false after unmount so post-await guards can early-return", () => {
-    let captured: { current: boolean | null } | null = null;
-    const { unmount } = render(<Probe capture={(ref) => (captured = ref)} />);
-    expect(captured?.current).toBe(true);
+    const slot: { ref: { current: boolean | null } | null } = { ref: null };
+    const { unmount } = render(
+      <Probe
+        capture={(r) => {
+          slot.ref = r;
+        }}
+      />,
+    );
+    expect(slot.ref?.current).toBe(true);
     unmount();
-    expect(captured?.current).toBe(false);
+    expect(slot.ref?.current).toBe(false);
   });
 
   it("re-initialises to true under React StrictMode's mount→cleanup→mount double-invoke", () => {
@@ -46,13 +58,17 @@ describe("useMounted", () => {
     // a freshly-initialised useRef(true) ref). Wrapping the probe in
     // <StrictMode> is what actually exercises the dev double-invoke,
     // so this assertion fails iff the load-bearing line is removed.
-    let captured: { current: boolean | null } | null = null;
+    const slot: { ref: { current: boolean | null } | null } = { ref: null };
     render(
       <StrictMode>
-        <Probe capture={(ref) => (captured = ref)} />
+        <Probe
+          capture={(r) => {
+            slot.ref = r;
+          }}
+        />
       </StrictMode>,
     );
-    expect(captured).not.toBeNull();
-    expect(captured?.current).toBe(true);
+    expect(slot.ref).not.toBeNull();
+    expect(slot.ref?.current).toBe(true);
   });
 });
