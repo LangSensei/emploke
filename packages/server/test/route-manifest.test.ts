@@ -20,12 +20,18 @@
  *    runtime contract test); tracked as future work in the plan.
  */
 
-import { type CatalogOptions, CatalogService, defaultFetcherRegistry } from "@emploke/catalog";
+import { type CatalogOptions, CatalogService } from "@emploke/catalog";
 import pino from "pino";
 
 const silentLogger = pino({ level: "silent" });
 
-import { type Application, type HttpMethod, listRoutes, type RouteSpec } from "@emploke/api";
+import {
+  type Application,
+  type HttpMethod,
+  listRoutes,
+  type RouteSpec,
+  type WorkspaceContext,
+} from "@emploke/api";
 import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { ScheduleService } from "@emploke/schedule";
 import type { SessionService } from "@emploke/session";
@@ -82,7 +88,7 @@ function buildAppForTest(): Hono {
   const sessionsApp = new Hono();
   sessionsApp.route(
     "/:id/sessions",
-    sessionsRoutes(() => stubSessionManager()),
+    sessionsRoutes(() => ({ sessions: stubSessionManager() }) as unknown as WorkspaceContext),
   );
   app.route("/api/workspaces", sessionsApp);
 
@@ -239,6 +245,5 @@ const _typeChecks: { spec: RouteSpec; method: HttpMethod; mgr?: typeof CatalogSe
   mgr: CatalogService,
 };
 void _typeChecks;
-void defaultFetcherRegistry;
 void silentLogger;
 void ({} as CatalogOptions);
