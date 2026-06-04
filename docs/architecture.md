@@ -27,11 +27,14 @@ in a follow-up doc**.
 | --------- | ----------- | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | **T0**    | Foundations | `catalog`, `runtime`, `schedule`, `terminal`, `workspace` | Who / Where / When / Scope + leaf infrastructure — irreducible primitives                |
 | **T1**    | Modes       | `session`, `task`                                   | Interactive vs Headless execution mode (= Agent × Runtime × {mode})                     |
-| **T2**    | Application | `contracts` (wire types), `api` (orchestration)     | Two siblings: cross-pkg wire contracts + composition of T0/T1 into business capabilities |
+| **T2**    | Application | `contracts` (wire types), `api` (orchestration), `workflow` *(unwired — no HTTP routes yet)* | Two siblings: cross-pkg wire contracts + composition of T0/T1 into business capabilities |
 | **T3**    | Host        | `server`                                            | HTTP transport that exposes T2 capabilities over the wire                               |
 | **T_top** | Surfaces    | `dashboard`, `cli`                                  | Platform-specific UI on top of T3                                                       |
 
-`workflow` is intentionally excluded — deferred, not yet implemented.
+`workflow` is implemented as a BC (schema, service, tool surface) but is
+**not yet exposed via HTTP routes, CLI, or dashboard**. The
+architectural tier it would sit in is T2 (alongside `api`); the surface
+gaps are tracked separately.
 
 ### Tier philosophy
 
@@ -289,7 +292,7 @@ entity:
 - **`<EMPLOKE_HOME>/global.db`** — workspace registry + cross-workspace
   state (current-workspace pointer, future audit logs, etc).
 - **`<workspace>/workspace.db`** — every per-workspace entity (catalog,
-  session, task, future workflow). One connection serves them all,
+  session, task, workflow). One connection serves them all,
   shared via DI from `WorkspaceRuntime` (in `@emploke/api`).
 
 Each pkg owns its own tables inside the shared DB. Schema evolution
@@ -475,23 +478,26 @@ by an opaque `runtimeSessionId` string. The contract lives at
 ```ts
 interface Runtime {
   readonly kind: string;                                              // "copilot", "gemini", ...
+  readonly capabilities?: RuntimeCapabilities;                        // optional capability flags surfaced via /api/runtimes
 
   // Interactive (-i)
   provision(workdir, agent, catalog, ctx): Promise<{                  // bake agent into workdir
     runtimeSessionId: string | null;                                  //   pre-allocate? null = discovery-only
   }>;
-  buildLaunch(runtimeSessionId, workdir, workspaceDir, opts?):        // produce the exact `cmd args cwd`,
+  buildInteractiveLaunch(runtimeSessionId, workdir, workspaceDir, opts?): // produce the exact `cmd args cwd`,
     Promise<LaunchCommand>;                                           //   running per-launch preconditions
                                                                        //   keyed off workspaceDir
 
   // Non-interactive (-p)
-  dispatch?(opts): Promise<RuntimeHandle>;                            // optional: spawn one-shot worker
+  launchHeadless?(opts): Promise<RuntimeHandle>;                      // optional: spawn one-shot worker
 
   // Observability (uniform across modes; keyed by runtimeSessionId)
   readMetadata?(runtimeSessionId):                                    // optional: title / lastActiveAt
     Promise<RuntimeSessionMetadata | null>;
   readActivity?(opts):                                                // optional: parsed timeline,
     Promise<ActivityResult | null>;                                   //   tail-first; before/after/limit
+  getLastAgentActivity?(runtimeSessionId):                            // optional: most recent agent-produced
+    Promise<AgentActivity | null>;                                    //   utterance (excludes tool / system events)
   streamActivity?(opts): AsyncIterable<ActivityItem>;                 // optional: live SSE tail
 
   // Maintenance
@@ -499,10 +505,14 @@ interface Runtime {
 }
 ```
 
+> If this snippet drifts, treat
+> [`packages/runtime/src/types.ts`](../packages/runtime/src/types.ts) as
+> authoritative.
+
 Per-runtime preconditions (e.g. Copilot's interactive mode requires
 `workspaceDir` to be in `~/.copilot/config.json` `trustedFolders` to
 suppress its folder-trust prompt) are owned inside the adapter and run
-lazily inside `buildLaunch`. There is no cross-runtime
+lazily inside `buildInteractiveLaunch`. There is no cross-runtime
 "register workspace" hook — different CLIs have wildly different gating
 rules and trying to abstract them just leaks one runtime's internals
 into the others.
@@ -742,7 +752,8 @@ To add e.g. a Gemini adapter:
    a fresh UUID from `provision`; discovery-only runtimes return
    `null` and rely on a per-runtime discovery hook to learn the id
    later.
-2. Implement `dispatch` if the CLI supports unattended scripting.
+2. Implement `launchHeadless` if the runtime supports unattended
+   (non-TTY) task dispatch — required for `emploke task dispatch`.
    Pull agent + skill content from the supplied `catalog` argument
    via `agentEntries` / `skillEntries`; write into the supplied
    `opts.workdir`. Never resolve catalog paths from the resolve result.
