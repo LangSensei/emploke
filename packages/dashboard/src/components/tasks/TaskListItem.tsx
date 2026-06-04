@@ -12,9 +12,9 @@ export interface TaskListItemProps {
   onSelect: () => void;
   onDelete: () => void;
   /**
-   * ADR-001 §3.11.1(b): for non-terminal tasks the row-level affordance
-   * is "Cancel", not "Delete". Opens the page-level cancel-confirm
-   * modal; the actual `cancelTask(...)` call lives there.
+   * For non-terminal tasks the row-level affordance is "Cancel", not
+   * "Delete". Opens the page-level cancel-confirm modal; the actual
+   * `cancelTask(...)` call lives there.
    */
   onCancel: () => Promise<void> | void;
   /** Re-open the dispatch modal pre-filled from this task. */

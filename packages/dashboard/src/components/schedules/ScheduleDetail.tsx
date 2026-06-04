@@ -15,6 +15,21 @@ export interface ScheduleDetailProps {
   refreshToken: number;
   /** Bumped by the parent's row-level Run now success (only when the run targeted the currently-selected schedule) so the recent-fires panel re-fetches. */
   recentFiresToken: number;
+  /**
+   * Optimistic-enabled override sourced from the parent's list state.
+   * Patches the one flag the parent can be authoritative about during
+   * optimistic flips: when a row's Pause/Resume click flips the list
+   * row's badge immediately, the detail pane's badge MUST flip in the
+   * same frame — otherwise the same screen shows two contradictory
+   * states for ~one network roundtrip (the detail pane's internal
+   * `getSchedule(scheduleId)` re-fetch only runs after `refreshToken`
+   * bumps, which the parent only bumps on patch success). The override
+   * naturally rolls back when the parent rolls its list-state flip
+   * back on patch failure. `undefined` means the parent has no
+   * authoritative value yet (initial load); fall back to the
+   * server-fetched `detail.enabled` in that case.
+   */
+  enabledOverride?: boolean;
   /** Swaps the right pane into Mode B (fire's task detail) via the parent's atomic URL writer. */
   onSelectFire: (taskId: string) => void;
 }
@@ -36,7 +51,7 @@ const PREVIEW_COUNT = 1;
  * Row-level actions (Edit / Pause-Resume / Run-now / Delete) now live
  * exclusively in the list's per-row `⋯` menu (see `ScheduleListItem`).
  * The detail pane is the canonical *information* surface; the list is
- * the canonical *action* surface (ADR-001 §3.11.2). The page-level
+ * the canonical *action* surface. The page-level
  * `refreshToken` / `recentFiresToken` props are the seams that keep
  * the detail in sync after a row mutation.
  *
@@ -50,6 +65,7 @@ export function ScheduleDetail({
   currentWorkspaceId,
   refreshToken,
   recentFiresToken,
+  enabledOverride,
   onSelectFire,
 }: ScheduleDetailProps) {
   const [detail, setDetail] = useState<ScheduleDetailType | null>(null);
@@ -118,14 +134,19 @@ export function ScheduleDetail({
           <div className="schedule-detail__head-left">
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <h2 style={{ margin: 0, fontSize: 18 }}>{detail.name}</h2>
-              <span
-                className={`badge ${
-                  detail.enabled ? "badge--success" : "badge--warn"
-                } badge--with-dot`}
-              >
-                <span className="badge__dot" aria-hidden="true" />
-                {detail.enabled ? "Enabled" : "Paused"}
-              </span>
+              {(() => {
+                const displayEnabled = enabledOverride ?? detail.enabled;
+                return (
+                  <span
+                    className={`badge ${
+                      displayEnabled ? "badge--success" : "badge--warn"
+                    } badge--with-dot`}
+                  >
+                    <span className="badge__dot" aria-hidden="true" />
+                    {displayEnabled ? "Enabled" : "Paused"}
+                  </span>
+                );
+              })()}
             </div>
             <div className="task-list__item-meta muted">
               <code className="schedule-cron" title={`Cron expression in ${detail.trigger.tz}`}>
@@ -149,7 +170,7 @@ export function ScheduleDetail({
             </div>
           </div>
           <div className="schedule-detail__head-right" data-testid="schedule-detail-temporal">
-            <ScheduleNextFire preview={preview} enabled={detail.enabled} />
+            <ScheduleNextFire preview={preview} enabled={enabledOverride ?? detail.enabled} />
             <ScheduleLastFired lastFiredAt={detail.lastFiredAt} />
           </div>
         </div>

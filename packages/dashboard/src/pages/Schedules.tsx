@@ -563,6 +563,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
                 currentWorkspaceId={currentWorkspaceId}
                 refreshToken={refreshToken}
                 recentFiresToken={recentFiresToken}
+                enabledOverride={visible.find((s) => s.id === effectiveSelectedId)?.enabled}
                 onSelectFire={handleSelectFire}
               />
             ) : visible.length === 0 ? null : (

@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/contracts";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScheduleDetail as ScheduleDetailType, ScheduleView } from "../src/api";
@@ -15,6 +15,7 @@ vi.mock("../src/api", async () => {
     listRuntimes: vi.fn(),
     createSchedule: vi.fn(),
     previewCron: vi.fn(),
+    patchSchedule: vi.fn(),
   };
 });
 
@@ -29,6 +30,7 @@ const mockListScheduledTasks = api.listScheduledTasks as unknown as ReturnType<t
 const mockListRuntimes = api.listRuntimes as unknown as ReturnType<typeof vi.fn>;
 const mockCreateSchedule = api.createSchedule as unknown as ReturnType<typeof vi.fn>;
 const mockPreviewCron = api.previewCron as unknown as ReturnType<typeof vi.fn>;
+const mockPatchSchedule = api.patchSchedule as unknown as ReturnType<typeof vi.fn>;
 
 function makeAgent(fqn: string): AgentEntry {
   const [scope, short] = fqn.split("/");
@@ -81,6 +83,7 @@ beforeEach(() => {
   mockListRuntimes.mockReset();
   mockCreateSchedule.mockReset();
   mockPreviewCron.mockReset();
+  mockPatchSchedule.mockReset();
   mockListSchedules.mockResolvedValue([]);
   mockGetSchedule.mockResolvedValue(undefined);
   mockPreviewSchedule.mockResolvedValue({ describe: "test", nextRuns: [] });
@@ -366,6 +369,97 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
         (call) => call[0] !== undefined && Object.keys(call[0] ?? {}).length === 0,
       );
       expect(resetCallExists).toBe(true);
+    });
+  });
+});
+
+describe("SchedulesPage — per-row busy lock isolation (N4)", () => {
+  const agents = [makeAgent("emploke/dev")];
+
+  // The page keeps in-flight mutation state per-row in
+  // `busyByScheduleId` so a hanging patch on row A must not disable
+  // row B's menu or block a click on row B's Pause. This test pins
+  // that contract by hanging `patchSchedule` for row A and then
+  // driving a full open → Pause cycle on row B while A's patch is
+  // still in flight.
+  it("per-row busy lock does not block other rows' menus", async () => {
+    const rows: ScheduleView[] = [
+      makeSchedule({
+        id: "sched-a",
+        name: "Sched A",
+        enabled: true,
+        trigger: { kind: "cron", expr: "0 1 * * *", tz: "UTC" },
+        target: { kind: "task", agent: "emploke/dev", brief: "a" },
+        nextFireAt: "2026-06-01T01:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "sched-b",
+        name: "Sched B",
+        enabled: true,
+        trigger: { kind: "cron", expr: "0 2 * * *", tz: "UTC" },
+        target: { kind: "task", agent: "emploke/dev", brief: "b" },
+        nextFireAt: "2026-06-01T02:00:00.000Z",
+      }),
+    ];
+    mockListSchedules.mockResolvedValue(rows);
+    // Auto-select binds to the first sorted row (sched-a, earliest nextFireAt).
+    mockGetSchedule.mockImplementation((id: string) => {
+      const row = rows.find((s) => s.id === id);
+      if (!row) return Promise.reject(new Error(`unknown schedule ${id}`));
+      return Promise.resolve(makeDetail(row, `describe for ${id}`));
+    });
+
+    // Hang patchSchedule for sched-a; resolve for sched-b synchronously.
+    let resolveA: (value: ScheduleDetailType) => void = () => {};
+    const aPending = new Promise<ScheduleDetailType>((resolve) => {
+      resolveA = resolve;
+    });
+    mockPatchSchedule.mockImplementation((id: string, body: { enabled?: boolean }) => {
+      if (id === "sched-a") return aPending;
+      const row = rows.find((s) => s.id === id);
+      if (!row) return Promise.reject(new Error(`unknown schedule ${id}`));
+      return Promise.resolve({ ...row, ...body });
+    });
+
+    renderSchedules("/workspaces/ws-1/runtime/schedules", agents);
+
+    // Wait for both rows to mount.
+    await screen.findByTestId("schedule-row-sched-a");
+    await screen.findByTestId("schedule-row-sched-b");
+
+    // 1. Open sched-a's menu and click Pause; sched-a goes into "toggle"
+    //    busy state and patchSchedule hangs.
+    fireEvent.click(screen.getByTestId("schedule-row-menu-trigger-sched-a"));
+    const aMenu = await screen.findByTestId("schedule-row-menu-sched-a");
+    fireEvent.click(within(aMenu).getByRole("menuitem", { name: /^Pause$/ }));
+    await waitFor(() => {
+      expect(mockPatchSchedule).toHaveBeenCalledWith("sched-a", { enabled: false });
+    });
+
+    // 2. Open sched-b's menu (clicking Pause on a closes a's menu via
+    //    the page's single-open coordination). Assert b's menu mounts
+    //    and b's menuitems are not disabled — the page-wide busy state
+    //    set by sched-a's hanging patch must not bleed into row b.
+    fireEvent.click(screen.getByTestId("schedule-row-menu-trigger-sched-b"));
+    const bMenu = await screen.findByTestId("schedule-row-menu-sched-b");
+    const bPause = within(bMenu).getByRole("menuitem", { name: /^Pause$/ });
+    expect((bPause as HTMLButtonElement).disabled).toBe(false);
+    expect(bPause.getAttribute("aria-disabled")).not.toBe("true");
+    const bRunNow = within(bMenu).getByRole("menuitem", { name: /^Run now$/ });
+    expect((bRunNow as HTMLButtonElement).disabled).toBe(false);
+
+    // 3. Click Pause on sched-b — the click is NOT blocked by sched-a's
+    //    pending mutation, so patchSchedule is invoked for sched-b.
+    fireEvent.click(bPause);
+    await waitFor(() => {
+      expect(mockPatchSchedule).toHaveBeenCalledWith("sched-b", { enabled: false });
+    });
+
+    // 4. Cleanup: resolve sched-a's hanging promise so the page can
+    //    settle out of its busy state without dangling act() warnings.
+    resolveA({ ...rows[0]!, enabled: false, describe: "describe for sched-a" });
+    await waitFor(() => {
+      expect(mockPatchSchedule).toHaveBeenCalledTimes(2);
     });
   });
 });

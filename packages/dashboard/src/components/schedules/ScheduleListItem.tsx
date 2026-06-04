@@ -1,8 +1,3 @@
-// TODO(pilot): paste verbatim §3.11.2 text from
-// .pilot/active-missions/20260604-row-action-impl/spec.md (§11 (a))
-// into the canonical ADR-001 document once located. See follow-up
-// issue (to be filed when this PR opens) for tracking.
-
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ScheduleView } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
@@ -15,9 +10,11 @@ export interface ScheduleListItemProps {
   onSelect: () => void;
 
   /**
-   * State-aware row actions. The page lifts these handlers up so a
-   * row's menu can mutate any schedule without first selecting it
-   * (master-list independence — ADR-001 §3.11.2).
+   * State-aware row actions. The page lifts these handlers up so any
+   * row's menu can act on any schedule without it being selected first
+   * (master-list independence — mirrors the Tasks row pattern, so the
+   * list is the canonical action surface and the detail pane is the
+   * canonical information surface).
    */
   onEdit: () => void;
   onToggleEnabled: () => Promise<void> | void;
@@ -38,28 +35,43 @@ export interface ScheduleListItemProps {
 }
 
 /**
- * One row of the schedule list. Mirrors `TaskListItem` shape — the
- * `⋯` trigger, the controlled popover, the flip-and-size measurement,
- * and the keyboard handlers — but the menuitems are state-aware:
+ * One row of the schedule list. Owns the per-row `⋯` action menu
+ * (Edit / Pause / Resume / Run now / Delete) and the row's selection
+ * affordance.
  *
- *   - `Run now` flips label to "Run now — resume schedule first" and
- *     becomes `aria-disabled="true"` when the schedule is paused
- *     (NOT native `disabled`, so the element stays keyboard-focusable
- *     and the inline helper reaches AT users).
- *   - `Pause` / `Resume` label flips on `schedule.enabled` and carries
- *     `aria-pressed={schedule.enabled}` (preserves the detail-pane
- *     button contract for screen readers).
- *   - The Delete menuitem is danger-styled and renders last.
+ * Mirrors `TaskListItem` 1:1 — the `⋯` trigger shape, the controlled
+ * popover, the flip-and-size measurement, and the keyboard handlers
+ * are the same — so users moving between Tasks and Schedules don't
+ * have to re-learn the interaction. The page-level `Schedules.tsx`
+ * lifts all four action handlers up, which means any row's menu can
+ * mutate any schedule without it being selected first; the list is
+ * the canonical *action* surface, the detail pane is the canonical
+ * *information* surface.
  *
- * Iter-3 of the row-menu pattern: the per-row `⋯` is a controlled
- * popover (state-driven open via `menuOpen` + `onMenuOpenChange`;
- * click-outside via {@link useClickOutside}; Esc to close; absolute-
- * positioned panel so it floats above sibling rows and the detail
- * pane without altering row geometry). Only one row's menu may be
- * open at a time — that single-open coordination is owned by the
- * page (`Schedules.tsx`) rather than by `ScheduleList`, because the
- * action handlers also live at the page level (close-on-success
- * stays local to the same surface).
+ * The menuitems are state-aware:
+ *
+ *   - `Pause` / `Resume` label flips on `schedule.enabled` and the
+ *     menuitem carries `aria-pressed={schedule.enabled}` so screen
+ *     readers continue to announce the toggle state.
+ *   - `Run now` flips to "Run now — resume schedule first" and becomes
+ *     `aria-disabled="true"` (NOT native `disabled`, so the element
+ *     stays keyboard-focusable and the inline helper text reaches AT
+ *     users) when the schedule is paused.
+ *   - `Delete` carries the danger class and renders last so it's
+ *     visually distinct from the routine actions above it.
+ *
+ * Mechanics: the `⋯` is a controlled popover (state-driven open via
+ * `menuOpen` + `onMenuOpenChange`; click-outside via
+ * {@link useClickOutside}; Esc to close; absolute-positioned panel so
+ * it floats above sibling rows and the detail pane without altering
+ * row geometry). Only one row's menu may be open at a time — that
+ * single-open coordination is owned by the page (`Schedules.tsx`)
+ * rather than by `ScheduleList`, because the action handlers also
+ * live at the page level (close-on-success stays local to the same
+ * surface).
+ *
+ * See #313 for the ongoing row-list a11y work (restore focus to the
+ * `⋯` trigger after click-outside).
  */
 export function ScheduleListItem({
   schedule,
