@@ -2,7 +2,7 @@
 name: cli
 scope: emploke
 description: "Control an emploke server from the CLI — workspaces, agents, tasks, sessions, catalog"
-version: 1.0.0
+version: 1.0.1
 ---
 
 # emploke/cli skill
