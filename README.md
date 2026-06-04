@@ -105,11 +105,11 @@ two layers of commands:
 
 ### API client (talk to a running server)
 
-55 commands wrap the server's HTTP routes 1:1; the typed manifest in
-`packages/server/src/routes/manifest.ts` is the single source of truth
-that both the server registers handlers against and the CLI builds
-typed calls from. Adding a route on either side without updating the
-other fails CI.
+65 typed routes — wrapped 1:1 by the CLI's `client.call(...)` surface;
+the typed manifest in `packages/contracts/src/routes.ts` is the single
+source of truth that both the server registers handlers against and
+the CLI builds typed calls from. Adding a route on either side
+without updating the other fails CI.
 
 ```sh
 # server connection (default: http://127.0.0.1:8787, picked up from
@@ -171,7 +171,7 @@ blobs. What emploke adds:
 
 ## Architecture
 
-The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 11 small
+The repo is a [pnpm](https://pnpm.io/workspaces) monorepo of 14 small
 TypeScript packages with a strict layering: pure value types at the bottom,
 file-system primitives next, entity managers above (workspace / catalog /
 session / task), then the runtime adapter, then the HTTP server, then the
