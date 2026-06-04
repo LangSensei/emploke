@@ -1,7 +1,7 @@
 // Schedules REST client. Mirrors the routes in
 // `packages/contracts/src/routes.ts` (`schedule.create`,
-// `schedule.update`, `schedule.list`, etc.). Cron expression,
-// instructions, window, and enabled flag are all editable from both
+// `schedule.update`, `schedule.list`, etc.). All schedule fields —
+// target, trigger, runtime, and metadata — are editable from both
 // the dashboard (Create/EditScheduleModal) and the CLI; server
 // handlers live in `packages/server/src/routes/schedules.ts`.
 //

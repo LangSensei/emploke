@@ -381,7 +381,7 @@ export const handlers = [
   http.all("/api/*", ({ request }) => {
     if (request.method !== "GET") {
       console.warn(
-        `[mocks] ${request.method} ${request.url} — unmocked mutation route; only the /schedules slice is implemented (phase 2 for the rest tracked in #213)`,
+        `[mocks] ${request.method} ${request.url} — not mocked (only /schedules is implemented today; #213)`,
       );
       return HttpResponse.json(
         {
