@@ -2,7 +2,7 @@
 name: pilot
 scope: emploke
 description: "Mission-driven pilot of an emploke workspace — derives org structure, hires/creates agents, dispatches missions, monitors continuously, evolves over time"
-version: 1.0.0
+version: 1.0.1
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/cli"
@@ -87,7 +87,7 @@ This is your normal life. You run forever (until the user `stop`s your session) 
 loop forever:
     # 1. Sync — what changed since last tick?
     running    = emploke task list --status running --json
-    completed  = emploke task list --status success,failure,cancelled --json | filter "since LAST_TICK"
+    completed  = emploke task list --status succeeded,failed,cancelled --json | filter "since LAST_TICK"
                  # (use the createdSince filter; clamp by your own LAST_TICK record)
 
     # 2. Process completions
@@ -149,7 +149,7 @@ When a mission step needs an agent, walk this decision tree (full version: `refe
 
 1. **Reuse**: `emploke catalog agent list --json` and check `.pilot/hires.md` for performance history. If a known-good agent fits the work, dispatch.
 2. **Install marketplace**: search the marketplace (`https://github.com/LangSensei/emploke-marketplace/tree/main/agents/`) for relevant agents. If found, install + run a probe task to evaluate before adding to roster.
-3. **Create local**: only when neither of the above fits. Write a new local agent definition under `<workspace>/local-agents/<name>/AGENTS.md`, install via `file://`, run a probe task. See `references/hiring/template-base.md` for the minimal frame and `references/hiring/writing-good-agent-prompts.md` for the body.
+3. **Create local**: only when neither of the above fits. Write a new local agent definition under `<workspace>/local-agents/<name>/AGENTS.md`, install via `file:`, run a probe task. See `references/hiring/template-base.md` for the minimal frame and `references/hiring/writing-good-agent-prompts.md` for the body.
 
 **Hiring is judgment, not template-matching.** Two agents nominally in the same "domain" can be specialized differently. A `local/sql-migration-writer` is different from a `local/sql-query-author` — name and prompt them precisely. Before authoring a brand-new role from scratch, consult the `langsensei/agency-role-reference` skill for role-template starting points.
 
