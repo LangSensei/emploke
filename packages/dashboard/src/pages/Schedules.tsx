@@ -561,10 +561,8 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
                 key={effectiveSelectedId}
                 scheduleId={effectiveSelectedId}
                 currentWorkspaceId={currentWorkspaceId}
-                refreshToken={refreshToken + recentFiresToken}
-                onPatched={handlePatched}
-                onRequestDelete={setDeleteTarget}
-                onRequestEdit={setEditTarget}
+                refreshToken={refreshToken}
+                recentFiresToken={recentFiresToken}
                 onSelectFire={handleSelectFire}
               />
             ) : visible.length === 0 ? null : (

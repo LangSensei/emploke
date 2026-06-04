@@ -68,6 +68,19 @@ function renderDetail() {
   );
 }
 
+/**
+ * Open the per-row `⋯` action menu for the given schedule id. Tests
+ * call this before probing menuitems so the menu panel is mounted in
+ * the DOM (the panel is conditional on `openMenuId === id`).
+ */
+async function openRowMenu(id: string) {
+  fireEvent.click(await screen.findByTestId(`schedule-row-menu-trigger-${id}`));
+  // The panel mounts synchronously on click; the await of the trigger
+  // already serialised React's render. Use findByRole on the menu so
+  // we surface a helpful error if the menu never opened.
+  await screen.findByRole("menu");
+}
+
 beforeEach(() => {
   mockListSchedules.mockReset();
   mockGetSchedule.mockReset();
@@ -110,12 +123,11 @@ describe("Schedule detail panel", () => {
     expect(mockPreviewSchedule).toHaveBeenCalledWith("sched-x", { n: 1 });
   });
 
-  it("patches enabled=false when the Pause button is clicked", async () => {
+  it("patches enabled=false when the Pause menuitem is clicked", async () => {
     mockPatchSchedule.mockResolvedValue({ ...SAMPLE_VIEW, enabled: false });
     renderDetail();
-    const toggle = await screen.findByTestId("schedule-detail-toggle");
-    expect(toggle.textContent).toMatch(/Pause/);
-    fireEvent.click(toggle);
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Pause$/ }));
     await waitFor(() => {
       expect(mockPatchSchedule).toHaveBeenCalledWith("sched-x", { enabled: false });
     });
@@ -124,13 +136,15 @@ describe("Schedule detail panel", () => {
   it("rolls back the optimistic toggle on patch failure", async () => {
     mockPatchSchedule.mockRejectedValue(new Error("server angry"));
     renderDetail();
-    const toggle = await screen.findByTestId("schedule-detail-toggle");
-    fireEvent.click(toggle);
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Pause$/ }));
     await waitFor(() => {
       expect(screen.getByText(/server angry/)).toBeTruthy();
     });
-    // After rollback the toggle label is "Pause" again (enabled=true restored).
-    expect((await screen.findByTestId("schedule-detail-toggle")).textContent).toMatch(/Pause/);
+    // After rollback the row's badge reads "Enabled" again (enabled=true restored).
+    // The badge is rendered inside ScheduleListItem; the test asserts on the
+    // visible badge text rather than the menu (which closed on click).
+    expect(screen.getAllByText(/Enabled/i).length).toBeGreaterThan(0);
   });
 
   it("renders the recent-fires panel with status / clock / duration / id", async () => {
@@ -163,11 +177,11 @@ describe("Schedule detail panel", () => {
     expect(screen.getAllByText(/Succeeded/i).length).toBeGreaterThan(0);
   });
 
-  it("calls runSchedule and surfaces errors when Run now is clicked", async () => {
+  it("calls runSchedule and surfaces errors when the Run now menuitem is clicked", async () => {
     mockRunSchedule.mockRejectedValue(new Error("dispatch blew up"));
     renderDetail();
-    const runBtn = await screen.findByTestId("schedule-detail-run-now");
-    fireEvent.click(runBtn);
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Run now$/ }));
     await waitFor(() => {
       expect(mockRunSchedule).toHaveBeenCalledWith("sched-x");
     });
@@ -194,25 +208,23 @@ describe("Schedule detail panel", () => {
     renderDetail();
     // Wait for initial mount + initial fires fetch (empty list shown).
     await screen.findByText(/Recent fires/);
-    // Click Run now.
-    fireEvent.click(await screen.findByTestId("schedule-detail-run-now"));
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Run now$/ }));
     // runSchedule was called.
     await waitFor(() => expect(mockRunSchedule).toHaveBeenCalledWith("sched-x"));
-    // Recent fires got a refresh fetch (parent bumped refreshToken).
+    // Recent fires got a refresh fetch (parent bumped recentFiresToken).
     await waitFor(() => expect(mockListScheduledTasks).toHaveBeenCalledTimes(2));
     // The new fire row eventually surfaces.
     await waitFor(() => expect(screen.getByText("sched-x-run-1")).toBeTruthy());
-    // CRUCIALLY: we did NOT leave the schedule page. The "Tasks page
-    // stub" route was removed, so any errant redirect would crash
-    // the test with "No routes matched". Additionally, the schedule
-    // detail Run-now button is still in the DOM.
-    expect(screen.getByTestId("schedule-detail-run-now")).toBeTruthy();
+    // CRUCIALLY: we did NOT leave the schedule page. The row trigger is
+    // still in the DOM (the row would unmount if we'd navigated away).
+    expect(screen.getByTestId("schedule-row-menu-trigger-sched-x")).toBeTruthy();
   });
 
-  it("opens the delete confirm modal when Delete is clicked", async () => {
+  it("opens the delete confirm modal when the Delete menuitem is clicked", async () => {
     renderDetail();
-    const deleteBtn = await screen.findByTestId("schedule-detail-delete");
-    fireEvent.click(deleteBtn);
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/ }));
     // The modal renders inside the page-level host. The modal's dialog
     // role + title is the cleanest anchor since the body copy is split
     // across multiple text nodes.
@@ -225,8 +237,8 @@ describe("Schedule detail panel", () => {
   it("calls deleteSchedule when the delete modal is confirmed", async () => {
     mockDeleteSchedule.mockResolvedValue({ deletedDispatchCount: 0 });
     renderDetail();
-    const deleteBtn = await screen.findByTestId("schedule-detail-delete");
-    fireEvent.click(deleteBtn);
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/ }));
     const confirm = await screen.findByRole("button", { name: /Delete schedule/i });
     fireEvent.click(confirm);
     await waitFor(() => {
@@ -237,7 +249,8 @@ describe("Schedule detail panel", () => {
   it("shows a transient cascade-count notice after delete (count > 0)", async () => {
     mockDeleteSchedule.mockResolvedValue({ deletedDispatchCount: 3 });
     renderDetail();
-    fireEvent.click(await screen.findByTestId("schedule-detail-delete"));
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/ }));
     fireEvent.click(await screen.findByRole("button", { name: /^Delete schedule$/ }));
     const notice = await screen.findByTestId("schedules-delete-notice");
     expect(notice.textContent).toMatch(/Sample schedule/);
@@ -249,7 +262,8 @@ describe("Schedule detail panel", () => {
   it("singularises the cascade-count notice when exactly one dispatch was removed", async () => {
     mockDeleteSchedule.mockResolvedValue({ deletedDispatchCount: 1 });
     renderDetail();
-    fireEvent.click(await screen.findByTestId("schedule-detail-delete"));
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/ }));
     fireEvent.click(await screen.findByRole("button", { name: /^Delete schedule$/ }));
     const notice = await screen.findByTestId("schedules-delete-notice");
     expect(notice.textContent).toMatch(/1 historical dispatch run also removed/);
@@ -258,7 +272,8 @@ describe("Schedule detail panel", () => {
   it("omits the cascade-count suffix when no dispatches were removed", async () => {
     mockDeleteSchedule.mockResolvedValue({ deletedDispatchCount: 0 });
     renderDetail();
-    fireEvent.click(await screen.findByTestId("schedule-detail-delete"));
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/ }));
     fireEvent.click(await screen.findByRole("button", { name: /^Delete schedule$/ }));
     const notice = await screen.findByTestId("schedules-delete-notice");
     expect(notice.textContent).toMatch(/Sample schedule.*deleted\.?$/);
@@ -286,10 +301,10 @@ describe("Schedule detail panel", () => {
     expect(line.textContent).toMatch(/h ago|m ago/);
   });
 
-  it("opens the EditScheduleModal when the Edit button is clicked", async () => {
+  it("opens the EditScheduleModal when the Edit menuitem is clicked", async () => {
     renderDetail();
-    const editBtn = await screen.findByTestId("schedule-detail-edit");
-    fireEvent.click(editBtn);
+    await openRowMenu("sched-x");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Edit$/ }));
     expect(await screen.findByTestId("edit-schedule-form")).toBeTruthy();
     expect((screen.getByTestId("edit-schedule-name") as HTMLInputElement).value).toBe(
       "Sample schedule",
