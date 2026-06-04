@@ -2,7 +2,9 @@
 
 This document describes the standard layout every BC-owning service
 package in emploke follows. Examples in-tree: `@emploke/workspace`,
-`@emploke/session`, `@emploke/task`, `@emploke/catalog`.
+`@emploke/session`, `@emploke/task`, `@emploke/catalog`,
+`@emploke/schedule`, `@emploke/workflow` (`@emploke/schedule` is the
+cleanest recent example of the template applied to a new package).
 
 ## Scaffold a new service package
 
