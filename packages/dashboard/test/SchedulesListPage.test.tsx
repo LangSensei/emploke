@@ -139,7 +139,10 @@ describe("SchedulesPage list", () => {
     });
 
     // Sorted ascending by nextFireAt: B (May 30) before A (June 1).
-    const items = document.querySelectorAll("[data-testid^='schedule-row-']");
+    // Selector tightened to `schedule-row-sched-` so the new per-row
+    // `data-testid="schedule-row-menu-trigger-{id}"` button (introduced
+    // with the row action menu) is not also matched by the prefix.
+    const items = document.querySelectorAll("[data-testid^='schedule-row-sched-']");
     expect(items[0]?.getAttribute("data-testid")).toBe("schedule-row-sched-b");
     expect(items[1]?.getAttribute("data-testid")).toBe("schedule-row-sched-a");
   });

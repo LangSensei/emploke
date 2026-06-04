@@ -5,6 +5,8 @@ import {
   deleteSchedule,
   listRuntimes,
   listSchedules,
+  patchSchedule,
+  runSchedule,
   type ScheduleDetail as ScheduleDetailType,
   type ScheduleView,
   type ServerConfig,
@@ -105,7 +107,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
-  const [deleteTarget, setDeleteTarget] = useState<ScheduleDetailType | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ScheduleView | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   // Transient outcome banner shown after a successful delete so the
@@ -120,7 +122,27 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
     deletedDispatchCount: number;
   } | null>(null);
 
-  const [editTarget, setEditTarget] = useState<ScheduleDetailType | null>(null);
+  const [editTarget, setEditTarget] = useState<ScheduleView | null>(null);
+
+  // Page-level single-open coordination for the per-row `⋯` action
+  // menu (mirrors `openMenuId` in `TaskList`, but lifted to the page
+  // because the schedule row's action handlers now also live here —
+  // co-locating them keeps the close-on-success path local).
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  // Row-scoped busy state keyed by `scheduleId` so an in-flight
+  // mutation on row A does not lock row B's menu (Rubber-duck B-3 /
+  // §9 acceptance #8: "other rows' menus remain fully interactive").
+  // Each row's slice is forwarded to its `ScheduleListItem` via
+  // `busyByScheduleId[s.id] ?? null`.
+  const [busyByScheduleId, setBusyByScheduleId] = useState<Record<string, "toggle" | "run">>({});
+
+  // Bumped by Run-now success when the run targeted the currently-
+  // selected schedule. The detail pane treats this as a recent-fires
+  // refresh trigger (see `ScheduleDetail.recentFiresToken`). Bumping
+  // only on selected-target runs avoids over-fetching the recent-
+  // fires panel when the user runs a non-selected schedule.
+  const [recentFiresToken, setRecentFiresToken] = useState(0);
 
   // Issue #222 — "New schedule" modal state + supporting fetches.
   // `runtimes` is fetched here (mirroring Sessions.tsx) because
@@ -308,6 +330,96 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
     [setMasterDetailUrl],
   );
 
+  // Lifted toggle handler: optimistically flips `enabled` in the list
+  // (so the row badge updates immediately), patches the server, and
+  // rolls the badge back on failure. Keyed by `scheduleId` so concurrent
+  // mutations on different rows do not collide. Bumps `refreshToken`
+  // on success so the selected detail pane re-fetches preview /
+  // describe with the server's authoritative payload.
+  //
+  // Ported from `ScheduleDetail.handleToggleEnabled` with three tweaks:
+  // (1) keyed by `target.id` so it works for any row; (2) writes to
+  // `setSchedules` for the list-level optimistic update + rollback;
+  // (3) re-sorts via `sortByNextFire` so paused rows (typically
+  // `nextFireAt: null`) sink to the bottom and resumed rows surface
+  // back near the top.
+  const handleToggleEnabled = useCallback(
+    async (target: ScheduleView) => {
+      if (busyByScheduleId[target.id] !== undefined) return;
+      setBusyByScheduleId((prev) => ({ ...prev, [target.id]: "toggle" }));
+      setError(null);
+      const previousEnabled = target.enabled;
+      setSchedules((prev) =>
+        sortByNextFire(
+          prev.map((s) => (s.id === target.id ? { ...s, enabled: !previousEnabled } : s)),
+        ),
+      );
+      try {
+        const updated = await patchSchedule(target.id, { enabled: !previousEnabled });
+        if (!mounted.current) return;
+        setSchedules((prev) =>
+          sortByNextFire(prev.map((s) => (s.id === target.id ? { ...s, ...updated } : s))),
+        );
+        setRefreshToken((n) => n + 1);
+      } catch (e) {
+        if (!mounted.current) return;
+        // Roll back the optimistic flip.
+        setSchedules((prev) =>
+          sortByNextFire(
+            prev.map((s) => (s.id === target.id ? { ...s, enabled: previousEnabled } : s)),
+          ),
+        );
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (mounted.current) {
+          setBusyByScheduleId((prev) => {
+            if (prev[target.id] === undefined) return prev;
+            const next = { ...prev };
+            delete next[target.id];
+            return next;
+          });
+        }
+      }
+    },
+    [busyByScheduleId],
+  );
+
+  // Lifted Run-now handler: dispatches one immediate run, surfaces
+  // errors through the page banner, and bumps `recentFiresToken`
+  // ONLY when the run targeted the currently-selected schedule so
+  // the embedded recent-fires panel re-fetches. The aria-disabled
+  // guard in the menu means a paused schedule's "Run now" click is
+  // intercepted upstream; the `target.enabled` check here is belt-
+  // and-braces against direct programmatic invocation.
+  const handleRunNow = useCallback(
+    async (target: ScheduleView) => {
+      if (busyByScheduleId[target.id] !== undefined) return;
+      if (!target.enabled) return;
+      setBusyByScheduleId((prev) => ({ ...prev, [target.id]: "run" }));
+      setError(null);
+      try {
+        await runSchedule(target.id);
+        if (!mounted.current) return;
+        if (target.id === effectiveSelectedId) {
+          setRecentFiresToken((n) => n + 1);
+        }
+      } catch (e) {
+        if (!mounted.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (mounted.current) {
+          setBusyByScheduleId((prev) => {
+            if (prev[target.id] === undefined) return prev;
+            const next = { ...prev };
+            delete next[target.id];
+            return next;
+          });
+        }
+      }
+    },
+    [busyByScheduleId, effectiveSelectedId],
+  );
+
   // Mode-B entry handler — atomically writes the click target's
   // `fireTaskId` alongside the pinned `scheduleId`.
   const handleSelectFire = useCallback(
@@ -422,6 +534,13 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
                     schedules={visible}
                     selectedId={effectiveSelectedId}
                     onSelect={handleSelectSchedule}
+                    onEdit={setEditTarget}
+                    onToggleEnabled={handleToggleEnabled}
+                    onRunNow={handleRunNow}
+                    onDelete={setDeleteTarget}
+                    busyByScheduleId={busyByScheduleId}
+                    openMenuId={openMenuId}
+                    onMenuOpenChange={setOpenMenuId}
                   />
                 )}
               </div>
@@ -442,7 +561,7 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
                 key={effectiveSelectedId}
                 scheduleId={effectiveSelectedId}
                 currentWorkspaceId={currentWorkspaceId}
-                refreshToken={refreshToken}
+                refreshToken={refreshToken + recentFiresToken}
                 onPatched={handlePatched}
                 onRequestDelete={setDeleteTarget}
                 onRequestEdit={setEditTarget}
@@ -488,7 +607,13 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
       {editTarget && (
         <EditScheduleModal
           open={editTarget !== null}
-          schedule={editTarget}
+          // EditScheduleModal's `schedule` prop is typed as `ScheduleDetail`
+          // (carryover from the old detail-pane Edit flow) but the modal
+          // only reads view-level fields — it re-fetches the authoritative
+          // `describe` via `getSchedule` after PATCH (see
+          // EditScheduleModal.tsx:155). The empty `describe` here is
+          // never observed; the modal will populate it on the round-trip.
+          schedule={{ ...editTarget, describe: "" }}
           agents={agents}
           runtimes={runtimes}
           existingTimezones={existingTimezones}
