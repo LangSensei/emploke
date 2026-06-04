@@ -17,8 +17,8 @@
  */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ScheduleView } from "../src/api";
-import { ScheduleListItem } from "../src/components/schedules/ScheduleListItem";
+import type { ScheduleView } from "../../../src/api";
+import { ScheduleListItem } from "../../../src/components/schedules/ScheduleListItem";
 
 function makeView(overrides: Partial<ScheduleView> = {}): ScheduleView {
   return {
