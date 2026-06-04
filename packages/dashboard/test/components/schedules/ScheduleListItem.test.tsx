@@ -81,6 +81,52 @@ function renderRow(opts: RenderOpts = {}) {
 afterEach(() => cleanup());
 
 describe("ScheduleListItem — row + trigger", () => {
+  it("the row root has no role, no tabindex, no aria-selected (post-listbox migration)", () => {
+    renderRow();
+    const row = document.querySelector(".task-list__item") as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(row.getAttribute("role")).toBeNull();
+    expect(row.hasAttribute("tabindex")).toBe(false);
+    expect(row.hasAttribute("aria-selected")).toBe(false);
+  });
+
+  it("forward-defence: no `button button` nesting inside the row", () => {
+    renderRow({ menuOpen: true });
+    const row = document.querySelector(".task-list__item") as HTMLElement;
+    expect(row.querySelector("button button")).toBeNull();
+  });
+
+  it("the select-button advertises selection via aria-current", () => {
+    const { rerender, ...handlers } = renderRow({ selected: false });
+    const selectBtn = screen.getByRole("button", { name: "Sample schedule" });
+    expect(selectBtn.getAttribute("aria-current")).toBeNull();
+    rerender(
+      <ul>
+        <ScheduleListItem
+          schedule={handlers.schedule}
+          selected={true}
+          onSelect={handlers.onSelect}
+          onEdit={handlers.onEdit}
+          onToggleEnabled={handlers.onToggleEnabled}
+          onRunNow={handlers.onRunNow}
+          onDelete={handlers.onDelete}
+          busyAction={null}
+          menuOpen={false}
+          onMenuOpenChange={handlers.onMenuOpenChange}
+        />
+      </ul>,
+    );
+    expect(
+      screen.getByRole("button", { name: "Sample schedule" }).getAttribute("aria-current"),
+    ).toBe("true");
+  });
+
+  it("clicking the select-button calls onSelect", () => {
+    const { onSelect } = renderRow();
+    fireEvent.click(screen.getByRole("button", { name: "Sample schedule" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the trigger with `aria-label='Actions for schedule {name}'` and `aria-haspopup='menu'`", () => {
     renderRow({ schedule: makeView({ name: "Nightly sync" }) });
     const trigger = screen.getByTestId("schedule-row-menu-trigger-sched-a");
@@ -322,5 +368,19 @@ describe("ScheduleListItem — preserved list-page contract", () => {
       </ul>,
     );
     expect(screen.getAllByText(/Paused/i).length).toBeGreaterThan(0);
+  });
+});
+
+describe("ScheduleListItem — focus restore", () => {
+  it("after pressing Esc, focus returns to the `⋯` trigger", () => {
+    renderRow({ menuOpen: true });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByTestId("schedule-row-menu-trigger-sched-a"));
+  });
+
+  it("after a menuitem action, focus returns to the `⋯` trigger", () => {
+    renderRow({ menuOpen: true });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Edit$/ }));
+    expect(document.activeElement).toBe(screen.getByTestId("schedule-row-menu-trigger-sched-a"));
   });
 });

@@ -87,12 +87,7 @@ export function TaskList({
               <span className="task-list-group__count">{g.tasks.length}</span>
             </button>
             {!isCollapsed && (
-              <ul
-                className="task-list"
-                // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox pattern requires role on ul
-                role="listbox"
-                aria-label={`${g.label} tasks`}
-              >
+              <ul className="task-list" aria-label={`${g.label} tasks`}>
                 {g.tasks.map((t) => (
                   <TaskListItem
                     key={t.id}

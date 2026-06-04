@@ -37,8 +37,11 @@ export interface ScheduleListProps {
  * visually with the Tasks page without dragging in any new CSS.
  *
  * Row markup + ⋯ menu live in `ScheduleListItem`. This component is
- * a thin `<ul role="listbox">` wrapper that delegates rendering and
- * forwards the page-level coordination props per-row.
+ * a thin labelled `<ul>` wrapper that delegates rendering and forwards
+ * the page-level coordination props per-row. The `<ul>` carries no
+ * `role`: each row's interactive affordance is a real `<button>` that
+ * the screen reader announces directly, rather than an ARIA-faked
+ * listbox shape whose keyboard contract we don't actually implement.
  */
 export function ScheduleList({
   schedules,
@@ -53,8 +56,7 @@ export function ScheduleList({
   onMenuOpenChange,
 }: ScheduleListProps) {
   return (
-    // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox pattern requires role on ul
-    <ul className="task-list" role="listbox" aria-label="Schedules">
+    <ul className="task-list" aria-label="Schedules">
       {schedules.map((s) => (
         <ScheduleListItem
           key={s.id}
