@@ -38,10 +38,14 @@ export interface ScheduleListProps {
  *
  * Row markup + ⋯ menu live in `ScheduleListItem`. This component is
  * a thin labelled `<ul>` wrapper that delegates rendering and forwards
- * the page-level coordination props per-row. The `<ul>` carries no
- * `role`: each row's interactive affordance is a real `<button>` that
- * the screen reader announces directly, rather than an ARIA-faked
- * listbox shape whose keyboard contract we don't actually implement.
+ * the page-level coordination props per-row. The `<ul>` carries an
+ * explicit `role="list"` (workaround for Safari + VoiceOver stripping
+ * the implicit listitem role when `list-style: none` is set; see
+ * inline comment on the JSX) but does NOT use a widget role like
+ * `listbox`: each row's interactive affordance is a real `<button>`
+ * that the screen reader announces directly, rather than an
+ * ARIA-faked listbox shape whose keyboard contract we don't actually
+ * implement.
  */
 export function ScheduleList({
   schedules,
@@ -56,8 +60,9 @@ export function ScheduleList({
   onMenuOpenChange,
 }: ScheduleListProps) {
   return (
-    <ul className="task-list" aria-label="Schedules">
-      {schedules.map((s) => (
+    // biome-ignore lint/a11y/noRedundantRoles: Safari + VoiceOver strips the implicit listitem role from <li> children when the <ul> has `list-style: none` (defined for `.task-list` in styles.css). Without the explicit role here, AT users on macOS/iOS lose list semantics entirely (no "list, N items" announcement, no aria-posinset cues). The explicit role is a no-op in Chrome/Firefox/Edge but a load-bearing fix on Safari.
+    <ul role="list" className="task-list" aria-label="Schedules">
+      {schedules.map((s, idx, arr) => (
         <ScheduleListItem
           key={s.id}
           schedule={s}
@@ -70,6 +75,8 @@ export function ScheduleList({
           busyAction={busyByScheduleId[s.id] ?? null}
           menuOpen={openMenuId === s.id}
           onMenuOpenChange={(open) => onMenuOpenChange(open ? s.id : null)}
+          posinset={idx + 1}
+          setsize={arr.length}
         />
       ))}
     </ul>

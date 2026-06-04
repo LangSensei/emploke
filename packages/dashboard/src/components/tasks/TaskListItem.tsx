@@ -42,6 +42,16 @@ export interface TaskListItemProps {
   menuOpen: boolean;
   /** Request to open this row's menu (closes any other open one) or close it. */
   onMenuOpenChange: (open: boolean) => void;
+  /**
+   * 1-based position within the visible group (Running OR Completed —
+   * NOT the cross-group total). Required because the parent
+   * `TaskList` splits rows into two visual sections; each section is
+   * its own set for AT purposes, so positional cues like
+   * "row 2 of 5 running" only make sense within a single group.
+   */
+  posinset: number;
+  /** Total visible rows in the same group as this row. See {@link posinset}. */
+  setsize: number;
 }
 
 /**
@@ -83,6 +93,8 @@ export function TaskListItem({
   onRerun,
   menuOpen,
   onMenuOpenChange,
+  posinset,
+  setsize,
 }: TaskListItemProps) {
   const tone = STATUS_TONE[task.status];
   const isRunning = task.status === "running";
@@ -97,6 +109,17 @@ export function TaskListItem({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const refs = useMemo(() => [triggerRef, panelRef], []);
   const headlineId = useId();
+  // Stable IDs for each visible descriptive span. The select-button's
+  // accessible NAME comes from `aria-labelledby={headlineId}` (just the
+  // brief, once), and its accessible DESCRIPTION comes from
+  // `aria-describedby` chaining these IDs in DOM order. Without the
+  // chain, screen-reader users hear only the brief on focus and lose
+  // status / agent / runtime / time / id context entirely, because
+  // `aria-labelledby` REPLACES (not augments) descendant-text
+  // concatenation in the accessibility tree.
+  const statusId = useId();
+  const metaId = useId();
+  const idId = useId();
 
   const closeMenu = useCallback(
     (reason: CloseReason) => {
@@ -268,15 +291,19 @@ export function TaskListItem({
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${
         isRunning ? " task-list__item--running" : ""
       }`}
+      data-testid={`task-row-${task.id}`}
+      aria-posinset={posinset}
+      aria-setsize={setsize}
     >
       <button
         type="button"
         className="task-list__item-select"
         aria-current={selected ? "true" : undefined}
         aria-labelledby={headlineId}
+        aria-describedby={`${statusId} ${metaId} ${idId}`}
         onClick={onSelect}
       >
-        <span className="task-list__item-head">
+        <span id={statusId} className="task-list__item-head">
           <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
         </span>
         <span
@@ -286,7 +313,7 @@ export function TaskListItem({
         >
           {headline}
         </span>
-        <span className="task-list__item-meta muted">
+        <span id={metaId} className="task-list__item-meta muted">
           <span title={`Agent: ${task.agent}`}>{task.agent}</span>
           {runtime && (
             <>
@@ -297,7 +324,7 @@ export function TaskListItem({
           <span className="task-list__sep">·</span>
           <TaskRelativeTime task={task} />
         </span>
-        <code className="task-list__id task-list__id--muted" title={task.id}>
+        <code id={idId} className="task-list__id task-list__id--muted" title={task.id}>
           {task.id}
         </code>
       </button>
@@ -310,6 +337,7 @@ export function TaskListItem({
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           title="Actions"
+          data-testid={`task-row-menu-trigger-${task.id}`}
           onClick={(e) => {
             e.stopPropagation();
             onMenuOpenChange(!menuOpen);
@@ -322,6 +350,7 @@ export function TaskListItem({
             ref={panelRef}
             className={`task-list__item-menu-panel task-list__item-menu-panel--${placement}`}
             role="menu"
+            data-testid={`task-row-menu-${task.id}`}
             style={
               maxHeightPx != null
                 ? ({ "--menu-max-height": `${maxHeightPx}px` } as React.CSSProperties)

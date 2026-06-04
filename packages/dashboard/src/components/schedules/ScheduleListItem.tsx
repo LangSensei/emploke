@@ -51,6 +51,16 @@ export interface ScheduleListItemProps {
   /** Page-level single-open coordination: true iff this row's menu is the one open. */
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
+
+  /**
+   * 1-based position within the visible schedule list. Required so the
+   * `<li>` can advertise `aria-posinset` / `aria-setsize` to screen
+   * readers — without these, AT users on Safari/VoiceOver hear
+   * row content but no positional cues ("row 3 of 7").
+   */
+  posinset: number;
+  /** Total visible rows in the same list as this row. See {@link posinset}. */
+  setsize: number;
 }
 
 /**
@@ -108,6 +118,8 @@ export function ScheduleListItem({
   busyAction,
   menuOpen,
   onMenuOpenChange,
+  posinset,
+  setsize,
 }: ScheduleListItemProps) {
   const nextLabel = schedule.nextFireAt ? formatRelative(schedule.nextFireAt) : "—";
   const nextTitle = schedule.nextFireAt ? formatAbsolute(schedule.nextFireAt) : "no upcoming fire";
@@ -116,6 +128,16 @@ export function ScheduleListItem({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const refs = useMemo(() => [triggerRef, panelRef], []);
   const headlineId = useId();
+  // Stable IDs for each visible descriptive span. The select-button's
+  // accessible NAME comes from `aria-labelledby={headlineId}` (just the
+  // schedule name, once), and its accessible DESCRIPTION comes from
+  // `aria-describedby` chaining these IDs in DOM order. Without the
+  // chain, screen-reader users hear only the schedule name on focus and
+  // lose the Enabled/Paused state + cron + agent + runtime + next-fire
+  // context entirely, because `aria-labelledby` REPLACES (not augments)
+  // descendant-text concatenation in the accessibility tree.
+  const statusId = useId();
+  const metaId = useId();
 
   const closeMenu = useCallback(
     (reason: CloseReason) => {
@@ -290,15 +312,18 @@ export function ScheduleListItem({
         schedule.enabled ? "" : " task-list__item--paused"
       }`}
       data-testid={`schedule-row-${schedule.id}`}
+      aria-posinset={posinset}
+      aria-setsize={setsize}
     >
       <button
         type="button"
         className="task-list__item-select"
         aria-current={selected ? "true" : undefined}
         aria-labelledby={headlineId}
+        aria-describedby={`${statusId} ${metaId}`}
         onClick={onSelect}
       >
-        <span className="task-list__item-head">
+        <span id={statusId} className="task-list__item-head">
           <span
             className={`badge ${
               schedule.enabled ? "badge--success" : "badge--warn"
@@ -315,7 +340,7 @@ export function ScheduleListItem({
         >
           {schedule.name}
         </span>
-        <span className="task-list__item-meta muted">
+        <span id={metaId} className="task-list__item-meta muted">
           <code
             className="schedule-cron"
             title={`Cron: ${schedule.trigger.expr} (${schedule.trigger.tz})`}

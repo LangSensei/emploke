@@ -39,6 +39,8 @@ interface RenderOpts {
   task?: TaskRecord;
   selected?: boolean;
   menuOpen?: boolean;
+  posinset?: number;
+  setsize?: number;
 }
 
 function renderRow(opts: RenderOpts = {}) {
@@ -64,6 +66,8 @@ function renderRow(opts: RenderOpts = {}) {
         onRerun={handlers.onRerun}
         menuOpen={opts.menuOpen ?? false}
         onMenuOpenChange={handlers.onMenuOpenChange}
+        posinset={opts.posinset ?? 1}
+        setsize={opts.setsize ?? 1}
       />
     </ul>,
   );
@@ -103,6 +107,8 @@ describe("TaskListItem — row markup (post-listbox migration)", () => {
           onRerun={handlers.onRerun}
           menuOpen={false}
           onMenuOpenChange={handlers.onMenuOpenChange}
+          posinset={1}
+          setsize={1}
         />
       </ul>,
     );
@@ -148,6 +154,8 @@ describe("TaskListItem — row markup (post-listbox migration)", () => {
           onRerun={handlers.onRerun}
           menuOpen={true}
           onMenuOpenChange={handlers.onMenuOpenChange}
+          posinset={1}
+          setsize={1}
         />
       </ul>,
     );
@@ -268,5 +276,152 @@ describe("TaskListItem — focus restore", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /^Delete$/ }));
     const trigger = screen.getByRole("button", { name: /Actions for task Build a thing/ });
     expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe("TaskListItem — aria-describedby chain (visible-content exposure)", () => {
+  it("the row-select button chains status + meta + id via aria-describedby", () => {
+    // `aria-labelledby` REPLACES descendant-text concatenation in the
+    // accessibility tree, so without a `describedby` chain the screen
+    // reader would announce only the brief on focus. Each visible
+    // descriptive span gets a stable id and is chained on the button in
+    // DOM order; this test asserts that wiring is intact and resolvable.
+    renderRow({
+      task: makeTask({
+        id: "task-xyz",
+        agent: "emploke/dev",
+        status: "running",
+        metadata: { runtime: "copilot" },
+      }),
+    });
+    const selectBtn = screen.getByRole("button", { name: "Build a thing" });
+    const describedBy = selectBtn.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const ids = describedBy?.split(/\s+/).filter(Boolean) ?? [];
+    // Visible descriptive spans: status pill, meta (agent · runtime · time), id.
+    expect(ids.length).toBeGreaterThanOrEqual(3);
+    const describingTexts = ids
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .filter(Boolean);
+    const joined = describingTexts.join(" ");
+    expect(joined).toMatch(/Running/);
+    expect(joined).toMatch(/emploke\/dev/);
+    expect(joined).toMatch(/copilot/);
+    expect(joined).toContain("task-xyz");
+  });
+
+  it("the existing `aria-labelledby={headlineId}` still drives the accessible name", () => {
+    // Documents that name and description are separate channels: the
+    // describedby chain must NOT contaminate the announced name (the
+    // existing `getByRole("button", { name: "Build a thing" })` query
+    // would resolve a fuzzy match otherwise).
+    renderRow();
+    const selectBtn = screen.getByRole("button", { name: "Build a thing" });
+    expect(selectBtn.getAttribute("aria-labelledby")).toBeTruthy();
+  });
+});
+
+describe("TaskListItem — aria-posinset / aria-setsize", () => {
+  it("li exposes aria-posinset and aria-setsize matching the props", () => {
+    renderRow({
+      task: makeTask({ id: "task-a" }),
+      posinset: 2,
+      setsize: 5,
+    });
+    const li = screen.getByTestId("task-row-task-a");
+    expect(li.getAttribute("aria-posinset")).toBe("2");
+    expect(li.getAttribute("aria-setsize")).toBe("5");
+  });
+});
+
+describe("TaskListItem — symmetric task-row-* testids (mirrors schedule-row-*)", () => {
+  it("renders task-row-{id} on the <li>, task-row-menu-trigger-{id} on the trigger, and task-row-menu-{id} on the open panel", () => {
+    renderRow({ task: makeTask({ id: "task-zebra" }), menuOpen: true });
+    expect(screen.getByTestId("task-row-task-zebra").tagName).toBe("LI");
+    expect(screen.getByTestId("task-row-menu-trigger-task-zebra").tagName).toBe("BUTTON");
+    const menu = screen.getByTestId("task-row-menu-task-zebra");
+    expect(menu.getAttribute("role")).toBe("menu");
+  });
+
+  it("task-row-menu-{id} is absent while the menu is closed (only the trigger remains)", () => {
+    renderRow({ task: makeTask({ id: "task-zebra" }), menuOpen: false });
+    expect(screen.queryByTestId("task-row-menu-task-zebra")).toBeNull();
+    expect(screen.getByTestId("task-row-menu-trigger-task-zebra")).toBeTruthy();
+  });
+});
+
+describe("TaskListItem — outside-click deferred focus restore", () => {
+  // Spec note: `closeMenu("outside")` defers via setTimeout(0) and only
+  // refocuses the trigger when nothing else absorbed the pointerdown
+  // (`document.activeElement === document.body`). These assertions
+  // exercise the macrotask flush without relying on fake timers (which
+  // brittle around React's act() scheduler in this codebase).
+  it("outside-click onto a non-focusable area restores focus to the `⋯` trigger after the deferred check", async () => {
+    renderRow({ menuOpen: true });
+    const trigger = screen.getByRole("button", { name: /Actions for task Build a thing/ });
+    // When the menu opens, a useEffect auto-focuses the first menuitem.
+    // Reset focus to body (the realistic precondition for the deferred-
+    // restore branch — the user clicked away into non-focusable space).
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.pointerDown(document.body);
+
+    // Flush the queued setTimeout(0). The wrapping promise resolves on
+    // the next macrotask, after the queued one has fired.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("outside-click that focuses another focusable does NOT steal focus back to the `⋯` trigger", async () => {
+    // Render the row plus an external focusable. Simulate the natural
+    // pointer-focus sequence: pointerdown fires (useClickOutside reacts),
+    // then the browser focuses the button. The deferred-restore check
+    // must observe activeElement === otherButton (not body) and leave
+    // focus alone.
+    const handlers = {
+      onSelect: vi.fn(),
+      onDelete: vi.fn(),
+      onCancel: vi.fn().mockResolvedValue(undefined),
+      onRerun: vi.fn(),
+      onMenuOpenChange: vi.fn(),
+    };
+    render(
+      <div>
+        <ul>
+          <TaskListItem
+            task={makeTask({ id: "task-row-a", brief: "Row A" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onDelete={handlers.onDelete}
+            onCancel={handlers.onCancel}
+            onRerun={handlers.onRerun}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={1}
+          />
+        </ul>
+        <button type="button" data-testid="outside-focusable">
+          elsewhere
+        </button>
+      </div>,
+    );
+    const triggerA = screen.getByRole("button", { name: /Actions for task Row A/ });
+    const elsewhere = screen.getByTestId("outside-focusable") as HTMLButtonElement;
+
+    fireEvent.pointerDown(elsewhere);
+    // jsdom does not auto-focus on pointerdown the way real browsers do
+    // for `<button>` elements; simulate the natural focus shift directly.
+    elsewhere.focus();
+    expect(document.activeElement).toBe(elsewhere);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Deferred-restore must NOT pull focus back to triggerA because
+    // activeElement was no longer body when the timeout fired.
+    expect(document.activeElement).toBe(elsewhere);
+    expect(document.activeElement).not.toBe(triggerA);
   });
 });
