@@ -1,9 +1,9 @@
-// PR 4/4 of #61 — workspace-scoped cron triggers. Mounted at
-// `/api/workspaces/:wsId/schedules` server-side (see
-// `packages/server/src/routes/schedules.ts`). The dashboard surfaces
-// list + detail (read), enable-toggle + delete + run-now (narrow
-// mutation slice); create / cron edit stay CLI-only in v1 per the
-// #61 RFC.
+// Schedules REST client. Mirrors the routes in
+// `packages/contracts/src/routes.ts` (`schedule.create`,
+// `schedule.update`, `schedule.list`, etc.). Cron expression,
+// instructions, window, and enabled flag are all editable from both
+// the dashboard (Create/EditScheduleModal) and the CLI; server
+// handlers live in `packages/server/src/routes/schedules.ts`.
 //
 // Mutation routes are URL-discriminated by `target.kind` (#225–#229):
 // `POST /schedules/task` + `PATCH /schedules/task/:sid` for the task
@@ -47,8 +47,8 @@ export interface ScheduleDetail extends ScheduleView {
 /**
  * Body for `PATCH /schedules/task/:sid` — RFC 7396 deep-merge for
  * `target`, wholesale-replace for `trigger`, scalar-set for
- * `name` / `enabled`. Mirrors `TaskSchedulePatchBody` in the server
- * manifest (`packages/server/src/routes/manifest.ts`). Declared
+ * `name` / `enabled`. Mirrors `TaskSchedulePatchBody` in the shared
+ * route contracts (`packages/contracts/src/routes.ts`). Declared
  * locally rather than re-exported from `@emploke/schedule` because
  * the dashboard imports types only.
  *

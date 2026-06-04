@@ -381,10 +381,13 @@ export const handlers = [
   http.all("/api/*", ({ request }) => {
     if (request.method !== "GET") {
       console.warn(
-        `[mocks] ${request.method} ${request.url} — read-only mocks; phase 2 tracked in #213`,
+        `[mocks] ${request.method} ${request.url} — unmocked mutation route; only the /schedules slice is implemented (phase 2 for the rest tracked in #213)`,
       );
       return HttpResponse.json(
-        { error: "Mutations are not implemented in read-only mock mode (#213)" },
+        {
+          error:
+            "Mutation route not implemented in mock mode — only the /schedules slice is mocked today (#213)",
+        },
         { status: 501 },
       );
     }
