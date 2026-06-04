@@ -388,10 +388,11 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
               </div>
               <p className="empty__title">No schedules yet</p>
               <p className="empty__hint">
-                Get started by clicking the <strong>New schedule</strong> button above. Once a
-                schedule exists, use the <strong>Edit</strong> action on its row to change the cron
-                expression, runtime, or window — or run <code>emploke schedule patch</code> for the
-                scripted equivalent.
+                Click <strong>New schedule</strong> to set up a cron-triggered agent run — preview
+                the next fires before you save. Once a schedule exists, select it and use the{" "}
+                <strong>Edit</strong> button in the detail panel to change the schedule, target, or
+                runtime — or run <code>emploke schedule patch &lt;id&gt;</code> for the scripted
+                equivalent.
               </p>
             </div>
           </div>
