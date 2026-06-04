@@ -24,7 +24,7 @@ need an agent for work X
              pick the closest abstract role; curl the upstream template
            draft via template-base.md + writing-good-agent-prompts.md
              (use the upstream role template as a STARTING POINT, specialize for THIS mission)
-           install via file:// origin
+           install via file: origin
            PROBE (see probe-tasks.md)
            on probe success → DISPATCH
 ```
@@ -99,9 +99,9 @@ Process:
    If the index has no good match, skip this step and go to draft-from-scratch via the references below.
 
 4. Draft the AGENTS.md using `template-base.md` as the frame and `writing-good-agent-prompts.md` for the body content. When step 3 yielded a template, mine it for: mission framing, critical rules, workflow phases, and success metrics — then **specialize each section for your mission** (your stack, your conventions, your acceptance criteria). Drop sections that don't apply.
-5. Install via `file://` origin (see template-base.md for the install command).
+5. Install via `file:` origin (see template-base.md for the install command).
 6. **Probe** before adding to `hires.md`.
-7. Iterate the agent file based on probe results — `file://` origins are mutable; you can edit and re-install.
+7. Iterate the agent file based on probe results — `file:` origins are mutable; you can edit and re-install.
 
 ## When not to create a new agent
 
