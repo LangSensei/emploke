@@ -208,10 +208,12 @@ describe("SchedulesPage list", () => {
 describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", () => {
   const agents = [makeAgent("emploke/dev"), makeAgent("emploke/review")];
 
-  // ── Zero-state copy regression: the old "CLI-only in v1" sentence
-  // for creation has been replaced with a CTA pointing at the New
-  // schedule button. Existing edit-side CLI-only language stays
-  // (emploke schedule patch).
+  // ── Zero-state copy regression: the old "Create one from the CLI"
+  // sentence for creation has been replaced with a CTA pointing at
+  // the New schedule button. The empty-state copy still mentions
+  // `emploke schedule patch` as the scripted equivalent for editing
+  // an existing schedule, so the assertion below pins that the CLI
+  // command name stays visible to users.
   it("zero-state copy reflects the new CTA, not the old CLI-only sentence", async () => {
     mockListSchedules.mockResolvedValue([]);
     renderSchedules("/workspaces/ws-1/runtime/schedules", agents);
@@ -219,8 +221,8 @@ describe("SchedulesPage — New schedule CTA + zero-state copy (issue #222)", ()
     expect(screen.getAllByText(/New schedule/i).length).toBeGreaterThan(0);
     // The pre-#222 sentence "Create one from the CLI" must not be there.
     expect(screen.queryByText(/Create one from the CLI/i)).toBeNull();
-    // The edit half DOES stay CLI-only — keep the patch language so
-    // users know the rule for editing.
+    // The `emploke schedule patch` reference is the scripted-edit
+    // hint — this assertion pins it stays visible in the empty state.
     expect(screen.getByText(/emploke schedule patch/)).toBeTruthy();
   });
 

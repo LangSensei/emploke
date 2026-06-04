@@ -33,8 +33,10 @@ Fixture coverage today (read-only, issue #212 PR-A):
   two terminal ones so the activity tab has user / assistant /
   thinking / tool_call / system / summary kinds to render.
 
-Mutations (POST / PATCH / DELETE) return **501** — read-only by
-design; phase-2 mutation support is tracked in issue #213.
+Mutations are **read-only with a narrow schedules-mutation slice**:
+schedules can be created, edited, run, and deleted against the mocks;
+all other POST/PATCH/DELETE routes still return 501. Phase-2 mutation
+coverage for the rest of the surface is tracked in issue #213.
 
 To add a fixture, edit the relevant file under `src/mocks/fixtures/`,
 add a handler in `src/mocks/handlers.ts` if you need a new route, and

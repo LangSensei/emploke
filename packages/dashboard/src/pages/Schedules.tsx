@@ -45,11 +45,9 @@ const DEFAULT_FIRE_TASK_POLL_INTERVAL_MS = 4000;
 /**
  * Schedules page (PR 4/4 of #61) — workspace-scoped cron-trigger
  * surface. Master-detail: filtered list on the left, detail panel on
- * the right driven by `?scheduleId=` in the URL.
- *
- * Per the #61 RFC, schedule creation + cron / instructions edits
- * stay CLI-only in v1; the dashboard surfaces the enable toggle,
- * Run-now, and Delete only.
+ * the right driven by `?scheduleId=` in the URL. The page wires up
+ * the full mutation surface (create / edit / enable-toggle /
+ * Run-now / delete) via the modals in `components/schedules/`.
  *
  * URL-driven filters (mirrors Tasks page pattern, Phase 1.5 Block G):
  *
@@ -390,9 +388,11 @@ export function SchedulesPage({ agents, currentWorkspaceId, config }: SchedulesP
               </div>
               <p className="empty__title">No schedules yet</p>
               <p className="empty__hint">
-                Get started by clicking the <strong>New schedule</strong> button above.
-                Cron-expression editing of existing schedules stays CLI-only in v1 (
-                <code>emploke schedule patch</code>).
+                Click <strong>New schedule</strong> to set up a cron-triggered agent run — preview
+                the next fires before you save. Once a schedule exists, select it and use the{" "}
+                <strong>Edit</strong> button in the detail panel to change the schedule, target, or
+                runtime — or run <code>emploke schedule patch &lt;id&gt;</code> for the scripted
+                equivalent.
               </p>
             </div>
           </div>

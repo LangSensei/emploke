@@ -48,10 +48,13 @@ asserts the guarantee against the built `dist/` output.
 
 ## Mutations
 
-POST/PATCH/DELETE are intentionally not mocked (read-only phase 1).
-The catch-all handler returns HTTP 501 and logs the route to the
-browser console so designers can see which surface a phase-2
-implementation needs to cover. Tracking: issue #213.
+POST/PATCH/DELETE are intentionally **mostly** not mocked — the only
+exception is the `/schedules` surface (POST, PATCH, DELETE, POST
+`/schedules/:id/run`) which is fully implemented to unblock the
+dashboard schedule UI. Other mutation routes still hit the catch-all,
+which returns HTTP 501 and logs the route to the browser console so
+designers can see which surface a phase-2 implementation needs to
+cover. Tracking: issue #213.
 
 ## Regenerating the service worker
 
