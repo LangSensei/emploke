@@ -2,7 +2,7 @@
 name: strategist
 scope: emploke
 description: "Strategic analysis and improvement proposals for emploke — researches AI agent frameworks, compares with emploke architecture, and produces actionable optimization proposals"
-version: 1.0.0
+version: 1.0.1
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
