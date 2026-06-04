@@ -1,68 +1,92 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { TaskRecord } from "../../api";
+import type { ScheduleView } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
+import { formatAbsolute, formatRelative } from "../../utils/time";
 import { MoreHorizontalIcon } from "../Icons";
-import { StatusBadge } from "./StatusBadge";
-import { readRuntime, STATUS_TONE } from "./shared";
-import { TaskRelativeTime } from "./TaskRelativeTime";
 
-export interface TaskListItemProps {
-  task: TaskRecord;
+export interface ScheduleListItemProps {
+  schedule: ScheduleView;
   selected: boolean;
   onSelect: () => void;
-  onDelete: () => void;
+
   /**
-   * For non-terminal tasks the row-level affordance is "Cancel", not
-   * "Delete". Opens the page-level cancel-confirm modal; the actual
-   * `cancelTask(...)` call lives there.
+   * State-aware row actions. The page lifts these handlers up so any
+   * row's menu can act on any schedule without it being selected first
+   * (master-list independence — mirrors the Tasks row pattern, so the
+   * list is the canonical action surface and the detail pane is the
+   * canonical information surface).
    */
-  onCancel: () => Promise<void> | void;
-  /** Re-open the dispatch modal pre-filled from this task. */
-  onRerun: () => void;
-  /** Page-level single-open coordination: true when this row's menu is the one open. */
+  onEdit: () => void;
+  onToggleEnabled: () => Promise<void> | void;
+  onRunNow: () => Promise<void> | void;
+  onDelete: () => void;
+
+  /**
+   * Row-scoped busy state. `null` means idle; `"toggle"` means a
+   * patch is in flight for THIS row; `"run"` means a dispatch is in
+   * flight. Other rows' busy states do not appear here (the page
+   * lifts the map and the list forwards each row's slice).
+   */
+  busyAction: "toggle" | "run" | null;
+
+  /** Page-level single-open coordination: true iff this row's menu is the one open. */
   menuOpen: boolean;
-  /** Request to open this row's menu (closes any other open one) or close it. */
   onMenuOpenChange: (open: boolean) => void;
 }
 
 /**
- * One row of the task list. Renders as a card-ish flex row so a tall
- * detail panel on the right never stretches it.
+ * One row of the schedule list. Owns the per-row `⋯` action menu
+ * (Edit / Pause / Resume / Run now / Delete) and the row's selection
+ * affordance.
  *
- * Two-row visual hierarchy:
- *   row 1: status pill (with inline status-tone dot, pulsing only when
- *          running) · — spacer — · `⋯` menu (Cancel / Re-dispatch /
- *          Copy ID / Delete, status-aware)
- *   row 2: brief (title-prominent, clamped to 2 lines — bug-bash F7)
- *   row 3: agent · runtime · relative time (muted)
- *   row 4: full id (mono, muted, demoted text-xs, right-aligned —
- *          bug-bash F11; the row title aligns flush-left independently).
+ * Mirrors `TaskListItem` 1:1 — the `⋯` trigger shape, the controlled
+ * popover, the flip-and-size measurement, and the keyboard handlers
+ * are the same — so users moving between Tasks and Schedules don't
+ * have to re-learn the interaction. The page-level `Schedules.tsx`
+ * lifts all four action handlers up, which means any row's menu can
+ * mutate any schedule without it being selected first; the list is
+ * the canonical *action* surface, the detail pane is the canonical
+ * *information* surface.
  *
- * Iter-3: the per-row `⋯` is a controlled popover (state-driven open
- * via `menuOpen` + `onMenuOpenChange`; click-outside via
+ * The menuitems are state-aware:
+ *
+ *   - `Pause` / `Resume` label flips on `schedule.enabled` and the
+ *     menuitem carries `aria-pressed={schedule.enabled}` so screen
+ *     readers continue to announce the toggle state.
+ *   - `Run now` flips to "Run now — resume schedule first" and becomes
+ *     `aria-disabled="true"` (NOT native `disabled`, so the element
+ *     stays keyboard-focusable and the inline helper text reaches AT
+ *     users) when the schedule is paused.
+ *   - `Delete` carries the danger class and renders last so it's
+ *     visually distinct from the routine actions above it.
+ *
+ * Mechanics: the `⋯` is a controlled popover (state-driven open via
+ * `menuOpen` + `onMenuOpenChange`; click-outside via
  * {@link useClickOutside}; Esc to close; absolute-positioned panel so
  * it floats above sibling rows and the detail pane without altering
  * row geometry). Only one row's menu may be open at a time — that
- * single-open coordination is owned by `TaskList`.
+ * single-open coordination is owned by the page (`Schedules.tsx`)
+ * rather than by `ScheduleList`, because the action handlers also
+ * live at the page level (close-on-success stays local to the same
+ * surface).
+ *
+ * See #313 for the ongoing row-list a11y work (restore focus to the
+ * `⋯` trigger after click-outside).
  */
-export function TaskListItem({
-  task,
+export function ScheduleListItem({
+  schedule,
   selected,
   onSelect,
+  onEdit,
+  onToggleEnabled,
+  onRunNow,
   onDelete,
-  onCancel,
-  onRerun,
+  busyAction,
   menuOpen,
   onMenuOpenChange,
-}: TaskListItemProps) {
-  const tone = STATUS_TONE[task.status];
-  const isRunning = task.status === "running";
-  // Per-row Cancel debounce — rapid double-clicks would fan into N
-  // round-trips. Disabling the menu item keeps the affordance honest.
-  const [cancelling, setCancelling] = useState(false);
-  const runtime = readRuntime(task);
-  const headline = task.brief;
-  const tooltip = task.details ? `${task.brief}\n\n${task.details}` : task.brief;
+}: ScheduleListItemProps) {
+  const nextLabel = schedule.nextFireAt ? formatRelative(schedule.nextFireAt) : "—";
+  const nextTitle = schedule.nextFireAt ? formatAbsolute(schedule.nextFireAt) : "no upcoming fire";
 
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -79,7 +103,8 @@ export function TaskListItem({
   // Hand-rolled: measure trigger + nearest scrollable ancestor on open,
   // pick "below" if there's room, otherwise "above"; if neither side
   // fits, pick the larger side and cap height so the panel scrolls
-  // internally. Re-measure on scroll/resize while open.
+  // internally. Re-measure on scroll/resize while open. Ported 1:1
+  // from `TaskListItem.tsx` to keep the two row menus visually aligned.
   const [placement, setPlacement] = useState<"below" | "above">("below");
   const [maxHeightPx, setMaxHeightPx] = useState<number | null>(null);
 
@@ -91,11 +116,6 @@ export function TaskListItem({
 
     const MARGIN = 8;
 
-    // Return the nearest ancestor that actually scrolls vertically. Only
-    // `auto`/`scroll` qualify — `hidden` clips without scrolling, and
-    // treating it as a scroll container mismeasures inside e.g. border-
-    // radius cards. Returns null when no scrollable ancestor exists, in
-    // which case the viewport (window.innerHeight) is the bounding box.
     const findScrollContainer = (el: HTMLElement | null): HTMLElement | null => {
       let node: HTMLElement | null = el?.parentElement ?? null;
       while (node && node !== document.body) {
@@ -109,9 +129,6 @@ export function TaskListItem({
     };
 
     const container = findScrollContainer(trigger);
-
-    // Cache the panel's intrinsic height on first measurement so scroll-
-    // tick recomputes don't pay another forced-layout read per frame.
     let cachedPanelHeight: number | null = null;
 
     const measure = () => {
@@ -121,8 +138,6 @@ export function TaskListItem({
       const viewportBottom = containerRect?.bottom ?? window.innerHeight;
 
       if (cachedPanelHeight == null) {
-        // Natural panel height: temporarily clear any cap so we measure
-        // intrinsic height, then restore.
         const prevMaxHeight = panel.style.maxHeight;
         panel.style.maxHeight = "";
         cachedPanelHeight = panel.getBoundingClientRect().height;
@@ -150,9 +165,6 @@ export function TaskListItem({
 
     measure();
 
-    // rAF-throttle: scroll fires many times per frame; coalesce into one
-    // recompute per animation frame so we don't force synchronous layout
-    // on every tick.
     let raf = 0;
     const onScrollOrResize = () => {
       if (raf) return;
@@ -209,17 +221,31 @@ export function TaskListItem({
 
   const handleCopyId = async () => {
     try {
-      await navigator.clipboard.writeText(task.id);
+      await navigator.clipboard.writeText(schedule.id);
     } catch {
       /* clipboard unavailable (e.g. insecure context) — silently no-op */
     }
     closeMenu();
   };
 
+  const rowBusy = busyAction !== null;
+  const runNowDisabledByPause = !schedule.enabled;
+
+  const pauseResumeLabel = (() => {
+    if (busyAction === "toggle") return schedule.enabled ? "Pausing…" : "Resuming…";
+    return schedule.enabled ? "Pause" : "Resume";
+  })();
+
+  const runNowLabel = (() => {
+    if (busyAction === "run") return "Dispatching…";
+    if (runNowDisabledByPause) return "Run now — resume schedule first";
+    return "Run now";
+  })();
+
   return (
     <li
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${
-        isRunning ? " task-list__item--running" : ""
+        schedule.enabled ? "" : " task-list__item--paused"
       }`}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -232,18 +258,25 @@ export function TaskListItem({
       role="option"
       tabIndex={0}
       aria-selected={selected}
+      data-testid={`schedule-row-${schedule.id}`}
     >
       <div className="task-list__item-head">
-        <StatusBadge status={task.status} tone={tone} pulse={isRunning} />
+        <span
+          className={`badge ${schedule.enabled ? "badge--success" : "badge--warn"} badge--with-dot`}
+        >
+          <span className="badge__dot" aria-hidden="true" />
+          {schedule.enabled ? "Enabled" : "Paused"}
+        </span>
         <div className="task-list__item-menu">
           <button
             ref={triggerRef}
             type="button"
             className="btn btn--ghost btn--icon task-list__item-menu-trigger"
-            aria-label={`Actions for task ${task.brief}`}
+            aria-label={`Actions for schedule ${schedule.name}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title="Actions"
+            data-testid={`schedule-row-menu-trigger-${schedule.id}`}
             onClick={(e) => {
               e.stopPropagation();
               onMenuOpenChange(!menuOpen);
@@ -256,6 +289,7 @@ export function TaskListItem({
               ref={panelRef}
               className={`task-list__item-menu-panel task-list__item-menu-panel--${placement}`}
               role="menu"
+              data-testid={`schedule-row-menu-${schedule.id}`}
               style={
                 maxHeightPx != null
                   ? ({ "--menu-max-height": `${maxHeightPx}px` } as React.CSSProperties)
@@ -264,40 +298,52 @@ export function TaskListItem({
               onClick={(e) => e.stopPropagation()}
               onKeyDown={handlePanelKeyDown}
             >
-              {isRunning ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="task-list__item-menu-option"
-                  disabled={cancelling}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (cancelling) return;
-                    setCancelling(true);
-                    try {
-                      await onCancel();
-                    } finally {
-                      setCancelling(false);
-                    }
-                    closeMenu();
-                  }}
-                >
-                  Cancel
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="task-list__item-menu-option"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRerun();
-                    closeMenu();
-                  }}
-                >
-                  Re-dispatch
-                </button>
-              )}
+              <button
+                type="button"
+                role="menuitem"
+                className="task-list__item-menu-option"
+                aria-disabled={runNowDisabledByPause ? true : undefined}
+                disabled={!runNowDisabledByPause && rowBusy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (runNowDisabledByPause) return;
+                  if (rowBusy) return;
+                  closeMenu();
+                  void onRunNow();
+                }}
+              >
+                {runNowLabel}
+              </button>
+              {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: spec §5d/§7b/acceptance #6 require `aria-pressed` on the Pause/Resume menuitem to preserve the existing detail-pane toggle button's accessibility contract (so screen readers continue to announce the toggle state through the row menu). */}
+              <button
+                type="button"
+                role="menuitem"
+                className="task-list__item-menu-option"
+                aria-pressed={schedule.enabled}
+                disabled={rowBusy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (rowBusy) return;
+                  closeMenu();
+                  void onToggleEnabled();
+                }}
+              >
+                {pauseResumeLabel}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="task-list__item-menu-option"
+                disabled={rowBusy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (rowBusy) return;
+                  closeMenu();
+                  onEdit();
+                }}
+              >
+                Edit
+              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -313,10 +359,12 @@ export function TaskListItem({
                 type="button"
                 role="menuitem"
                 className="task-list__item-menu-option task-list__item-menu-option--danger"
+                disabled={rowBusy}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete();
+                  if (rowBusy) return;
                   closeMenu();
+                  onDelete();
                 }}
               >
                 Delete
@@ -325,23 +373,32 @@ export function TaskListItem({
           )}
         </div>
       </div>
-      <div className="task-list__item-headline task-list__item-headline--clamp" title={tooltip}>
-        {headline}
+      <div
+        className="task-list__item-headline task-list__item-headline--clamp"
+        title={schedule.name}
+      >
+        {schedule.name}
       </div>
       <div className="task-list__item-meta muted">
-        <span title={`Agent: ${task.agent}`}>{task.agent}</span>
-        {runtime && (
+        <code
+          className="schedule-cron"
+          title={`Cron: ${schedule.trigger.expr} (${schedule.trigger.tz})`}
+        >
+          {schedule.trigger.expr}
+        </code>
+        <span className="task-list__sep">·</span>
+        <span title={`Agent: ${schedule.target.agent}`}>{schedule.target.agent}</span>
+        {schedule.target.runtime ? (
           <>
             <span className="task-list__sep">·</span>
-            <span title={`Runtime: ${runtime}`}>{runtime}</span>
+            <span title={`Runtime: ${schedule.target.runtime}`}>{schedule.target.runtime}</span>
           </>
-        )}
+        ) : null}
         <span className="task-list__sep">·</span>
-        <TaskRelativeTime task={task} />
+        <span className="muted" title={nextTitle}>
+          Next {nextLabel}
+        </span>
       </div>
-      <code className="task-list__id task-list__id--muted" title={task.id}>
-        {task.id}
-      </code>
     </li>
   );
 }

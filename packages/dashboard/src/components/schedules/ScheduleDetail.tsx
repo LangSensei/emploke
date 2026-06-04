@@ -1,25 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   getSchedule,
-  patchSchedule,
   previewSchedule,
-  runSchedule,
   type ScheduleDetail as ScheduleDetailType,
   type SchedulePreview,
 } from "../../api";
-import { useMounted } from "../../hooks/useMounted";
 import { formatAbsolute, formatRelative } from "../../utils/time";
 import { ScheduleRecentFires } from "./ScheduleRecentFires";
 
 export interface ScheduleDetailProps {
   scheduleId: string;
   currentWorkspaceId: string;
-  /** Bumped by the parent after a successful list mutation (e.g. delete) so we re-fetch. */
+  /** Bumped by the parent after a successful list mutation (e.g. delete or row Pause/Resume) so we re-fetch the canonical detail + preview. */
   refreshToken: number;
-  onPatched: (next: ScheduleDetailType) => void;
-  onRequestDelete: (target: ScheduleDetailType) => void;
-  /** Opens the Edit modal at the page level. */
-  onRequestEdit: (target: ScheduleDetailType) => void;
+  /** Bumped by the parent's row-level Run now success (only when the run targeted the currently-selected schedule) so the recent-fires panel re-fetches. */
+  recentFiresToken: number;
+  /**
+   * Optimistic-enabled override sourced from the parent's list state.
+   * Patches the one flag the parent can be authoritative about during
+   * optimistic flips: when a row's Pause/Resume click flips the list
+   * row's badge immediately, the detail pane's badge MUST flip in the
+   * same frame — otherwise the same screen shows two contradictory
+   * states for ~one network roundtrip (the detail pane's internal
+   * `getSchedule(scheduleId)` re-fetch only runs after `refreshToken`
+   * bumps, which the parent only bumps on patch success). The override
+   * naturally rolls back when the parent rolls its list-state flip
+   * back on patch failure. `undefined` means the parent has no
+   * authoritative value yet (initial load); fall back to the
+   * server-fetched `detail.enabled` in that case.
+   */
+  enabledOverride?: boolean;
   /** Swaps the right pane into Mode B (fire's task detail) via the parent's atomic URL writer. */
   onSelectFire: (taskId: string) => void;
 }
@@ -31,38 +41,36 @@ const PREVIEW_COUNT = 1;
  *
  * Header: two-column row — left side carries the schedule's identity
  * (name + enabled badge, cron expr + tz + describe, agent + runtime),
- * right side carries the temporal facts (next fire, last fired). The
- * action row (Edit / Pause-Resume / Run-now / Delete) spans the full
- * width below. The two-column split exists so the right edge of the
- * header isn't dead space — schedule identity is short, the temporal
- * facts are the user's other primary anchor.
+ * right side carries the temporal facts (next fire, last fired).
  *
  * Body: brief, optional details, recent fires. We do NOT render a
  * "Next N fires" list anymore — the single next-fire fact lives in
  * the header where users actually look for it, and the body stays
  * focused on "what is this schedule for" + "what has it produced".
  *
+ * Row-level actions (Edit / Pause-Resume / Run-now / Delete) now live
+ * exclusively in the list's per-row `⋯` menu (see `ScheduleListItem`).
+ * The detail pane is the canonical *information* surface; the list is
+ * the canonical *action* surface. The page-level
+ * `refreshToken` / `recentFiresToken` props are the seams that keep
+ * the detail in sync after a row mutation.
+ *
  * The next-fire preview is fetched on schedule change and on each
- * successful patch (in case the trigger changed). We still ask the
- * server for `n=1` rather than computing locally because cron parsing
- * + tz handling is the server's job; the dashboard just renders.
+ * page-driven `refreshToken` bump. We still ask the server for `n=1`
+ * rather than computing locally because cron parsing + tz handling is
+ * the server's job; the dashboard just renders.
  */
 export function ScheduleDetail({
   scheduleId,
   currentWorkspaceId,
   refreshToken,
-  onPatched,
-  onRequestDelete,
-  onRequestEdit,
+  recentFiresToken,
+  enabledOverride,
   onSelectFire,
 }: ScheduleDetailProps) {
   const [detail, setDetail] = useState<ScheduleDetailType | null>(null);
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<"toggle" | "run" | null>(null);
-  const [recentRefresh, setRecentRefresh] = useState(0);
-
-  const mounted = useMounted();
 
   // Fetch detail + preview together so the header always renders with
   // a consistent describe / next-fire pair.
@@ -97,56 +105,6 @@ export function ScheduleDetail({
     };
   }, [scheduleId, refreshToken]);
 
-  const reloadPreview = useCallback(() => {
-    previewSchedule(scheduleId, { n: PREVIEW_COUNT })
-      .then((p) => {
-        if (mounted.current) setPreview(p);
-      })
-      .catch(() => {
-        /* keep the previous preview; the error already shows in the header */
-      });
-  }, [scheduleId]);
-
-  const handleToggleEnabled = useCallback(async () => {
-    if (!detail || busyAction !== null) return;
-    const previous = detail;
-    const next = { ...detail, enabled: !detail.enabled };
-    setDetail(next);
-    setBusyAction("toggle");
-    setError(null);
-    try {
-      const updated = await patchSchedule(scheduleId, { enabled: !previous.enabled });
-      if (!mounted.current) return;
-      // Server doesn't return describe on PATCH — keep the previous one.
-      const merged: ScheduleDetailType = { ...updated, describe: previous.describe };
-      setDetail(merged);
-      onPatched(merged);
-      reloadPreview();
-    } catch (e) {
-      if (!mounted.current) return;
-      setDetail(previous);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (mounted.current) setBusyAction(null);
-    }
-  }, [detail, busyAction, scheduleId, onPatched, reloadPreview]);
-
-  const handleRunNow = useCallback(async () => {
-    if (!detail || busyAction !== null) return;
-    setBusyAction("run");
-    setError(null);
-    try {
-      await runSchedule(scheduleId);
-      if (!mounted.current) return;
-      setRecentRefresh((n) => n + 1);
-    } catch (e) {
-      if (!mounted.current) return;
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (mounted.current) setBusyAction(null);
-    }
-  }, [detail, busyAction, scheduleId]);
-
   if (error && detail === null) {
     return (
       <aside className="tasks-pane__detail">
@@ -176,14 +134,19 @@ export function ScheduleDetail({
           <div className="schedule-detail__head-left">
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <h2 style={{ margin: 0, fontSize: 18 }}>{detail.name}</h2>
-              <span
-                className={`badge ${
-                  detail.enabled ? "badge--success" : "badge--warn"
-                } badge--with-dot`}
-              >
-                <span className="badge__dot" aria-hidden="true" />
-                {detail.enabled ? "Enabled" : "Paused"}
-              </span>
+              {(() => {
+                const displayEnabled = enabledOverride ?? detail.enabled;
+                return (
+                  <span
+                    className={`badge ${
+                      displayEnabled ? "badge--success" : "badge--warn"
+                    } badge--with-dot`}
+                  >
+                    <span className="badge__dot" aria-hidden="true" />
+                    {displayEnabled ? "Enabled" : "Paused"}
+                  </span>
+                );
+              })()}
             </div>
             <div className="task-list__item-meta muted">
               <code className="schedule-cron" title={`Cron expression in ${detail.trigger.tz}`}>
@@ -207,55 +170,9 @@ export function ScheduleDetail({
             </div>
           </div>
           <div className="schedule-detail__head-right" data-testid="schedule-detail-temporal">
-            <ScheduleNextFire preview={preview} enabled={detail.enabled} />
+            <ScheduleNextFire preview={preview} enabled={enabledOverride ?? detail.enabled} />
             <ScheduleLastFired lastFiredAt={detail.lastFiredAt} />
           </div>
-        </div>
-        <div className="schedule-detail__actions">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={() => onRequestEdit(detail)}
-            disabled={busyAction !== null}
-            data-testid="schedule-detail-edit"
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            className={`btn ${detail.enabled ? "btn--ghost" : "btn--primary"}`}
-            onClick={() => void handleToggleEnabled()}
-            disabled={busyAction !== null}
-            aria-pressed={detail.enabled}
-            data-testid="schedule-detail-toggle"
-          >
-            {busyAction === "toggle"
-              ? detail.enabled
-                ? "Pausing…"
-                : "Resuming…"
-              : detail.enabled
-                ? "Pause"
-                : "Resume"}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={() => void handleRunNow()}
-            disabled={busyAction !== null || !detail.enabled}
-            title={detail.enabled ? "Trigger one immediate run" : "Resume to enable Run now"}
-            data-testid="schedule-detail-run-now"
-          >
-            {busyAction === "run" ? "Dispatching…" : "Run now"}
-          </button>
-          <button
-            type="button"
-            className="btn btn--danger schedule-detail__delete"
-            onClick={() => onRequestDelete(detail)}
-            disabled={busyAction !== null}
-            data-testid="schedule-detail-delete"
-          >
-            Delete
-          </button>
         </div>
       </header>
 
@@ -288,7 +205,7 @@ export function ScheduleDetail({
         <ScheduleRecentFires
           scheduleId={scheduleId}
           currentWorkspaceId={currentWorkspaceId}
-          refreshToken={recentRefresh}
+          refreshToken={recentFiresToken}
           onSelectFire={onSelectFire}
         />
       </div>

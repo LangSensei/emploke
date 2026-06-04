@@ -11,9 +11,8 @@
 import type { TaskRecord, TaskStatus } from "../../api";
 import { serverNow } from "../../serverClock";
 
-// ADR-001 made `cancelled` first-class: TaskService.cancel(id) +
-// POST /tasks/:id/cancel + `emploke task cancel` all produce this
-// status.
+// `cancelled` is a first-class task status: TaskService.cancel(id),
+// POST /tasks/:id/cancel, and `emploke task cancel` all produce it.
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   running: "Running",
   succeeded: "Succeeded",

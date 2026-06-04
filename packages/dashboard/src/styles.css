@@ -3597,11 +3597,28 @@ button {
   opacity: 0.6;
   cursor: not-allowed;
 }
+/* Mirror the native :disabled visual on `aria-disabled="true"` menuitems
+   (e.g. Run-now while the schedule is paused) — the element stays
+   keyboard-focusable so the inline helper copy explaining WHY it's
+   disabled is announced by screen readers. */
+.task-list__item-menu-option[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .task-list__item-menu-option--danger {
   color: var(--color-danger, #c0392b);
 }
 .task-list__item-menu-option--danger:hover {
   background: var(--color-danger-bg, rgba(192, 57, 43, 0.08));
+}
+
+/* Paused-row visual de-emphasis. The badge, the `⋯` trigger and the
+   row background are deliberately NOT dimmed: the row stays
+   unambiguously interactive, only the headline + meta read as
+   secondary so a long mixed list scans cleanly. */
+.task-list__item--paused .task-list__item-headline,
+.task-list__item--paused .task-list__item-meta {
+  color: var(--color-text-muted);
 }
 
 
@@ -5132,9 +5149,6 @@ button {
      - .schedule-detail__temporal-line: shared "muted label : strong
        value" line shape used by both Next fire and Last fired so they
        stack as a compact, consistent temporal block.
-     - .schedule-detail__actions: bottom of the header action row, pushes
-       the destructive Delete button to the right edge so it's visually
-       separated from the safe Pause/Resume + Run-now actions.
      - .task-list__item--button: makes the <button> variant of a task-list
        row span the full width of its <li>. Buttons default to shrink-to-
        fit even with `display: flex`, so without this the Recent fires
@@ -5191,18 +5205,6 @@ button {
 .schedule-detail__temporal-line strong {
   font-weight: 500;
   color: var(--color-text);
-}
-
-.schedule-detail__actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.schedule-detail__actions .schedule-detail__delete {
-  margin-left: auto;
 }
 
 /*

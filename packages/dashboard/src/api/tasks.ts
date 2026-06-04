@@ -200,15 +200,15 @@ export const deleteTask = (id: string, opts?: { purge?: boolean }) => {
   // so a runtime failure aborts before any local removal (mirrors
   // session-delete semantics).
   //
-  // Post-ADR-001 §3.5: server returns 409 when the task is still
-  // running (mutate() throws the typed envelope; callers parse
-  // `code` + `transition` to render the "cancel first" CTA).
+  // Server returns 409 when the task is still running (mutate()
+  // throws the typed envelope; callers parse `code` + `transition`
+  // to render the "cancel first" CTA).
   const qs = opts?.purge ? "?purge=1" : "";
   return mutate(`${workspacePrefix()}/tasks/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
 };
 
 /**
- * Cancel a running task (ADR-001 §3.11.1(a)). POSTs to
+ * Cancel a running task. POSTs to
  * `/tasks/:id/cancel`; awaits the server's response (which itself
  * awaits `live.settled`), so the returned `TaskRecord` already has
  * status='cancelled' and the `cancellation` field populated.
