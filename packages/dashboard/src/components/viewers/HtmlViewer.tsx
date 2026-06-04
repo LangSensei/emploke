@@ -13,9 +13,16 @@ import type { ViewerProps } from "./types";
  *    therefore cannot exfiltrate cookies, navigate the parent, or run
  *    JS in the dashboard origin.
  * 2. **Run scripts (opt-in)** — user-toggled. The iframe is re-mounted
- *    with `sandbox="allow-scripts allow-same-origin"` so HTML artifacts
- *    that ship intentional client-side behavior (Reveal.js decks,
- *    Chart.js figures, interactive demos) actually render.
+ *    with `sandbox="allow-scripts"` so HTML artifacts that ship
+ *    intentional client-side behavior (Reveal.js decks, Chart.js
+ *    figures, interactive demos) actually render. `allow-same-origin`
+ *    is deliberately NOT granted: combined with `allow-scripts` on a
+ *    same-origin `srcDoc` iframe it would inherit the dashboard
+ *    origin and let the artifact read/mutate the parent DOM and
+ *    issue credentialed fetches against the dashboard. Pure
+ *    `allow-scripts` gives the iframe an opaque origin — scripts
+ *    (inline + CDN) still run, network fetches still work, but the
+ *    iframe cannot reach the parent.
  *
  * Invariants:
  *
@@ -35,32 +42,24 @@ import type { ViewerProps } from "./types";
  * The iframe height is clamped via CSS so a giant HTML report doesn't
  * blow out the layout — the iframe itself scrolls.
  */
-export default function HtmlViewer({ content, filename, size, downloadUrl }: ViewerProps) {
+export default function HtmlViewer(props: ViewerProps) {
   // The `key={filename}` here is the per-artifact reset seam: when the
   // user switches to a different artifact, React unmounts the inner
   // component and remounts it fresh, so `scriptsEnabled` reliably
   // starts at `false` — no race window where the elevated sandbox
   // briefly applies to a different file's content.
-  return (
-    <HtmlViewerInner
-      key={filename}
-      content={content}
-      filename={filename}
-      size={size}
-      downloadUrl={downloadUrl}
-    />
-  );
+  return <HtmlViewerInner key={props.filename} {...props} />;
 }
 
 function HtmlViewerInner({ content, filename }: ViewerProps) {
   const html = typeof content === "string" ? content : "";
   const [scriptsEnabled, setScriptsEnabled] = useState(false);
 
-  const sandboxValue = scriptsEnabled ? "allow-scripts allow-same-origin" : "";
+  const sandboxValue = scriptsEnabled ? "allow-scripts" : "";
   const toggleTooltip =
-    'Re-render with iframe sandbox="allow-scripts allow-same-origin". ' +
-    "Only enable for HTML you trust — this lets the artifact execute " +
-    "JavaScript and load CDN resources.";
+    'Re-render with iframe sandbox="allow-scripts". ' +
+    "The artifact can execute its own JavaScript (inline and from CDNs) " +
+    "but cannot access the dashboard. Only enable for HTML you trust.";
 
   return (
     <div className="artifact-viewer artifact-viewer--html">
@@ -75,11 +74,15 @@ function HtmlViewerInner({ content, filename }: ViewerProps) {
         <label className="artifact-viewer__html-toggle" title={toggleTooltip}>
           <input
             type="checkbox"
+            aria-describedby="artifact-html-toggle-desc"
             checked={scriptsEnabled}
             onChange={(e) => setScriptsEnabled(e.target.checked)}
           />
           Run scripts
         </label>
+        <span id="artifact-html-toggle-desc" className="visually-hidden">
+          {toggleTooltip}
+        </span>
       </div>
       <iframe
         key={scriptsEnabled ? "scripts-on" : "scripts-off"}
