@@ -208,20 +208,19 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
     }
   });
 
-  // Delete a task. **ADR-001 §3.5: terminal-only.** Calling DELETE
-  // on a `running` / `not_started` task now returns 409 with a
-  // structured body so the dashboard can render typed CTA → use
-  // `tasks.cancel` first. Default ("archive") removes only the
-  // task's metadata row; the workdir contents (stderr.log,
-  // agent-produced files) and the runtime's per-task event log stay
-  // on disk so the user can inspect the run after the fact. Pass
-  // `?purge=1` for the hard-delete path: row + workdir + runtime
-  // state, in that order (runtime first so a runtime-side failure
-  // aborts before any local removal — mirrors session-delete
-  // semantics).
+  // Delete a task. Terminal-only — calling DELETE on a `running` /
+  // `not_started` task returns 409 with a structured body so the
+  // dashboard can render a typed CTA → use `tasks.cancel` first.
+  // Default ("archive") removes only the task's metadata row; the
+  // workdir contents (stderr.log, agent-produced files) and the
+  // runtime's per-task event log stay on disk so the user can
+  // inspect the run after the fact. Pass `?purge=1` for the
+  // hard-delete path: row + workdir + runtime state, in that order
+  // (runtime first so a runtime-side failure aborts before any
+  // local removal — mirrors session-delete semantics).
   //
-  // The pre-ADR-001 "corrupted row" + "stray workdir" escape hatches
-  // are gone (sqlite3 CLI is the recovery channel per §3.5).
+  // The legacy "corrupted row" + "stray workdir" escape hatches are
+  // gone; the sqlite3 CLI is the recovery channel for those cases.
   app.delete("/:tid", async (c) => {
     const id = c.req.param("tid");
     const purge = c.req.query("purge") === "1";
@@ -240,12 +239,12 @@ export function tasksRoutes(resolveTaskService: TaskServiceResolver): Hono {
     }
   });
 
-  // POST /:tid/cancel — ADR-001 §3.6. User-initiated cancellation of
-  // a running task. POSTs the cancellation as a state transition
-  // (DELETE belongs to tasks.delete, which only ever removes records
-  // post-ADR-001). No request body in v1; the server kills the
-  // subprocess (SIGTERM), waits for the exit watcher to persist
-  // `cancelled`, and returns the updated Task.
+  // POST /:tid/cancel — user-initiated cancellation of a running
+  // task. POSTs the cancellation as a state transition (DELETE
+  // belongs to tasks.delete, which only ever removes records). No
+  // request body in v1; the server kills the subprocess (SIGTERM),
+  // waits for the exit watcher to persist `cancelled`, and returns
+  // the updated Task.
   //
   // The returned Task's `cancellation.kind` is normally `'user'`
   // (live subprocess killed at the operator's request), but the

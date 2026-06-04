@@ -803,7 +803,7 @@ describe("schedulesRoutes — run", () => {
   it("POST /:sid/run on task.EntryNotReadyError → 409 with typed code", async () => {
     // Inner `TaskService.dispatch` (called transitively by
     // `ScheduleService.run`) throws when the target agent is
-    // `blocked`. Per ADR-001 this is a 409 — the dashboard's
+    // `blocked`. The server returns 409 — the dashboard's
     // `formatEntryNotReadyHint` CTA keys off the 409 body, so a
     // collapse to 400 would silently disable that affordance.
     const run = vi.fn(async () => {
@@ -816,9 +816,9 @@ describe("schedulesRoutes — run", () => {
   });
 
   it("POST /:sid/run on task.ManagerShuttingDownError → 503 with typed code", async () => {
-    // ADR-001: dispatch refuses during graceful shutdown so the
-    // caller can show a "server restarting" toast and retry. Before
-    // the fall-through to `statusForError` landed, this leaked as a
+    // Dispatch refuses during graceful shutdown so the caller can
+    // show a "server restarting" toast and retry. Before the
+    // fall-through to `statusForError` landed, this leaked as a
     // 400 and lied about the cause.
     const run = vi.fn(async () => {
       throw new ManagerShuttingDownError();

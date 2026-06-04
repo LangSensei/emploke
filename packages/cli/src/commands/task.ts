@@ -164,9 +164,9 @@ export async function taskRm(opts: TaskRmOpts): Promise<CommandResult> {
     await client.call("tasks.delete", { params: { id, tid: opts.tid }, query });
     return { exitCode: 0, stdout: `task ${opts.tid} removed\n` };
   } catch (err) {
-    // ADR-001 §3.10: `task rm` on a non-terminal task now surfaces a
-    // 409 with code='InvalidTransition' + transition='delete'. Append
-    // a one-line hint pointing the user at `task cancel` so the
+    // `task rm` on a non-terminal task surfaces a 409 with
+    // code='InvalidTransition' + transition='delete'. Append a
+    // one-line hint pointing the user at `task cancel` so the
     // terminal experience matches the dashboard's typed CTA.
     if (isStatusError(err, 409) && isInvalidTransition(err, "delete")) {
       const base = formatError(err);
@@ -187,9 +187,9 @@ export interface TaskCancelOpts extends CommonFlags {
 /**
  * `emploke task cancel <tid>` — POSTs to `tasks.cancel` and prints
  * either the updated Task as JSON or a one-line confirmation. Mirrors
- * the existing `task rm` shape; new in ADR-001 §3.7. Exits 0 on
- * success; on a 409 (already terminal), `formatError` surfaces the
- * structured body and the user sees the typed message.
+ * the existing `task rm` shape. Exits 0 on success; on a 409 (already
+ * terminal), `formatError` surfaces the structured body and the user
+ * sees the typed message.
  */
 export async function taskCancel(opts: TaskCancelOpts): Promise<CommandResult> {
   if (typeof opts.tid !== "string" || opts.tid.trim() === "") {
