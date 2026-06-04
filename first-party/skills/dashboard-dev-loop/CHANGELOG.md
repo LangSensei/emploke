@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 (2026-06-04)
+
+- docs: tighten the mutation-flow framing to call out the `/schedules` slice as already-mockable today (audit-fix follow-up to PR #306).
+
 ## 1.0.1 (2026-05-27)
 
 - fix(bash): replace `setsid` + negative-pid `kill` with a recursive `pgrep -P` descendant walk so the Bash variant works on macOS without `brew install util-linux`. Teardown semantics (TERM, 1-second grace, KILL) are preserved. Closes #217.

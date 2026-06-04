@@ -2,7 +2,7 @@
 name: dashboard-dev-loop
 scope: emploke
 description: "Start a mock-backed dashboard dev server, drive it via Playwright MCP, iterate edits + screenshots, and tear down cleanly"
-version: 1.0.1
+version: 1.0.2
 ---
 
 # Dashboard Dev Loop Skill

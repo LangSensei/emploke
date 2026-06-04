@@ -2,7 +2,7 @@
 name: designer
 scope: emploke
 description: "Iterates on the emploke dashboard UI against MSW mocks — runs the mock dev server, drives it via Playwright MCP, edits dashboard source, captures screenshots, opens PRs"
-version: 1.0.0
+version: 1.0.1
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
