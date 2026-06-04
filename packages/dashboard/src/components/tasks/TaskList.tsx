@@ -87,13 +87,9 @@ export function TaskList({
               <span className="task-list-group__count">{g.tasks.length}</span>
             </button>
             {!isCollapsed && (
-              <ul
-                className="task-list"
-                // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox pattern requires role on ul
-                role="listbox"
-                aria-label={`${g.label} tasks`}
-              >
-                {g.tasks.map((t) => (
+              // biome-ignore lint/a11y/noRedundantRoles: Safari + VoiceOver strips the implicit listitem role from <li> children when the <ul> has `list-style: none` (defined for `.task-list` in styles.css). Without the explicit role here, AT users on macOS/iOS lose list semantics entirely (no "list, N items" announcement, no aria-posinset cues). The explicit role is a no-op in Chrome/Firefox/Edge but a load-bearing fix on Safari.
+              <ul role="list" className="task-list" aria-label={`${g.label} tasks`}>
+                {g.tasks.map((t, idx, arr) => (
                   <TaskListItem
                     key={t.id}
                     task={t}
@@ -104,6 +100,8 @@ export function TaskList({
                     onRerun={() => onRerun(t)}
                     menuOpen={openMenuId === t.id}
                     onMenuOpenChange={(open) => setOpenMenuId(open ? t.id : null)}
+                    posinset={idx + 1}
+                    setsize={arr.length}
                   />
                 ))}
               </ul>

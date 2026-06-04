@@ -1,8 +1,27 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ScheduleView } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
 import { formatAbsolute, formatRelative } from "../../utils/time";
 import { MoreHorizontalIcon } from "../Icons";
+
+/**
+ * Why `closeMenu` takes a reason: the per-row `⋯` menu can close from
+ * three distinct intents and each needs a different focus outcome.
+ *
+ *  - "escape" / "menuitem"  → restore focus to the trigger synchronously.
+ *    The trigger always exists in the DOM, so this is safe. For "menuitem"
+ *    this prevents focus from falling to `<body>` when the active
+ *    menuitem unmounts, and for "escape" it matches the keyboard user's
+ *    expectation of returning to where they opened the menu.
+ *
+ *  - "outside" → defer one tick and only restore focus to the trigger
+ *    when the natural pointerdown left focus on `<body>` (i.e. the user
+ *    clicked non-focusable space — e.g. the detail pane's padding). If
+ *    the click landed on another focusable element (e.g. another row's
+ *    `⋯` trigger), leave its natural focus alone so we don't fight the
+ *    user's intent to open that other menu.
+ */
+type CloseReason = "escape" | "menuitem" | "outside";
 
 export interface ScheduleListItemProps {
   schedule: ScheduleView;
@@ -32,21 +51,37 @@ export interface ScheduleListItemProps {
   /** Page-level single-open coordination: true iff this row's menu is the one open. */
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
+
+  /**
+   * 1-based position within the visible schedule list. Required so the
+   * `<li>` can advertise `aria-posinset` / `aria-setsize` to screen
+   * readers — without these, AT users on Safari/VoiceOver hear
+   * row content but no positional cues ("row 3 of 7").
+   */
+  posinset: number;
+  /** Total visible rows in the same list as this row. See {@link posinset}. */
+  setsize: number;
 }
 
 /**
- * One row of the schedule list. Owns the per-row `⋯` action menu
- * (Edit / Pause / Resume / Run now / Delete) and the row's selection
- * affordance.
+ * One row of the schedule list. The row itself (`<li>`) is presentational;
+ * the click affordance is a real `<button class="task-list__item-select">`
+ * that carries `aria-current="true"` when selected. The `⋯` action menu
+ * lives as a sibling button so the two never nest (no `button button`
+ * shape, which would be invalid HTML and confuse assistive tech).
+ *
+ * The accessible name on the select-button is supplied via
+ * `aria-labelledby={headlineId}` so screen readers announce just the
+ * schedule name once.
  *
  * Mirrors `TaskListItem` 1:1 — the `⋯` trigger shape, the controlled
- * popover, the flip-and-size measurement, and the keyboard handlers
- * are the same — so users moving between Tasks and Schedules don't
- * have to re-learn the interaction. The page-level `Schedules.tsx`
- * lifts all four action handlers up, which means any row's menu can
- * mutate any schedule without it being selected first; the list is
- * the canonical *action* surface, the detail pane is the canonical
- * *information* surface.
+ * popover, the flip-and-size measurement, the keyboard handlers, and the
+ * focus-restore mechanic on close are the same — so users moving between
+ * Tasks and Schedules don't have to re-learn the interaction. The
+ * page-level `Schedules.tsx` lifts all four action handlers up, which
+ * means any row's menu can mutate any schedule without it being selected
+ * first; the list is the canonical *action* surface, the detail pane is
+ * the canonical *information* surface.
  *
  * The menuitems are state-aware:
  *
@@ -68,10 +103,9 @@ export interface ScheduleListItemProps {
  * single-open coordination is owned by the page (`Schedules.tsx`)
  * rather than by `ScheduleList`, because the action handlers also
  * live at the page level (close-on-success stays local to the same
- * surface).
- *
- * See #313 for the ongoing row-list a11y work (restore focus to the
- * `⋯` trigger after click-outside).
+ * surface). Focus is restored to the trigger on Esc/menuitem close
+ * synchronously and on outside-click only when the click did not land
+ * on another focusable element (see `CloseReason` above).
  */
 export function ScheduleListItem({
   schedule,
@@ -84,6 +118,8 @@ export function ScheduleListItem({
   busyAction,
   menuOpen,
   onMenuOpenChange,
+  posinset,
+  setsize,
 }: ScheduleListItemProps) {
   const nextLabel = schedule.nextFireAt ? formatRelative(schedule.nextFireAt) : "—";
   const nextTitle = schedule.nextFireAt ? formatAbsolute(schedule.nextFireAt) : "no upcoming fire";
@@ -91,12 +127,41 @@ export function ScheduleListItem({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const refs = useMemo(() => [triggerRef, panelRef], []);
+  const headlineId = useId();
+  // Stable IDs for each visible descriptive span. The select-button's
+  // accessible NAME comes from `aria-labelledby={headlineId}` (just the
+  // schedule name, once), and its accessible DESCRIPTION comes from
+  // `aria-describedby` chaining these IDs in DOM order. Without the
+  // chain, screen-reader users hear only the schedule name on focus and
+  // lose the Enabled/Paused state + cron + agent + runtime + next-fire
+  // context entirely, because `aria-labelledby` REPLACES (not augments)
+  // descendant-text concatenation in the accessibility tree.
+  const statusId = useId();
+  const metaId = useId();
 
-  const closeMenu = useCallback(() => {
-    onMenuOpenChange(false);
-  }, [onMenuOpenChange]);
+  const closeMenu = useCallback(
+    (reason: CloseReason) => {
+      onMenuOpenChange(false);
+      if (reason === "escape" || reason === "menuitem") {
+        triggerRef.current?.focus();
+        return;
+      }
+      // "outside": defer until after the browser has settled focus from
+      // the pointerdown. If nothing focusable absorbed the click, return
+      // focus to the trigger (avoids the body-focus dead end). If another
+      // focusable did receive focus (e.g. a sibling row's trigger), leave
+      // it — the user clicked there intentionally.
+      setTimeout(() => {
+        if (document.activeElement === document.body) {
+          triggerRef.current?.focus();
+        }
+      }, 0);
+    },
+    [onMenuOpenChange],
+  );
 
-  useClickOutside(refs, closeMenu, menuOpen);
+  const closeOnOutside = useCallback(() => closeMenu("outside"), [closeMenu]);
+  useClickOutside(refs, closeOnOutside, menuOpen);
 
   // Iter-4 (C5): flip + size for the row menu so the last visible row's
   // panel isn't clipped by `.tasks-pane__list-scroll` (overflow: auto).
@@ -188,8 +253,7 @@ export function ScheduleListItem({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        closeMenu();
-        triggerRef.current?.focus();
+        closeMenu("escape");
       }
     };
     document.addEventListener("keydown", onKey);
@@ -225,7 +289,7 @@ export function ScheduleListItem({
     } catch {
       /* clipboard unavailable (e.g. insecure context) — silently no-op */
     }
-    closeMenu();
+    closeMenu("menuitem");
   };
 
   const rowBusy = busyAction !== null;
@@ -247,157 +311,160 @@ export function ScheduleListItem({
       className={`task-list__item${selected ? " task-list__item--selected" : ""}${
         schedule.enabled ? "" : " task-list__item--paused"
       }`}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox/option pattern
-      role="option"
-      tabIndex={0}
-      aria-selected={selected}
       data-testid={`schedule-row-${schedule.id}`}
+      aria-posinset={posinset}
+      aria-setsize={setsize}
     >
-      <div className="task-list__item-head">
-        <span
-          className={`badge ${schedule.enabled ? "badge--success" : "badge--warn"} badge--with-dot`}
-        >
-          <span className="badge__dot" aria-hidden="true" />
-          {schedule.enabled ? "Enabled" : "Paused"}
-        </span>
-        <div className="task-list__item-menu">
-          <button
-            ref={triggerRef}
-            type="button"
-            className="btn btn--ghost btn--icon task-list__item-menu-trigger"
-            aria-label={`Actions for schedule ${schedule.name}`}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            title="Actions"
-            data-testid={`schedule-row-menu-trigger-${schedule.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onMenuOpenChange(!menuOpen);
-            }}
-          >
-            <MoreHorizontalIcon />
-          </button>
-          {menuOpen && (
-            <div
-              ref={panelRef}
-              className={`task-list__item-menu-panel task-list__item-menu-panel--${placement}`}
-              role="menu"
-              data-testid={`schedule-row-menu-${schedule.id}`}
-              style={
-                maxHeightPx != null
-                  ? ({ "--menu-max-height": `${maxHeightPx}px` } as React.CSSProperties)
-                  : undefined
-              }
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={handlePanelKeyDown}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className="task-list__item-menu-option"
-                aria-disabled={runNowDisabledByPause ? true : undefined}
-                disabled={!runNowDisabledByPause && rowBusy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (runNowDisabledByPause) return;
-                  if (rowBusy) return;
-                  closeMenu();
-                  void onRunNow();
-                }}
-              >
-                {runNowLabel}
-              </button>
-              {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: spec §5d/§7b/acceptance #6 require `aria-pressed` on the Pause/Resume menuitem to preserve the existing detail-pane toggle button's accessibility contract (so screen readers continue to announce the toggle state through the row menu). */}
-              <button
-                type="button"
-                role="menuitem"
-                className="task-list__item-menu-option"
-                aria-pressed={schedule.enabled}
-                disabled={rowBusy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (rowBusy) return;
-                  closeMenu();
-                  void onToggleEnabled();
-                }}
-              >
-                {pauseResumeLabel}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="task-list__item-menu-option"
-                disabled={rowBusy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (rowBusy) return;
-                  closeMenu();
-                  onEdit();
-                }}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="task-list__item-menu-option"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleCopyId();
-                }}
-              >
-                Copy ID
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="task-list__item-menu-option task-list__item-menu-option--danger"
-                disabled={rowBusy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (rowBusy) return;
-                  closeMenu();
-                  onDelete();
-                }}
-              >
-                Delete
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-      <div
-        className="task-list__item-headline task-list__item-headline--clamp"
-        title={schedule.name}
+      <button
+        type="button"
+        className="task-list__item-select"
+        aria-current={selected ? "true" : undefined}
+        aria-labelledby={headlineId}
+        aria-describedby={`${statusId} ${metaId}`}
+        onClick={onSelect}
       >
-        {schedule.name}
-      </div>
-      <div className="task-list__item-meta muted">
-        <code
-          className="schedule-cron"
-          title={`Cron: ${schedule.trigger.expr} (${schedule.trigger.tz})`}
-        >
-          {schedule.trigger.expr}
-        </code>
-        <span className="task-list__sep">·</span>
-        <span title={`Agent: ${schedule.target.agent}`}>{schedule.target.agent}</span>
-        {schedule.target.runtime ? (
-          <>
-            <span className="task-list__sep">·</span>
-            <span title={`Runtime: ${schedule.target.runtime}`}>{schedule.target.runtime}</span>
-          </>
-        ) : null}
-        <span className="task-list__sep">·</span>
-        <span className="muted" title={nextTitle}>
-          Next {nextLabel}
+        <span id={statusId} className="task-list__item-head">
+          <span
+            className={`badge ${
+              schedule.enabled ? "badge--success" : "badge--warn"
+            } badge--with-dot`}
+          >
+            <span className="badge__dot" aria-hidden="true" />
+            {schedule.enabled ? "Enabled" : "Paused"}
+          </span>
         </span>
+        <span
+          id={headlineId}
+          className="task-list__item-headline task-list__item-headline--clamp"
+          title={schedule.name}
+        >
+          {schedule.name}
+        </span>
+        <span id={metaId} className="task-list__item-meta muted">
+          <code
+            className="schedule-cron"
+            title={`Cron: ${schedule.trigger.expr} (${schedule.trigger.tz})`}
+          >
+            {schedule.trigger.expr}
+          </code>
+          <span className="task-list__sep">·</span>
+          <span title={`Agent: ${schedule.target.agent}`}>{schedule.target.agent}</span>
+          {schedule.target.runtime ? (
+            <>
+              <span className="task-list__sep">·</span>
+              <span title={`Runtime: ${schedule.target.runtime}`}>{schedule.target.runtime}</span>
+            </>
+          ) : null}
+          <span className="task-list__sep">·</span>
+          <span className="muted" title={nextTitle}>
+            Next {nextLabel}
+          </span>
+        </span>
+      </button>
+      <div className="task-list__item-menu">
+        <button
+          ref={triggerRef}
+          type="button"
+          className="btn btn--ghost btn--icon task-list__item-menu-trigger"
+          aria-label={`Actions for schedule ${schedule.name}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title="Actions"
+          data-testid={`schedule-row-menu-trigger-${schedule.id}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMenuOpenChange(!menuOpen);
+          }}
+        >
+          <MoreHorizontalIcon />
+        </button>
+        {menuOpen && (
+          <div
+            ref={panelRef}
+            className={`task-list__item-menu-panel task-list__item-menu-panel--${placement}`}
+            role="menu"
+            data-testid={`schedule-row-menu-${schedule.id}`}
+            style={
+              maxHeightPx != null
+                ? ({ "--menu-max-height": `${maxHeightPx}px` } as React.CSSProperties)
+                : undefined
+            }
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={handlePanelKeyDown}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="task-list__item-menu-option"
+              aria-disabled={runNowDisabledByPause ? true : undefined}
+              disabled={!runNowDisabledByPause && rowBusy}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (runNowDisabledByPause) return;
+                if (rowBusy) return;
+                closeMenu("menuitem");
+                void onRunNow();
+              }}
+            >
+              {runNowLabel}
+            </button>
+            {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: `aria-pressed` on the Pause/Resume menuitem preserves the toggle-state announcement the screen-reader contract from PR #312 established, so users hear whether the schedule is currently enabled or paused without needing to open the detail pane. */}
+            <button
+              type="button"
+              role="menuitem"
+              className="task-list__item-menu-option"
+              aria-pressed={schedule.enabled}
+              disabled={rowBusy}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (rowBusy) return;
+                closeMenu("menuitem");
+                void onToggleEnabled();
+              }}
+            >
+              {pauseResumeLabel}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="task-list__item-menu-option"
+              disabled={rowBusy}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (rowBusy) return;
+                closeMenu("menuitem");
+                onEdit();
+              }}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="task-list__item-menu-option"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopyId();
+              }}
+            >
+              Copy ID
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="task-list__item-menu-option task-list__item-menu-option--danger"
+              disabled={rowBusy}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (rowBusy) return;
+                closeMenu("menuitem");
+                onDelete();
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
     </li>
   );

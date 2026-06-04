@@ -2836,12 +2836,10 @@ button {
 }
 
 .task-list__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-3) var(--space-4);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   border-bottom: 1px solid var(--color-border);
-  cursor: pointer;
   transition: background 120ms ease;
 }
 
@@ -2853,20 +2851,39 @@ button {
   background: var(--color-surface-hover);
 }
 
-.task-list__item:focus-visible {
-  outline: 2px solid var(--color-accent, #3b82f6);
-  outline-offset: -2px;
-}
-
 .task-list__item--selected {
   background: var(--color-surface-hover);
   box-shadow: inset 3px 0 0 var(--color-accent, #3b82f6);
 }
 
+/* Row select target: a real <button> that owns the entire left column
+   so the visual row stays fully clickable. Reset native button chrome
+   (background/border/font) and inherit the row's flex-column body so
+   the inner badge/headline/meta/id stack identically to the previous
+   <li>-as-row layout. */
+.task-list__item-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-list__item-select:focus-visible {
+  outline: 2px solid var(--color-accent, #3b82f6);
+  outline-offset: -2px;
+}
+
 .task-list__item-head {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: var(--space-2);
 }
 
@@ -3543,8 +3560,8 @@ button {
    without altering row height when open. */
 .task-list__item-menu {
   position: relative;
-  margin-left: auto;
   display: inline-flex;
+  padding: var(--space-3) var(--space-4) var(--space-3) 0;
 }
 .task-list__item-menu-trigger {
   padding: 4px;
