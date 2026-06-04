@@ -2,7 +2,7 @@
 name: cli
 scope: emploke
 description: "Control an emploke server from the CLI — workspaces, agents, tasks, sessions, catalog"
-version: 1.0.1
+version: 1.0.2
 ---
 
 # emploke/cli skill
@@ -28,7 +28,7 @@ emploke injects what you need into your env when it spawns your task or session:
 Quick verification:
 
 ```sh
-emploke health    # CLI works + server reachable (exit 0 + JSON `ok`)
+emploke health         # exit 0 ⇒ CLI works + server reachable
 ```
 
 ## Workspace discipline
