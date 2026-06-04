@@ -134,9 +134,9 @@ through `Application` methods.
 emploke's tier model
 (see [`docs/architecture.md § Tier model`](../../docs/architecture.md#tier-model)).
 Its sibling at T2 is `@emploke/contracts` (wire types). T0
-(foundations: `catalog`, `runtime`, `schedule`, `workspace`) and T1
-(modes: `session`, `task`) sit below; T3 (`server`) and T_top
-(`terminal`, `dashboard`, `cli`) sit above.
+(foundations: `catalog`, `runtime`, `schedule`, `terminal`,
+`workspace`) and T1 (modes: `session`, `task`) sit below; T3
+(`server`) and T_top (`dashboard`, `cli`) sit above.
 
 ## Layering
 
