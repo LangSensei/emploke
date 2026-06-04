@@ -2,7 +2,7 @@
 name: review
 scope: emploke
 description: "Code review agent for emploke — reviews PRs for style, correctness, and consistency, submits inline comments"
-version: 1.1.0
+version: 1.1.1
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/git-pr"
