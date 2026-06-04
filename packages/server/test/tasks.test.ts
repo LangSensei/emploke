@@ -633,7 +633,7 @@ describe("tasksRoutes", () => {
     });
   });
 
-  // ─── ADR-001: cancel route + delete 409 + 503 mappings ───────────────
+  // ─── Cancel route + delete 409 + 503 mappings ───────────────────────
   describe("POST /:tid/cancel", () => {
     it("200 + cancelled Task on the happy path", async () => {
       const cancelledTask = {
@@ -702,7 +702,7 @@ describe("tasksRoutes", () => {
     });
   });
 
-  describe("DELETE /:tid — ADR-001 §3.5 terminal-only", () => {
+  describe("DELETE /:tid — terminal-only", () => {
     it("409 + structured InvalidTransition body when the task is non-terminal", async () => {
       const m = stubManager({
         delete: vi.fn(async () => {

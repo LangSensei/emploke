@@ -222,10 +222,10 @@ export function pickFormat(
 
 /**
  * Is `err` an {@link ApiError} carrying exactly the given HTTP status?
- * ADR-001 §3.10 needs this so `task rm` can detect a 409 from the
- * server's terminal-only delete tightening and append a hint pointing
- * the user at `task cancel` — `formatError` alone surfaces the
- * structured envelope but doesn't branch.
+ * `task rm` needs this so it can detect a 409 from the server's
+ * terminal-only delete tightening and append a hint pointing the user
+ * at `task cancel` — `formatError` alone surfaces the structured
+ * envelope but doesn't branch.
  */
 export function isStatusError(err: unknown, status: number): boolean {
   return err instanceof ApiError && err.status === status;

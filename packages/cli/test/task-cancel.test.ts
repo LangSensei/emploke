@@ -1,6 +1,6 @@
 /**
- * ADR-001 §3.8 #16 — `emploke task cancel` verb wiring + 409-body
- * parsing + exit-code mapping.
+ * `emploke task cancel` verb wiring + 409-body parsing + exit-code
+ * mapping.
  *
  * Mock-fetch based; no real server. Asserts:
  *  - POSTs to /api/workspaces/<wsid>/tasks/<tid>/cancel
