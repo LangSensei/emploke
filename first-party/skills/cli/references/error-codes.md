@@ -35,7 +35,7 @@ Both are stable wire contracts. The distinction matters only if you're maintaini
 | `WorkspaceCorruptedError` | 500 | Workspace SQLite row is corrupted | Server-side issue; ask user to inspect logs |
 | `WorkspaceAlreadyExistsError` | 409 | `workspace add` collided | Use a different name/workdir, or remove the existing one |
 | `WorkspaceIdConflictError` | 409 | Same workspace id used twice in concurrent `add` | Retry once; if persistent, server bug |
-| `WorkspacePathConflictError` | 409 | Two workspaces on the same workdir | Pick a different `--workdir` |
+| `WorkspacePathConflictError` | 409 | Two workspaces on the same workdir | Pick a different `--workspace-dir` |
 | `WorkspaceNameInvalidError` | 400 | Name fails validation | Use kebab-case, ASCII, no slashes |
 | `WorkspaceIdInvalidError` | 400 | Bad id format | Get a real id via `workspace list` |
 | `WorkspaceHasLiveTasksError` | 409 | Reload would orphan running task subprocesses | Cancel/wait for the tasks (`emploke task list --status running`), retry |

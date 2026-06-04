@@ -209,7 +209,7 @@ emploke task rm <tid> --purge
 ## Set up a fresh workspace with a standard agent set
 
 ```sh
-WS=$(emploke workspace add --name "my-project" --workdir "$HOME/projects/x" --json | jq -r '.id')
+WS=$(emploke workspace add --name "my-project" --workspace-dir "$HOME/projects/x" --json | jq -r '.id')
 export EMPLOKE_WORKSPACE="$WS"
 
 # Install whatever agents are standard for your team.
