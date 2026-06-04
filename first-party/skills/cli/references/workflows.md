@@ -191,11 +191,11 @@ The same shape works for `catalog skill ...` and `catalog mcp ...`.
 
 ```sh
 # List everything that failed or got cancelled.
-emploke task list --status failure,cancelled --json | jq
+emploke task list --status failed,cancelled --json | jq
 
 # Archive (default): removes the metadata row, keeps workdir + runtime state on disk.
 # Good for "I'm done looking at it but want the logs around".
-emploke task list --status failure --json \
+emploke task list --status failed --json \
   | jq -r '.[].id' \
   | while read TID; do emploke task rm "$TID"; done
 

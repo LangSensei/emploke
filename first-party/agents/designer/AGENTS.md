@@ -40,7 +40,7 @@ The deliverable in both cases is a PR with before/after screenshots in the body.
 - Visual-regression baselines or screenshot diffing. The agent captures; the human (or the pilot) reviews. There is no automated diff layer in v1.
 - Live-server testing. The designer always works against mocks; running `pnpm -F @emploke/dashboard dev` (no `:mock` suffix) is explicitly forbidden — see "Anti-patterns".
 - Refactoring fixture or handler structure. Adding a new fixture *variant* is in scope; restructuring how fixtures are organised is `emploke/dev`'s job.
-- Mutation-flow probes (POST / PATCH / DELETE through the dashboard). Tracked as future work in issue #213.
+- Mutation-flow probes (POST / PATCH / DELETE through the dashboard) — currently usable against the `/schedules` slice only; full surface coverage is tracked as future work in issue #213.
 
 ## Write Access
 

@@ -29,7 +29,7 @@ This skill is the start-screenshot-edit-restart primitive. It is intentionally n
 - Comparing screenshots — no diffing, no visual-regression baseline management. The agent (or its human reviewer) inspects screenshots; the skill just captures.
 - Recording video, traces, or accessibility audits.
 - Any non-mock dev-server lifecycle. `dev:mock:e2e` on port 5180 is the **only** server this skill drives. The real-backend `pnpm dev` script is forbidden (see "Anti-patterns").
-- Mutation flows (POST / PATCH / DELETE through the dashboard against mocks) — those are deferred to a follow-up skill, tracked in issue #213.
+- Mutation flows (POST / PATCH / DELETE through the dashboard against mocks) — only the `/schedules` slice is mocked today; coverage for the rest of the surface is deferred to a follow-up skill, tracked in issue #213.
 
 ## Why this skill exists
 

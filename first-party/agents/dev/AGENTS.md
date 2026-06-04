@@ -55,7 +55,7 @@ Development and maintenance of the [emploke](https://github.com/LangSensei/emplo
    - **emploke**: `packages/<name>/src/` for source, `packages/<name>/test/` for vitest tests, `docs/` for design notes
    - **emploke-marketplace**: `agents/<name>/AGENTS.md`, `skills/<name>/SKILL.md`, `mcps/<file>.json`, plus `CONTRIBUTING.md` for the schema contract
 2. Work inside the existing pnpm workspace — do not introduce a sibling package manager
-3. Follow the layering described in `docs/architecture.md` (emploke): pure value types → fs primitives → entity managers → runtime adapter → server → dashboard. Don't import upward.
+3. Follow the tier layering in `docs/architecture.md`: T0 foundations (`catalog`, `runtime`, `schedule`, `terminal`, `workspace`) → T1 modes (`session`, `task`) → T2 application (`contracts` wire types, `api` orchestration) → T3 host (`server`) → T_top surfaces (`dashboard`, `cli`). Imports flow downward only; the T_top fence is enforced by `packages/e2e/test/architecture/tier-invisibility.test.ts`.
 4. Verify the change locally:
    ```bash
    pnpm install        # only if dependencies changed
@@ -90,6 +90,6 @@ Development and maintenance of the [emploke](https://github.com/LangSensei/emplo
 - **Read before write** — understand existing architecture and conventions before making changes
 - **Build + typecheck + test after every meaningful change**, commit only when they pass
 - **Backward compatible** — emploke is pre-1.0 but APIs are still consumed by downstream agents; flag breaking changes in the PR description
-- **Atomic-write seam** — when touching `packages/fs` or any repository-pattern code, preserve the atomic-write guarantees described in `docs/architecture.md`
+- **Atomic-write seam** — when touching any service package's repository module (`packages/<svc>/src/*-repository.ts`), preserve the atomic-write and transaction semantics.
 
 Report should include: design decisions, implementation approach, justifications for key choices, and a summary of changes made.
