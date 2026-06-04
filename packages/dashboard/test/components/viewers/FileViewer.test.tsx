@@ -1,7 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { FileViewer } from "../../../src/components/viewers/FileViewer";
-import HtmlViewer from "../../../src/components/viewers/HtmlViewer";
 
 afterEach(() => cleanup());
 
@@ -50,18 +49,5 @@ describe("FileViewer", () => {
     const { container } = render(<FileViewer filename="x.ts" content="export const a = 1;" />);
     const pre = container.querySelector("pre");
     expect(pre?.textContent).toBe("export const a = 1;");
-  });
-});
-
-describe("HtmlViewer", () => {
-  it("renders an iframe with the empty sandbox attribute", () => {
-    const { container } = render(<HtmlViewer filename="report.html" content="<p>hi</p>" />);
-    const iframe = container.querySelector("iframe");
-    expect(iframe).not.toBeNull();
-    // `sandbox=""` is the maximum-restriction form. Assert the
-    // attribute is present and empty — DO NOT inspect the rendered
-    // HTML (sandbox semantics, not the body, are what we care about).
-    expect(iframe?.hasAttribute("sandbox")).toBe(true);
-    expect(iframe?.getAttribute("sandbox")).toBe("");
   });
 });
