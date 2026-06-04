@@ -19,7 +19,7 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LAST_TICK=$(jq -r .last_tick .pilot/state.json 2>/dev/null || echo "1970-01-01T00:00:00Z")
 
 emploke task list --status running --json > /tmp/running.json
-emploke task list --status success,failure,cancelled --created-since "$LAST_TICK" --json > /tmp/completed.json
+emploke task list --status succeeded,failed,cancelled --created-since "$LAST_TICK" --json > /tmp/completed.json
 
 # Update LAST_TICK after we've processed completions (see step 2 end).
 ```

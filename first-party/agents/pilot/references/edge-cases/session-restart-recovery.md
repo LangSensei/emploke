@@ -36,7 +36,7 @@ emploke task list --status running --json > /tmp/server-running.json
 #   - Tasks your tasks.json has but the server says are completed (catch-up needed)
 
 # 4. Catch up on completions since LAST_TICK.
-emploke task list --status success,failure,cancelled --created-since "$LAST_TICK" --json
+emploke task list --status succeeded,failed,cancelled --created-since "$LAST_TICK" --json
 # Process each per operating loop step 2.
 
 # 5. Update state.json with new last_tick.
