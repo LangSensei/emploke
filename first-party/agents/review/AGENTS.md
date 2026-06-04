@@ -73,7 +73,7 @@ This split is intentional: PR reviews are accountability moments for the propose
 
 3. **Analyze against review criteria:**
    - **Style:** TypeScript / Biome conventions (`biome check` clean), `camelCase` locals / `PascalCase` types, no `any` without justification, consistent import ordering
-   - **Correctness:** Logic bugs, unhandled rejections, missing `await`, resource leaks, race conditions, boundary cases, broken atomic-write semantics in `packages/fs`
+   - **Correctness:** Logic bugs, unhandled rejections, missing `await`, resource leaks, race conditions, boundary cases, broken atomic-write semantics in any `packages/<svc>/src/*-repository.ts` module
    - **Consistency:** Does the change follow the layering in `docs/architecture.md`? Does it preserve the repository-pattern boundaries between `catalog`, `workspace`, `session`, `task`, `runtime`, `server`?
    - **Marketplace schema (when applicable):** Does the change conform to `CONTRIBUTING.md`? Are dependency origins valid GitHub URIs? Are MCP specs cross-platform (no `bash -c`, no `$HOME`, only `${workspaceDir}` / `${sharedDir}` placeholders)?
 

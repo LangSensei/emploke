@@ -90,6 +90,6 @@ Development and maintenance of the [emploke](https://github.com/LangSensei/emplo
 - **Read before write** — understand existing architecture and conventions before making changes
 - **Build + typecheck + test after every meaningful change**, commit only when they pass
 - **Backward compatible** — emploke is pre-1.0 but APIs are still consumed by downstream agents; flag breaking changes in the PR description
-- **Atomic-write seam** — when touching `packages/fs` or any repository-pattern code, preserve the atomic-write guarantees described in `docs/architecture.md`
+- **Atomic-write seam** — when touching any service package's repository module (`packages/<svc>/src/*-repository.ts`), preserve the atomic-write and transaction semantics.
 
 Report should include: design decisions, implementation approach, justifications for key choices, and a summary of changes made.

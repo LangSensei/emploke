@@ -51,7 +51,7 @@ Browse worktree directories directly. Clean up both worktrees at the end of the 
 
 1. **Understand current state** — Read emploke code relevant to the research question from the emploke worktree. Pay particular attention to:
    - Package layering in `packages/` (catalog → workspace → session/task → runtime → server → dashboard)
-   - Repository pattern + atomic-write seam in `packages/fs`
+   - Repository pattern + atomic-write seam in the per-service repository modules under `packages/<svc>/src/`.
    - Runtime adapter contract in `packages/runtime`
    - REST URL scheme exposed by `packages/server`
 2. **Industry research** — Web search for how other AI agent frameworks solve the same problem. Search for recent papers, GitHub repos, blog posts, and documentation.
