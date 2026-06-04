@@ -71,7 +71,10 @@ inlined).
 
 ## Why commander
 
-The CLI ships ~30 grouped commands (`workspace list`,
+The CLI ships ~50 grouped commands across workspace, session, task,
+catalog (agent / skill / mcp), schedule, and runtime — each one
+wrapping a server route via the typed `client.call(...)` helper from
+`packages/contracts/src/routes.ts` (`workspace list`,
 `catalog skill install`, ...). `cac` matches commands by single argv
 tokens, so `cli.command("workspace list", ...)` would register a
 literal `"workspace list"` name that nothing can invoke. Commander
