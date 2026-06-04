@@ -92,7 +92,7 @@ We're nowhere near the end of this trajectory yet. Today's models can author Ski
 
 We've been building one. It's called [emploke](https://github.com/LangSensei/emploke) — a pnpm monorepo of small TypeScript packages running locally, exposing a single HTTP server with a React dashboard. It implements the substrate this paper describes: per-project workspaces, a dependency-aware catalog of Skills / MCPs / Agents, isolated sandboxes for sessions and one-shot tasks, an observable state model.
 
-There are pieces of emploke that don't appear in this paper. The codebase has a Runtime adapter interface (today it adapts the GitHub Copilot CLI; tomorrow it might adapt others) and a Repository abstraction (today it's a file system; tomorrow it might be a database). Those are real and important and we put care into them — but they're 2026 engineering, not paradigm. If the field consolidates onto a single agent runtime and a single storage backend, those abstractions disappear from emploke and nothing in this paper changes.
+There are pieces of emploke that don't appear in this paper. The codebase has a Runtime adapter interface (today it adapts the GitHub Copilot CLI; tomorrow it might adapt others) and a Repository abstraction (a SQLite + Drizzle store per service BC today; the seam exists so a future swap to Postgres or a remote store would only touch repository modules). Those are real and important and we put care into them — but they're 2026 engineering, not paradigm. If the field consolidates onto a single agent runtime and a single storage backend, those abstractions disappear from emploke and nothing in this paper changes.
 
 The implementation details live in the [architecture guide](./architecture.md). What's here is what we believe — the part we hope outlives the implementation.
 
@@ -102,7 +102,7 @@ If you've read this far and found yourself nodding, we'd like to know you exist.
 
 Two things you can do:
 
-- Read the [emploke source](https://github.com/LangSensei/emploke). It's small (~10k lines of TypeScript). The paradigm here is concrete enough in code to argue with.
+- Read the [emploke source](https://github.com/LangSensei/emploke). It's moderate (~50k lines of production TypeScript across 14 packages, ~85k including tests). The paradigm here is concrete enough in code to argue with.
 - Open an issue or a discussion on the repo. We're particularly interested in places where you think the paradigm breaks down — where a real-world need pushes back on the minimalism. We've made bets; we're curious which ones we'll regret.
 
 This paper will evolve. The substrate will evolve. The AI will evolve, faster than either. We'd rather not bet alone.
