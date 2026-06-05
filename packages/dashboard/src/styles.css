@@ -4644,7 +4644,15 @@ button {
    "click to select" target, matching the equivalent row shape on
    `/runtime/tasks` and `/runtime/sessions`. The accent stripe + tinted
    bg + bold name on the selected row mirrors `.task-list__item--selected`
-   so the master-detail visual state reads identical across pages. */
+   so the master-detail visual state reads identical across pages.
+
+   Issue #317 a11y migration — the `<li>` is presentational; the click
+   affordance is a real `<button class="agents-list__item-select">`
+   inside it. The button owns the flex layout, padding, cursor, hover
+   bg, and focus-visible ring. The `<li>` only carries the border-bottom
+   separator and the `--selected` accent stripe / surface-hover tint
+   (the latter mirrors `.task-list__item--selected` so the selected
+   class lives on the row container, just as it does on Tasks). */
 .agents-list {
   list-style: none;
   margin: 0;
@@ -4655,22 +4663,36 @@ button {
 .agents-list__item {
   position: relative;
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 64px;
-  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border);
-  cursor: pointer;
-  transition: background-color 0.1s ease;
 }
 .agents-list__item:last-child {
   border-bottom: 0;
 }
-.agents-list__item:hover {
+/* Row select target: a real <button> that owns the entire row so the
+   visual click target stays the full row. Reset native button chrome
+   (background/border/font) and inherit the row's three-column flex
+   layout (avatar | identity | status-col) so the visual shape is
+   preserved verbatim from the previous `<li>`-as-row implementation. */
+.agents-list__item-select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  margin: 0;
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+.agents-list__item-select:hover {
   background: var(--color-surface-hover);
 }
-.agents-list__item:focus-visible {
+.agents-list__item-select:focus-visible {
   outline: 2px solid var(--color-accent, #3b82f6);
   outline-offset: -2px;
 }
@@ -4680,7 +4702,10 @@ button {
    bolder weight on the FQN's short half is applied by the
    `.agent-fqn__short` rule and lives at `font-weight: 600` already;
    the selected modifier nudges both the scope and the subline up so the
-   row stands out more clearly. */
+   row stands out more clearly. Class lives on the `<li>` (mirroring
+   Tasks/Schedules) so the accent stripe anchors to the row container
+   and the descendant selectors below still resolve inside the wrapping
+   `<span id={headlineId}>` around `<AgentFqn>`. */
 .agents-list__item--selected {
   background: var(--color-surface-hover);
   box-shadow: inset 4px 0 0 var(--color-accent, #3b82f6);

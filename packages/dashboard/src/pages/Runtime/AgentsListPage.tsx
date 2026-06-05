@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listSessions, listTasks, type SessionView, type TaskRecord } from "../../api";
 import { AgentAvatar } from "../../components/agents/AgentAvatar";
@@ -329,19 +329,17 @@ export function AgentsListPage() {
                     </p>
                   </div>
                 ) : (
-                  <ul
-                    className="agents-list"
-                    aria-label="Installed agents"
-                    // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox/option pattern
-                    role="listbox"
-                  >
-                    {filteredViews.map((v) => (
+                  // biome-ignore lint/a11y/noRedundantRoles: Safari + VoiceOver strips the implicit listitem role from <li> children when the <ul> has `list-style: none` (defined for `.agents-list` in styles.css). Without the explicit role here, AT users on macOS/iOS lose list semantics entirely (no "list, N items" announcement, no aria-posinset cues). The explicit role is a no-op in Chrome/Firefox/Edge but a load-bearing fix on Safari.
+                  <ul role="list" className="agents-list" aria-label="Installed agents">
+                    {filteredViews.map((v, index, arr) => (
                       <AgentRow
                         key={v.entry.agent.fqn}
                         view={v}
                         selected={effectiveSelectedFqn === v.entry.agent.fqn}
                         onSelect={() => setSelectedUrl(v.entry.agent.fqn)}
                         runtimeLoading={runtimeLoading}
+                        posinset={index + 1}
+                        setsize={arr.length}
                       />
                     ))}
                   </ul>
@@ -437,70 +435,126 @@ interface AgentRowProps {
   /** True while the workspace-wide tasks fetch is still pending; row hides
    *  the running-count tag behind a skeleton so we don't lie about idle. */
   runtimeLoading: boolean;
+  /**
+   * 1-based position within the visible agents list. Required so the
+   * `<li>` can advertise `aria-posinset` / `aria-setsize` to screen
+   * readers — without these, AT users on Safari/VoiceOver hear row
+   * content but no positional cues ("row 3 of 7").
+   */
+  posinset: number;
+  /** Total visible rows in the same list as this row. See {@link posinset}. */
+  setsize: number;
 }
 
 /**
- * One row of the agents list. Two-column layout:
+ * One row of the agents list. Two-column visual layout:
  *
  *   left  — `AgentAvatar` + `AgentFqn` two-tone + muted subline
  *   right — status pill stacked above an activity tag
  *
- * PR #189 polish v3 row redesign:
+ * Row a11y model: the `<li>` is presentational; the click affordance is
+ * a real `<button class="agents-list__item-select">` that carries
+ * `aria-current="true"` when this row matches the master/detail
+ * selection. The button's accessible NAME comes from
+ * `aria-labelledby={headlineId}` (the agent's FQN), and its accessible
+ * DESCRIPTION comes from `aria-describedby` chaining version + status +
+ * activity in DOM order. Without the describedby chain, screen-reader
+ * users would hear only the FQN on focus and lose the version / status /
+ * activity context entirely, because `aria-labelledby` REPLACES (not
+ * augments) descendant-text concatenation in the accessibility tree.
+ *
+ * The historical `role="option"` listbox shape was an unimplemented
+ * promise — no `aria-activedescendant`, no roving tabindex, no arrow-key
+ * navigation. We deliberately do NOT implement a real listbox here
+ * because the row's only interactive affordance is "select for
+ * master/detail", and a single native `<button>` per row is the simplest
+ * correct model (Enter/Space activation is free from the browser).
+ *
+ * No per-row action menu exists here (PR #189 polish v3 removed the
+ * kebab — every menu item duplicated affordances already in the detail
+ * pane). If a menu ever returns, mirror the Tasks/Schedules shape: a
+ * sibling `<button aria-haspopup="menu">`, NOT a nested one (the HTML
+ * spec disallows `<button>` inside `<button>`; browsers fix it by
+ * hoisting the inner button out of the DOM).
+ *
+ * PR #189 polish v3 row redesign (preserved):
  *   - Avatar reinforces scope disambiguation (deterministic colour on
  *     the FULL fqn).
  *   - FQN renders as `scope/short` two-tone so users see the full
  *     identity without the scope being relegated to a muted secondary
  *     line.
- *   - The previous per-row kebab menu was deleted: every menu item
- *     duplicated affordances already in the detail pane, and removing
- *     it eliminates the `stopPropagation` carve-out keeping the click
- *     target simple — "the entire row selects the agent, period".
+ *
+ * Visual click target stays the entire row: the `<button>` spans the
+ * full row via CSS, so the click target feels identical to the previous
+ * `<li>`-as-row shape.
  */
-function AgentRow({ view, selected, onSelect, runtimeLoading }: AgentRowProps) {
+function AgentRow({ view, selected, onSelect, runtimeLoading, posinset, setsize }: AgentRowProps) {
   const { agent } = view.entry;
   const { shortName } = splitFqnForDisplay(agent.fqn);
+  // Stable IDs for the labelledby/describedby chain. The select-button's
+  // accessible NAME comes from `aria-labelledby={headlineId}` (just the
+  // FQN, once), and its accessible DESCRIPTION comes from
+  // `aria-describedby` chaining versionId + statusId + activityId in DOM
+  // order. See the component JSDoc above for the rationale.
+  const headlineId = useId();
+  const versionId = useId();
+  const statusId = useId();
+  const activityId = useId();
   return (
     <li
       className={`agents-list__item${selected ? " agents-list__item--selected" : ""}`}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: ARIA listbox/option pattern
-      role="option"
-      tabIndex={0}
-      aria-selected={selected}
-      aria-current={selected ? "true" : undefined}
+      aria-posinset={posinset}
+      aria-setsize={setsize}
       data-testid={`agent-row-${agent.fqn}`}
     >
-      <AgentAvatar fqn={agent.fqn} label={shortName} size="md" />
-      <div className="agents-list__identity">
-        <AgentFqn fqn={agent.fqn} />
-        <span className="agents-list__subline muted">v{agent.version}</span>
-      </div>
-      <div className="agents-list__status-col">
-        <AgentStatusPill status={view.status} />
-        <span
-          className="agents-list__activity muted"
-          data-testid={`agent-row-activity-${agent.fqn}`}
-        >
-          {runtimeLoading ? (
-            <span
-              className="skeleton skeleton--text"
-              role="status"
-              aria-label="Loading activity"
-              data-testid={`agent-row-activity-skeleton-${agent.fqn}`}
-            />
-          ) : view.runningTasks > 0 ? (
-            `${view.runningTasks} running`
-          ) : view.totalTasks7d > 0 ? (
-            `${view.totalTasks7d} task${view.totalTasks7d === 1 ? "" : "s"} · 7d`
-          ) : null}
+      <button
+        type="button"
+        className="agents-list__item-select"
+        aria-current={selected ? "true" : undefined}
+        aria-labelledby={headlineId}
+        aria-describedby={`${versionId} ${statusId} ${activityId}`}
+        onClick={onSelect}
+        data-testid={`agent-row-select-${agent.fqn}`}
+      >
+        {/* AgentAvatar carries its own role="img" + aria-label; wrap as
+            decorative so the button's accessible name stays exactly the
+            FQN (set via aria-labelledby) rather than fragmenting into
+            avatar-label + FQN. */}
+        <span aria-hidden="true">
+          <AgentAvatar fqn={agent.fqn} label={shortName} size="md" />
         </span>
-      </div>
+        <span className="agents-list__identity">
+          <span id={headlineId}>
+            <AgentFqn fqn={agent.fqn} />
+          </span>
+          <span id={versionId} className="agents-list__subline muted">
+            v{agent.version}
+          </span>
+        </span>
+        <span className="agents-list__status-col">
+          <span id={statusId}>
+            <AgentStatusPill status={view.status} />
+          </span>
+          <span
+            id={activityId}
+            className="agents-list__activity muted"
+            data-testid={`agent-row-activity-${agent.fqn}`}
+          >
+            {runtimeLoading ? (
+              <span
+                className="skeleton skeleton--text"
+                role="status"
+                aria-label="Loading activity"
+                data-testid={`agent-row-activity-skeleton-${agent.fqn}`}
+              />
+            ) : view.runningTasks > 0 ? (
+              `${view.runningTasks} running`
+            ) : view.totalTasks7d > 0 ? (
+              `${view.totalTasks7d} task${view.totalTasks7d === 1 ? "" : "s"} · 7d`
+            ) : null}
+          </span>
+        </span>
+      </button>
     </li>
   );
 }
