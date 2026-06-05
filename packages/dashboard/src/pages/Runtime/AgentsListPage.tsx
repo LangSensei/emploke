@@ -524,7 +524,7 @@ function AgentRow({ view, selected, onSelect, runtimeLoading, posinset, setsize 
           <AgentAvatar fqn={agent.fqn} label={shortName} size="md" />
         </span>
         <span className="agents-list__identity">
-          <span id={headlineId}>
+          <span id={headlineId} style={{ display: "contents" }}>
             <AgentFqn fqn={agent.fqn} />
           </span>
           <span id={versionId} className="agents-list__subline muted">
@@ -532,7 +532,7 @@ function AgentRow({ view, selected, onSelect, runtimeLoading, posinset, setsize 
           </span>
         </span>
         <span className="agents-list__status-col">
-          <span id={statusId}>
+          <span id={statusId} style={{ display: "contents" }}>
             <AgentStatusPill status={view.status} />
           </span>
           <span
