@@ -4664,6 +4664,7 @@ button {
   position: relative;
   margin: 0;
   border-bottom: 1px solid var(--color-border);
+  transition: background-color 0.1s ease;
 }
 .agents-list__item:last-child {
   border-bottom: 0;
@@ -4685,6 +4686,7 @@ button {
   border: 0;
   color: inherit;
   font: inherit;
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
   transition: background-color 0.1s ease;
