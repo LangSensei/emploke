@@ -146,7 +146,7 @@ describe("AgentsListPage (§11)", () => {
     // Scope the pill count to the left list so the auto-selected detail
     // pane's own status pill (rendered in the right pane after PR #189
     // polish v2) doesn't inflate the count.
-    const list = await screen.findByRole("listbox", { name: /Installed agents/i });
+    const list = await screen.findByRole("list", { name: /Installed agents/i });
     await waitFor(() => {
       const pills = list.querySelectorAll('[role="status"]');
       expect(pills.length).toBe(2);

@@ -168,10 +168,12 @@ describe("Master-detail layout", () => {
       expect(screen.getByTestId("agent-detail-pane")).toBeTruthy();
     });
 
-    // The list rows are dataTestid'd by fqn — click the second one.
-    const betaRow = screen.getByTestId("agent-row-emploke/beta");
+    // The list rows are dataTestid'd by fqn — click the second one's
+    // select button (the row-a11y migration in #317 moved the click
+    // affordance from the <li> onto a real <button> child).
+    const betaSelect = screen.getByTestId("agent-row-select-emploke/beta");
     act(() => {
-      fireEvent.click(betaRow);
+      fireEvent.click(betaSelect);
     });
 
     // URL probe reflects the new selection slot (and only that slot).
@@ -186,7 +188,15 @@ describe("Master-detail layout", () => {
     });
   });
 
-  it("Enter and Space activate the focused row", async () => {
+  it("Enter and Space activate the focused select button", async () => {
+    // Post-#317 the row click affordance is a real <button>; native
+    // <button> handles Enter/Space activation directly (no custom
+    // onKeyDown on the <li>). We assert the button shape + click — the
+    // browser contract for Enter/Space → click is enforced by the
+    // platform, and faking keydown→click in jsdom/happy-dom isn't
+    // representative. Adding @testing-library/user-event just to
+    // synthesize keyboard activation is more dependency churn than the
+    // assertion is worth; the platform guarantee is what we care about.
     const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
     mockListTasks.mockResolvedValue([]);
     renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
@@ -195,9 +205,13 @@ describe("Master-detail layout", () => {
       expect(screen.getByTestId("agent-detail-pane")).toBeTruthy();
     });
 
-    const betaRow = screen.getByTestId("agent-row-emploke/beta");
+    const betaSelect = screen.getByTestId("agent-row-select-emploke/beta") as HTMLButtonElement;
+    // Real <button type="button"> — Enter/Space activation is a
+    // browser-platform invariant, no JS handler needed.
+    expect(betaSelect.tagName).toBe("BUTTON");
+    expect(betaSelect.getAttribute("type")).toBe("button");
     act(() => {
-      fireEvent.keyDown(betaRow, { key: "Enter" });
+      fireEvent.click(betaSelect);
     });
     await waitFor(() => {
       const pane = screen.getByTestId("agent-detail-pane");
@@ -232,7 +246,12 @@ describe("Master-detail layout", () => {
     expect(screen.getByText(/emploke\/unknown/)).toBeTruthy();
   });
 
-  it("the row aria-selected state tracks the URL selection", async () => {
+  it("the row's select button reflects the URL selection via aria-current", async () => {
+    // Post-#317 the listbox shape (role="option" + aria-selected on the
+    // <li>) is gone. The selected state now lives on the row-select
+    // <button> as `aria-current="true"` (absent — NOT "false" — when
+    // unselected). aria-selected is no longer asserted because the <li>
+    // is presentational.
     const agents = [makeAgent("emploke/alpha"), makeAgent("emploke/beta")];
     mockListTasks.mockResolvedValue([]);
     renderMasterDetail({
@@ -240,12 +259,18 @@ describe("Master-detail layout", () => {
       initialPath: "/workspaces/ws-1/runtime/agents?selected=emploke%2Fbeta",
     });
 
-    const beta = await screen.findByTestId("agent-row-emploke/beta");
-    expect(beta.getAttribute("aria-selected")).toBe("true");
-    expect(beta.getAttribute("aria-current")).toBe("true");
-    const alpha = screen.getByTestId("agent-row-emploke/alpha");
-    expect(alpha.getAttribute("aria-selected")).toBe("false");
-    expect(alpha.getAttribute("aria-current")).toBeNull();
+    const betaSelect = await screen.findByTestId("agent-row-select-emploke/beta");
+    expect(betaSelect.getAttribute("aria-current")).toBe("true");
+    const alphaSelect = screen.getByTestId("agent-row-select-emploke/alpha");
+    expect(alphaSelect.getAttribute("aria-current")).toBeNull();
+
+    // The <li> itself carries no role / tabindex / aria-selected —
+    // pinning that contract here so a regression in the row's a11y
+    // shape doesn't silently bring the fake-listbox model back.
+    const betaRow = screen.getByTestId("agent-row-emploke/beta");
+    expect(betaRow.getAttribute("role")).toBeNull();
+    expect(betaRow.getAttribute("tabindex")).toBeNull();
+    expect(betaRow.getAttribute("aria-selected")).toBeNull();
   });
 });
 
@@ -359,9 +384,11 @@ describe("PR #189 polish v3 — anti-gating + row redesign", () => {
 
     const pane = await screen.findByTestId("agent-detail-pane");
     expect(pane.getAttribute("data-agent-fqn")).toBe("emploke/alpha");
-    // The first row reports its selected state too.
-    const alphaRow = screen.getByTestId("agent-row-emploke/alpha");
-    expect(alphaRow.getAttribute("aria-current")).toBe("true");
+    // The first row's select button reports its selected state via
+    // aria-current (post-#317 the listbox-shaped aria-selected on the
+    // <li> is gone — aria-current lives on the select button).
+    const alphaSelect = screen.getByTestId("agent-row-select-emploke/alpha");
+    expect(alphaSelect.getAttribute("aria-current")).toBe("true");
   });
 
   it("per-row activity tag shows a skeleton while tasks is null, then the count after resolve", async () => {
@@ -404,10 +431,11 @@ describe("PR #189 polish v3 — anti-gating + row redesign", () => {
     mockListTasks.mockResolvedValue([]);
     renderMasterDetail({ agents, initialPath: "/workspaces/ws-1/runtime/agents" });
 
-    // Click beta — URL pins it.
-    const betaRow = await screen.findByTestId("agent-row-emploke/beta");
+    // Click beta — URL pins it. Post-#317 the click affordance is on
+    // the row's select button, not the <li>.
+    const betaSelect = await screen.findByTestId("agent-row-select-emploke/beta");
     act(() => {
-      fireEvent.click(betaRow);
+      fireEvent.click(betaSelect);
     });
     await waitFor(() => {
       const probe = screen.getByTestId("url-probe");
@@ -494,9 +522,9 @@ describe("PR #189 polish v4 — auto-selected agent's sessions fetch fires (Bug 
     });
     mockListSessions.mockClear();
 
-    const betaRow = screen.getByTestId("agent-row-emploke/beta");
+    const betaSelect = screen.getByTestId("agent-row-select-emploke/beta");
     act(() => {
-      fireEvent.click(betaRow);
+      fireEvent.click(betaSelect);
     });
 
     await waitFor(() => {
@@ -560,9 +588,9 @@ describe("PR #189 polish v7 — agent switch resets pane-local state (#193)", ()
     expect(mockDispatchTask).toHaveBeenCalledTimes(1);
     expect(mockDispatchTask.mock.calls[0]?.[0]).toBe("emploke/alpha");
 
-    // Switch the master list to agent B.
+    // Switch the master list to agent B (click the row's select button).
     act(() => {
-      fireEvent.click(screen.getByTestId("agent-row-emploke/beta"));
+      fireEvent.click(screen.getByTestId("agent-row-select-emploke/beta"));
     });
 
     // The pane reconciles to agent B (same instance, new `fqn` prop).
@@ -634,7 +662,12 @@ describe("PR #189 polish v4 — running-first sort (Bug 5)", () => {
       expect(activity.textContent).toMatch(/running/);
     });
     const rows = Array.from(
-      document.querySelectorAll<HTMLElement>('[role="option"][data-testid^="agent-row-"]'),
+      // Post-#317 the row container is a presentational <li>; the
+      // legacy role="option" filter is gone. Scope to <li> elements
+      // tagged with the row testid to avoid matching the inner select
+      // button (also data-testid-prefixed `agent-row-select-…`) or the
+      // activity-text spans (`agent-row-activity-…`).
+      document.querySelectorAll<HTMLElement>('li[data-testid^="agent-row-"]'),
     ).map((el) => el.getAttribute("data-testid"));
 
     expect(rows).toEqual([
@@ -663,7 +696,8 @@ describe("PR #189 polish v4 — running-first sort (Bug 5)", () => {
       expect(screen.getByTestId("agent-row-emploke/alpha")).toBeTruthy();
     });
     const rows = Array.from(
-      document.querySelectorAll<HTMLElement>('[role="option"][data-testid^="agent-row-"]'),
+      // Post-#317 row container is presentational; scope to <li> only.
+      document.querySelectorAll<HTMLElement>('li[data-testid^="agent-row-"]'),
     ).map((el) => el.getAttribute("data-testid"));
     expect(rows).toEqual([
       "agent-row-emploke/alpha",
