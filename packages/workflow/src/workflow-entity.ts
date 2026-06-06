@@ -1,34 +1,28 @@
 /**
- * Row ↔ entity mapping for `@emploke/workflow` (v1.0.0).
+ * Row ↔ entity mapping for `@emploke/workflow`.
  *
- * Phase 0 keeps the entity layer **minimal**: it carries the persisted
- * row shape, parses `spec_json`, and validates enum membership at
- * round-trip time. **Substrate-level invariants** ("FSM forward-only",
- * "coordinator_agent matches latest coord spec", "DAG acyclic", "phase
- * = MAX(parents.phase) + 1") live in the engine (Phase 2+), NOT here.
- *
- * The v0.6.0 file carried heavy entity-level invariants because v0.6.0
- * was append-only-everywhere and a `Workflow` aggregate could
- * meaningfully validate itself in isolation. v1.0.0 has mutation
- * primitives (addEdge, removeNode, …) whose invariants only make
- * sense against the live SQL state (no orphan children, no second
- * coord successor, …) — those belong on the service / repository,
- * not on a per-row entity.
+ * The entity layer is deliberately thin: it carries the persisted row
+ * shape, parses `spec_json`, and validates enum membership at
+ * round-trip time. Structural invariants ("FSM forward-only",
+ * "coordinator_agent matches latest coord spec", "DAG acyclic",
+ * "phase = MAX(parents.phase) + 1") are NOT enforced here — they
+ * only make sense against the live SQL state (no orphan children, no
+ * second coord successor, …) and so live on the service /
+ * repository, not on a per-row entity.
  *
  * The entity layer's remaining job is:
  *
  *   1. `fromRow` — parse persisted JSON, validate enums (throws
  *      `WorkflowEnumValueError` on miss). Defense-in-depth so a
- *      pre-migration row or hand-edited DB can't smuggle a corrupted
- *      enum into the runtime.
+ *      corrupted or hand-edited row can't smuggle a junk enum into
+ *      the runtime.
  *   2. `toRow` — project the typed in-memory shape to a Drizzle
  *      insert payload (`spec_json` ← `JSON.stringify(spec)`).
  *
- * Mirrors `@emploke/schedule`'s `ScheduleEntity` byte-for-byte in
- * role; the differences are: this pkg has TWO entities
- * (`WorkflowEntity` for the header row, `WorkflowNodeEntity` for
- * each node row) and an `WorkflowEdgeEntity` value object (plain
- * struct, no business methods).
+ * This package ships three entities: `WorkflowEntity` for the header
+ * row, `WorkflowNodeEntity` for each node row, and a
+ * `WorkflowEdgeEntity` value object (plain struct, no business
+ * methods).
  */
 
 import { WorkflowError } from "./errors.js";
@@ -59,14 +53,12 @@ import {
  * references; the public surface exposes the wire-shape projection
  * (`toDto`) when needed.
  *
- * The entity carries:
- *   - all persisted columns of the v1.0.0 `workflows` table.
- *   - `metadata` parsed from JSON (opaque `Record<string, unknown>`).
- *
- * It does NOT carry:
- *   - the workflow's nodes / edges (those are separate aggregates
- *     queried independently; the v0.6.0 single-aggregate model is
- *     gone — there's no `Workflow.addNode` here).
+ * The entity carries all persisted columns of the `workflows` table
+ * plus `metadata` parsed from JSON (opaque `Record<string,
+ * unknown>`). It does NOT carry the workflow's nodes / edges —
+ * those are separate aggregates queried independently. There is no
+ * `Workflow.addNode` here; structural mutation goes through the
+ * service-layer primitives.
  */
 export class WorkflowEntity {
   private constructor(
@@ -83,7 +75,7 @@ export class WorkflowEntity {
 
   /**
    * Hydrate from a Drizzle row. Throws `WorkflowEnumValueError` if
-   * the persisted `status` is not in the v1 vocabulary.
+   * the persisted `status` is not in the known vocabulary.
    * `metadata` is JSON-parsed; corrupt JSON throws `WorkflowError`.
    */
   static fromRow(row: WorkflowRow): WorkflowEntity {
@@ -148,8 +140,8 @@ export class WorkflowNodeEntity {
    *
    *   - `InvalidWorkflowIdError` / `InvalidWorkflowNodeIdError` if
    *     ids fail grammar.
-   *   - `WorkflowEnumValueError` if `status` is not in the v1 node-
-   *     status vocabulary or if `kind` is empty.
+   *   - `WorkflowEnumValueError` if `status` is not in the known
+   *     node-status vocabulary or if `kind` is empty.
    *   - `WorkflowError` if `spec_json` is not valid JSON.
    */
   static fromRow(row: WorkflowNodeRow): WorkflowNodeEntity {
@@ -199,7 +191,7 @@ export class WorkflowNodeEntity {
 /**
  * Plain value object for one DAG edge. No mutation methods — edges
  * are added / removed via the substrate's `addEdge` / `removeEdge`
- * primitives (Phase 1+), not via the entity layer.
+ * primitives, not via the entity layer.
  */
 export class WorkflowEdgeEntity {
   private constructor(

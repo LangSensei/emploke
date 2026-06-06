@@ -1,28 +1,22 @@
 /**
- * Public API of `@emploke/workflow` (v1.0.0).
+ * Public API of `@emploke/workflow`.
  *
- * Open substrate for a workflow DAG with mutation primitives. The
+ * An open substrate for a workflow DAG with mutation primitives. The
  * pkg owns three tables (`workflows` / `workflow_nodes` /
  * `workflow_edges`), the entity layer that round-trips them, the
  * error catalog, and the kind-handler interface that callers register
  * concrete kinds against at compose time.
  *
- * **Phase 0** ships the data layer only (schema / migrations /
- * types / entities / errors / validate). `WorkflowService` and
- * `WorkflowRepository` are stubbed pending Phase 1+; see SPEC.md.
- *
- * Construction (Phase 1+): `composeWorkflowModule({ dbFile, … })`.
+ * Construction goes through `composeWorkflowModule({ dbFile, … })`.
  * Tests use `openTestWorkflowDb()` from `./testing`.
  *
  * Per-kind wire DTOs (`WorkflowTaskNodeSpec`,
  * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`) are re-
  * exported via `./types.ts` from `@emploke/contracts` so external
  * callers don't need to know which package owns the wire shapes.
- *
- * See `packages/workflow/SPEC.md` for the authoritative design.
  */
 
-// ─── Composition (Phase 1+ wires up the real implementation) ───────
+// ─── Composition ────────────────────────────────────────────────────
 export {
   composeWorkflowModule,
   type WorkflowModule,

@@ -2,15 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openTestWorkflowDb } from "../src/testing.js";
 
 /**
- * v1.0.0 schema smoke test. Verifies the 0001_v1_recreate migration
- * DROPs the v0.6.0 tables (created by 0000_initial) and recreates
- * the 3 tables with the v1 column set + the 7 indexes called out in
- * `packages/workflow/SPEC.md` §"Table 1/2/3".
- *
- * The migration runner applies 0000 + 0001 in order; the net effect
- * on a fresh DB is the v1.0.0 schema (the DROPs are no-ops on a
- * fresh DB because v0.6.0 tables are recreated by 0000 first, then
- * dropped by 0001 — and the test only sees the v1 final state).
+ * Schema smoke test. Verifies the migration set produces the three
+ * workflow tables (`workflows`, `workflow_nodes`, `workflow_edges`)
+ * with the expected columns, NOT NULL / DEFAULT shape, and indexes.
+ * Drives the schema via the migration runner so a future migration
+ * that drifts the table shape is caught here, not at the first
+ * production deploy.
  */
 
 let handle: ReturnType<typeof openTestWorkflowDb>;
@@ -23,7 +20,7 @@ afterEach(() => {
   handle.close();
 });
 
-describe("workflows schema (v1.0.0)", () => {
+describe("workflows schema", () => {
   it("creates workflows, workflow_nodes, workflow_edges tables", () => {
     const rows = handle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -34,7 +31,7 @@ describe("workflows schema (v1.0.0)", () => {
     expect(names).toContain("workflow_edges");
   });
 
-  it("workflows table has the v1.0.0 column set", () => {
+  it("workflows table has the expected column set", () => {
     const cols = handle.sqlite.prepare("PRAGMA table_info('workflows')").all() as {
       name: string;
       notnull: number;
@@ -53,15 +50,14 @@ describe("workflows schema (v1.0.0)", () => {
         "status",
       ].sort(),
     );
-    // v0.6.0's `outcome` and `archived_at` MUST be gone.
-    expect(names).not.toContain("outcome");
-    expect(names).not.toContain("archived_at");
-    // `coordinator_agent` must be NOT NULL (D14).
+    // `coordinator_agent` is the denorm cache of the current coord
+    // node's agent FQN; it must be NOT NULL so "who's running this
+    // workflow?" is always answerable with a single-row read.
     const coordCol = cols.find((c) => c.name === "coordinator_agent");
     expect(coordCol?.notnull).toBe(1);
   });
 
-  it("workflow_nodes table has the v1.0.0 column set", () => {
+  it("workflow_nodes table has the expected column set", () => {
     const cols = handle.sqlite.prepare("PRAGMA table_info('workflow_nodes')").all() as {
       name: string;
       type: string;
@@ -83,24 +79,23 @@ describe("workflows schema (v1.0.0)", () => {
         "workflow_id",
       ].sort(),
     );
-    // v0.6.0's `type` / `spec` / `data` MUST be gone.
-    expect(names).not.toContain("type");
-    expect(names).not.toContain("spec");
-    expect(names).not.toContain("data");
-    // `kind` / `spec_json` MUST have no DEFAULT (D10).
+    // `kind` and `spec_json` deliberately have no DEFAULT: every
+    // INSERT must spell them out so the kind-handler registration
+    // story stays honest (no silent "default kind").
     const kind = cols.find((c) => c.name === "kind");
     const spec = cols.find((c) => c.name === "spec_json");
     expect(kind?.notnull).toBe(1);
     expect(kind?.dflt_value).toBeNull();
     expect(spec?.notnull).toBe(1);
     expect(spec?.dflt_value).toBeNull();
-    // `phase` is INTEGER NN.
+    // `phase` is the node's topological depth, stored as INTEGER NN
+    // so SQL ORDER BY phase yields the natural rendering order.
     const phase = cols.find((c) => c.name === "phase");
     expect(phase?.notnull).toBe(1);
     expect(phase?.type.toUpperCase()).toBe("INTEGER");
   });
 
-  it("workflow_edges table is unchanged from v0.6.0", () => {
+  it("workflow_edges table has the expected column set + composite PK", () => {
     const cols = handle.sqlite.prepare("PRAGMA table_info('workflow_edges')").all() as {
       name: string;
       pk: number;
@@ -111,19 +106,20 @@ describe("workflows schema (v1.0.0)", () => {
     expect(pkCols.sort()).toEqual(["from_node_id", "to_node_id", "workflow_id"].sort());
   });
 
-  it("creates the v1.0.0 indexes", () => {
+  it("creates the indexes the substrate read patterns rely on", () => {
     const rows = handle.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL")
       .all() as { name: string }[];
     const names = rows.map((r) => r.name);
-    // workflows
+    // Workflow listings filter on status; admin lookup filters on
+    // coordinator_agent.
     expect(names).toContain("workflows_status_idx");
     expect(names).toContain("workflows_coordinator_agent_idx");
-    // workflow_nodes — composite phase index is NEW in v1
+    // Per-workflow scans + the UI's ORDER BY phase rendering query.
     expect(names).toContain("workflow_nodes_workflow_idx");
     expect(names).toContain("workflow_nodes_status_idx");
     expect(names).toContain("workflow_nodes_phase_idx");
-    // workflow_edges (unchanged)
+    // Edge lookups in both directions for the readiness check.
     expect(names).toContain("workflow_edges_from_idx");
     expect(names).toContain("workflow_edges_to_idx");
   });

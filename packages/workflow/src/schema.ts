@@ -1,40 +1,37 @@
 import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
- * Persisted row for one workflow (v1.0.0).
+ * Persisted row for one workflow.
  *
- * Substrate model: the workflow is a header row carrying lifecycle
- * status + a denormalized cache of the current coordinator agent FQN
- * (D14). All structural state — nodes, edges, the coord chain — lives
- * in `workflow_nodes` / `workflow_edges`.
+ * The workflow is a header row carrying lifecycle status plus a
+ * denormalized cache of the current coordinator agent FQN. All
+ * structural state — nodes, edges, the coordinator chain — lives in
+ * `workflow_nodes` / `workflow_edges`.
  *
- * Diff vs v0.6.0 (drop + recreate per D9 — no real users to migrate):
+ * `coordinator_agent` caches the FQN of the most-recently-created
+ * coordinator-kind node's `spec.agent`. The substrate keeps it in
+ * sync inside every coordinator INSERT transaction (via the single
+ * `insertCoordNode` helper), so `"who's running this workflow?"`
+ * answers from a single-row read instead of a join + ORDER BY.
  *
- *   + `coordinator_agent` (TEXT NN)  — D14 denorm of latest coord
- *     node's `spec.agent`. Substrate keeps it in sync inside every
- *     `kind='coordinator'` INSERT tx (`insertCoordNode` helper,
- *     Phase 1+).
- *   - `outcome`                     — collapsed into the 4-value
- *     status enum (D6).
- *   ~ `archived_at` → `ended_at`    — aligns with `tasks.ended_at`
- *     (D7); non-null iff status is terminal (engine-enforced).
- *   ~ `status`                      — was 5 values, now 4 (D1):
- *     `running | succeeded | failed | cancelled`. `running` is the
- *     only non-terminal value; "is the coord awake right now" is
- *     derived from `workflow_nodes` (D15), not persisted here.
+ * `status` is a 4-value enum: `running | succeeded | failed |
+ * cancelled`. `running` is the only non-terminal value. There's no
+ * separate `"is the coord awake right now?"` flag — that's derived
+ * from `workflow_nodes` (live coord = a `coordinator`-kind node with
+ * non-terminal status).
  *
- * Indexes added in v1: `workflows_status_idx` (status-filtered
- * dashboard listings — primary read pattern); `workflows_coordinator
- * _agent_idx` ("list workflows running agent X" admin lookup,
- * cheaper than re-deriving via JOIN).
+ * `ended_at` is non-null iff `status` is terminal, but this and the
+ * `coordinator_agent` denorm rule are engine-enforced inside the
+ * mutation primitives, NOT DDL constraints, so the DDL stays
+ * permissive across future tweaks.
  *
- * Workflow directory is NOT stored — derived via
- * `workflowDir(workspaceDir, id)` (D5; mirrors `tasks` convention).
+ * The workflow's on-disk directory is NOT stored — it's derived via
+ * `workflowDir(workspaceDir, id)` so a workspace move only requires
+ * a config change, never a row rewrite.
  *
- * Cross-column invariants (`ended_at IS NOT NULL iff status terminal`,
- * `coordinator_agent = latest coord node's spec.agent`) are
- * engine-enforced (Phase 2+), NOT DDL constraints. The DDL stays
- * permissive so future schema tweaks don't require a migration.
+ * Indexes serve two read patterns: dashboard listings filter on
+ * `status`, and the "list workflows currently run by agent X" admin
+ * lookup filters on `coordinator_agent`.
  */
 export const workflows = sqliteTable(
   "workflows",
@@ -56,45 +53,42 @@ export const workflows = sqliteTable(
 );
 
 /**
- * Persisted row for one workflow node (v1.0.0).
+ * Persisted row for one workflow node.
  *
- * Polymorphic on `kind` (renamed from v0.6.0's `type`). v1.0.0 ships
- * two kinds: `'task'` and `'coordinator'`; `'human'` is reserved for
- * a future iteration. The substrate is kind-agnostic — every kind is
- * routed through a `WorkflowNodeKindHandler` registered at compose
- * time (mirrors `@emploke/schedule`'s `ScheduleKindHandler`).
+ * Polymorphic on `kind`. Two kinds ship: `'task'` and `'coordinator'`.
+ * (`'human'` is reserved for a future iteration.) The substrate is
+ * kind-agnostic — each row is routed through a registered
+ * `WorkflowNodeKindHandler` for kind-specific concerns (spec
+ * validation, dispatch, cancel).
  *
- * Diff vs v0.6.0:
+ * `kind` and `spec_json` are stored without a column DEFAULT: every
+ * INSERT must spell them out. This keeps the kind-handler
+ * registration story honest — there's no implicit "default kind" a
+ * caller could rely on, and the substrate never invents a spec.
  *
- *   ~ `type` → `kind` (TEXT NN, **no DEFAULT** per D10; mirrors
- *     `schedules.target_kind`). The default-free shape forces every
- *     INSERT to spell the kind out, which makes the kind-handler
- *     registration story honest.
- *   ~ `spec` → `spec_json` (TEXT NN, **no DEFAULT**; mirrors
- *     `schedules.target_json`). Opaque JSON owned by the registered
- *     kind handler; the substrate never introspects it.
- *   - `data`                        — dropped entirely (D11). The
- *     substrate has no per-node mutable state; runtime state belongs
- *     to the backing unit (the task, the coord run dir).
- *   + `phase` (INTEGER NN)          — topological depth = `MAX(
- *     parents.phase) + 1` (D3). Substrate recomputes across the
- *     not_started subtree on every edge-mutating primitive. Used by
- *     UI for hierarchical DAG rendering. Not used by the engine's
- *     readiness check (which walks edges directly).
+ * `spec_json` is opaque JSON owned by the registered kind handler;
+ * the substrate never introspects it. Cross-kind invariants (e.g.
+ * "task's `agent` exists in the catalog") are validated by the
+ * handler's `validate(spec, ctx)` at insert time, not by SQL.
+ *
+ * `phase` is the node's topological depth = `MAX(parents.phase) + 1`
+ * (roots are phase 0). It's recomputed across the `not_started`
+ * subtree on every edge-mutating primitive. Used by UI for
+ * hierarchical DAG rendering. The engine's dispatch-readiness check
+ * walks edges directly, not phase, so phase has no engine
+ * semantics — it's purely a render hint.
+ *
+ * `ended_at` is non-null iff `status` is terminal. Like the workflow
+ * header, this is an engine-enforced invariant, not a DB constraint,
+ * to keep the DDL portable.
  *
  * Indexes:
- *   - `workflow_nodes_workflow_idx`        (workflow_id)
- *   - `workflow_nodes_status_idx`          (workflow_id, status)
- *     — composite for "ready nodes in this workflow" and similar
- *     per-workflow status-filtered scans.
- *   - `workflow_nodes_phase_idx`           (workflow_id, phase)
- *     — composite, NEW in v1. Sole consumer is the UI's `ORDER BY
- *     phase` rendering query. The engine does NOT use it (no
- *     "all of phase N terminal?" query exists in v1).
- *
- * `ended_at` is nullable; the engine-level invariant `status terminal
- * iff ended_at non-null` (Phase 2+) is NOT a DB constraint so the
- * DDL stays portable.
+ *   - `workflow_nodes_workflow_idx` — per-workflow scans.
+ *   - `workflow_nodes_status_idx` (composite `(workflow_id, status)`)
+ *     — "ready nodes in this workflow" and similar per-workflow
+ *     status-filtered scans.
+ *   - `workflow_nodes_phase_idx` (composite `(workflow_id, phase)`)
+ *     — exclusively for the UI's `ORDER BY phase` rendering query.
  */
 export const workflowNodes = sqliteTable(
   "workflow_nodes",
@@ -118,16 +112,16 @@ export const workflowNodes = sqliteTable(
 );
 
 /**
- * Persisted row for one DAG edge (v1.0.0; unchanged from v0.6.0).
+ * Persisted row for one DAG edge.
  *
  * Composite PK `(workflow_id, from_node_id, to_node_id)` enforces
- * edge uniqueness; cycle rejection is engine-layer (the substrate
- * runs a DFS reach check on every edge-introducing primitive before
- * persist).
+ * edge uniqueness at the storage layer. Cycle rejection happens in
+ * the mutation-primitive layer: each edge-introducing primitive runs
+ * a DFS reach check before persist.
  *
- * No FK to `workflow_nodes.id` because drizzle-kit's SQLite migrator
- * leaves FKs opt-in. The substrate enforces endpoint existence at
- * the mutation-primitive layer.
+ * No FK to `workflow_nodes.id` — drizzle-kit's SQLite migrator
+ * leaves FKs opt-in, and the substrate already enforces endpoint
+ * existence at the mutation-primitive layer.
  */
 export const workflowEdges = sqliteTable(
   "workflow_edges",

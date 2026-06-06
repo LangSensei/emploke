@@ -1,39 +1,36 @@
 /**
- * Wire-shape DTOs for the workflows HTTP / dispatch surface that are
- * NOT owned by `@emploke/workflow` (the workflow pkg is a
- * kind-agnostic substrate; per-kind wire shapes live here so the
- * substrate stays free of kind knowledge).
+ * Wire-shape DTOs for the workflows HTTP / dispatch surface.
  *
- * Mirrors `./schedules.ts` byte-for-byte in role: the substrate
- * stores an opaque `{ kind: string, spec: unknown }` envelope; per-
- * kind wire types live here and are flattened (kind + flat fields)
- * for HTTP responses so dashboard / CLI consumers can read flat
- * `node.spec.agent` style without touching the envelope.
- *
- * See `packages/workflow/SPEC.md` §"v1.0.0 'task' kind contract" and
- * §"v1.0.0 'coordinator' kind contract" for the contract definitions
- * and the validation rules enforced by the kind handlers (which live
- * in `packages/api/src/wiring/`, Phase 4 in the v1 rollout).
+ * The workflow substrate (`@emploke/workflow`) stores nodes as an
+ * opaque `{ kind: string, spec: unknown }` envelope and is
+ * deliberately kind-agnostic. The per-kind wire DTOs live here, in
+ * the cross-cutting `@emploke/contracts` package, so the substrate
+ * stays free of kind knowledge and so the same shapes can be
+ * imported by the SPA, the CLI, and the server without dragging in
+ * `@emploke/workflow`'s implementation modules.
  */
 
 /**
  * Task-kind node spec payload. Flat, matches the body shape minus
- * the discriminator. Persisted opaquely as
- * `workflow_nodes.spec_json` via the substrate's envelope; consumed
- * flatly on the wire.
+ * the discriminator. Persisted opaquely as `workflow_nodes.spec_json`
+ * via the substrate's envelope; consumed flatly on the wire.
  *
- * Validation lives in the task-kind handler (Phase 4); a Phase 0
- * sketch of the rules:
+ * The task-kind handler enforces (at insert time):
  *
- *   1. `agent` non-empty string AND exists in catalog AND appears in
- *      the caller coord's `spec.agent`'s `dependencies.agents`.
- *   2. `brief` non-empty string, no `\n`/`\r`, length ≤ 200.
+ *   1. `agent` non-empty string AND exists in the catalog AND appears
+ *      in the caller coord agent's `dependencies.agents` declaration.
+ *      The last clause means a coordinator can only dispatch task
+ *      nodes for agents it has statically declared a dependency on,
+ *      so the static dependency graph is also the runtime
+ *      dispatch-permission graph.
+ *   2. `brief` non-empty string, no `\n`/`\r`, length ≤ 200 (matches
+ *      `@emploke/task` `DispatchOpts.brief`).
  *   3. `details` when present, must be string (empty allowed).
  *   4. `runtime` when present, must be non-empty string.
  */
 export interface WorkflowTaskNodeSpec {
   /**
-   * Worker agent FQN. MUST appear in the most recent coord node's
+   * Worker agent FQN. MUST appear in the most-recent coord node's
    * `spec.agent`'s `dependencies.agents` (validated by the
    * task-kind handler at insert time).
    */
@@ -47,14 +44,19 @@ export interface WorkflowTaskNodeSpec {
 }
 
 /**
- * Coordinator-kind node spec payload. Every coord node carries its
- * own agent FQN (D14 in SPEC.md). When the substrate auto-inserts a
- * silent-retry coord (D20), it copies the predecessor's `spec_json`.
- * When the coord schedules a successor via mutation primitives, the
- * coord chooses what agent to use (D19) — inheritance is convention,
- * not enforced.
+ * Coordinator-kind node spec payload. Every coordinator node carries
+ * its own agent FQN — the workflow's `coordinator_agent` header
+ * column is just a denorm cache of the most-recently-created coord
+ * node's `spec.agent`.
  *
- * Validation rules (Phase 4 handler):
+ * The silent-retry path (the substrate's auto-respawn when a coord
+ * exits without making forward progress) copies the predecessor's
+ * `spec_json` verbatim, so a retry is byte-identical to its
+ * predecessor. When a coord schedules a new successor explicitly,
+ * the coord chooses what agent to use — inheriting the same agent
+ * is convention, not enforced.
+ *
+ * The coordinator-kind handler enforces (at insert time):
  *
  *   1. `agent` non-empty string AND exists in catalog AND its
  *      `dependencies.skills` MUST include `emploke/coordinator`.
@@ -68,8 +70,8 @@ export interface WorkflowCoordinatorNodeSpec {
  * Flat wire projection for a task-kind workflow node spec. The
  * internal envelope `{ kind: "task", spec: { agent, brief, ... } }`
  * is flattened to `{ kind: "task", agent, brief, ... }` for HTTP
- * responses so existing dashboard / CLI code can read
- * `node.spec.agent` without unwrapping `spec`.
+ * responses so dashboard / CLI code can read `node.spec.agent`
+ * without unwrapping `spec`.
  */
 export type WorkflowTaskNodeSpecWire = { readonly kind: "task" } & WorkflowTaskNodeSpec;
 
@@ -80,7 +82,7 @@ export type WorkflowCoordinatorNodeSpecWire = {
 
 /**
  * Wire-shape spec on workflow node responses. Flat for the two
- * known v1 kinds (`task` / `coordinator`); opaque envelope for any
+ * shipped kinds (`task` / `coordinator`); opaque envelope for any
  * future kind the server projects through unchanged. When a third
  * concrete kind ships, add its flat wire shape here as another
  * union member.

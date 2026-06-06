@@ -1,22 +1,18 @@
 /**
- * `WorkflowRepository` is being rewritten for the v1.0.0 substrate
- * (mutation primitives, kind-aware engine event handlers, denorm sync
- * for `workflows.coordinator_agent`). Phase 0 ships only the data
- * layer; the repository lands in Phase 1.
+ * `WorkflowRepository` owns the SQL for the workflow substrate:
+ * mutation primitives, kind-aware engine event handlers, and the
+ * denorm sync for `workflows.coordinator_agent`. Currently a stub —
+ * the data layer (schema, entities, validate, errors) is in place
+ * but the SQL methods are not yet wired up.
  *
- * This stub exists so `compose.ts` continues to typecheck while the
- * Phase 1 work is in flight on `feat/workflow-v1`. The class throws
- * `WorkflowError` on every method invocation so test runs that try
- * to use it fail loudly. Phase 1 replaces the body wholesale.
- *
- * See `packages/workflow/SPEC.md` §"Engine writes" for the SQL each
- * primitive emits.
+ * This stub exists so `compose.ts` continues to typecheck. Every
+ * method throws `WorkflowError` so a test or caller that tries to
+ * use it fails loudly instead of silently working against a no-op.
  */
 
 import { WorkflowError } from "./errors.js";
 
-const NOT_IMPLEMENTED =
-  "@emploke/workflow v1.0.0 substrate is being rewritten on feat/workflow-v1; the repository lands in Phase 1.";
+const NOT_IMPLEMENTED = "WorkflowRepository is not yet implemented";
 
 export class WorkflowRepository {
   throwNotImplemented(): never {

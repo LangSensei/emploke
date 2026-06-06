@@ -1,5 +1,5 @@
 /**
- * Error hierarchy for `@emploke/workflow` (v1.0.0).
+ * Error hierarchy for `@emploke/workflow`.
  *
  * All errors extend {@link WorkflowError} so callers can `instanceof`
  * a coarse check within the same realm; cross-realm callers (HTTP
@@ -7,15 +7,9 @@
  * (set per-class so `instanceof` survives module-boundary identity
  * loss).
  *
- * Each error MUST be a discrete subclass so the upstream error-
- * policy table (server route layer) can map each to its appropriate
- * HTTP status without sniffing message text. Phase 0 declares the
- * full v1.0.0 error set; only a subset is thrown in Phase 0 (entity
- * round-trip + validate), the rest land progressively in Phase 1+
- * as the mutation primitives ship.
- *
- * See `packages/workflow/SPEC.md` §"Per-primitive rejection rule
- * summary" and the D-decisions for which primitive throws what.
+ * Each error is a discrete subclass so the upstream error-policy
+ * table (server route layer) can map each to its appropriate HTTP
+ * status without sniffing message text.
  */
 
 export class WorkflowError extends Error {
@@ -87,10 +81,10 @@ export class WorkflowAlreadyTerminalError extends WorkflowError {
 
 /**
  * Thrown when a mutation primitive is called by a caller that does
- * NOT satisfy the D22 cross-cut auth predicate: caller node must be
- * `kind='coordinator' AND status='running'` and the workflow must be
- * `status='running'`. The single auth gate shared by all 8 mutation
- * primitives (D22).
+ * NOT satisfy the cross-cut auth predicate: the caller node must be
+ * `kind='coordinator' AND status='running'`, AND the workflow itself
+ * must be `status='running'`. The single auth gate shared by every
+ * mutation primitive on the substrate.
  */
 export class WorkflowMutationUnauthorizedError extends WorkflowError {
   override readonly name = "WorkflowMutationUnauthorizedError";
@@ -105,11 +99,11 @@ export class WorkflowMutationUnauthorizedError extends WorkflowError {
 
 /**
  * Thrown when a mutation targets a node whose status disallows the
- * change. Per D24 ("structural sealing"): `replaceNodeSpec` /
+ * change. The "structural sealing" rule: `replaceNodeSpec` /
  * `removeNode` reject anything not `not_started`; `addEdge` /
  * `removeEdge` reject if the to-node isn't `not_started`;
- * `cancelNode` is the only mutation legal on `running` (task-kind
- * only). Maps to 409.
+ * `cancelNode` is the only mutation legal on `running` (and only
+ * for task-kind nodes). Maps to 409.
  */
 export class WorkflowNodeNotMutableError extends WorkflowError {
   override readonly name = "WorkflowNodeNotMutableError";
@@ -129,9 +123,7 @@ export class WorkflowNodeNotMutableError extends WorkflowError {
 
 /**
  * Thrown when `addEdge` / `addNode` / `addSubgraph` would close a
- * cycle on the DAG. Renamed from v0.6.0's `WorkflowCycleError` for
- * symmetry with `WorkflowEdgeNotFoundError` /
- * `WorkflowEdgeAlreadyExistsError`.
+ * cycle on the DAG.
  */
 export class WorkflowEdgeCycleError extends WorkflowError {
   override readonly name = "WorkflowEdgeCycleError";
@@ -176,8 +168,8 @@ export class WouldOrphanChildError extends WorkflowError {
 
 /**
  * Thrown when `addNode(kind, …)` or `addSubgraph` references a
- * `kind` that has no registered handler (invariant #10). Operator-
- * config bug; the server's error-policy table maps to 500.
+ * `kind` that has no registered handler. Operator-config bug; the
+ * server's error-policy table maps to 500.
  */
 export class WorkflowNodeKindUnknownError extends WorkflowError {
   override readonly name = "WorkflowNodeKindUnknownError";
@@ -207,11 +199,15 @@ export class WorkflowNodeSpecError extends WorkflowError {
 }
 
 /**
- * D23 violation. Thrown by `addNode(kind='coordinator')` /
- * `addSubgraph` when the caller coord already has ≥1 coord-kind
- * child node. Combined with D27 (caller must be parent of inserted
- * coord) this structurally guarantees the "non-terminal coord chain
- * has length 1 or 2" invariant.
+ * Thrown by `addNode(kind='coordinator')` / `addSubgraph` when the
+ * caller coord already has ≥1 coordinator-kind child node.
+ *
+ * Combined with the "inserted coord must list the caller as a parent"
+ * rule (see {@link OrphanCoordInsertError}), this structurally
+ * guarantees the substrate's "non-terminal coord chain has length 1
+ * or 2" invariant: at any moment, the live coords form a chain of
+ * length 1 (the currently-running coord) or 2 (the running coord
+ * plus a single pending successor it has just enqueued).
  */
 export class MultipleSuccessorCoordsError extends WorkflowError {
   override readonly name = "MultipleSuccessorCoordsError";
@@ -220,16 +216,20 @@ export class MultipleSuccessorCoordsError extends WorkflowError {
     public readonly callerCoordNodeId: string,
   ) {
     super(
-      `Coordinator node "${callerCoordNodeId}" in workflow "${workflowId}" already has a coord-kind child; cannot add a second (D23)`,
+      `Coordinator node "${callerCoordNodeId}" in workflow "${workflowId}" already has a coord-kind child; cannot add a second`,
     );
   }
 }
 
 /**
- * D27 violation. Thrown by `addNode(kind='coordinator')` /
- * `addSubgraph` when the inserted coord-kind node does NOT have the
- * caller coord's id in its parent set. Closes the loophole where
- * D23 could be bypassed by adding coord children to other nodes.
+ * Thrown by `addNode(kind='coordinator')` / `addSubgraph` when the
+ * inserted coordinator-kind node does NOT have the caller coord's id
+ * in its parent set.
+ *
+ * Required for the coord-chain invariant: without this rule the
+ * "≤1 coord successor per coord" check could be bypassed by adding
+ * coord children to non-coord nodes. With this rule, every new coord
+ * is structurally chained off its predecessor.
  */
 export class OrphanCoordInsertError extends WorkflowError {
   override readonly name = "OrphanCoordInsertError";
@@ -238,18 +238,18 @@ export class OrphanCoordInsertError extends WorkflowError {
     public readonly callerCoordNodeId: string,
   ) {
     super(
-      `Inserted coord node must have caller coord "${callerCoordNodeId}" in its parent set in workflow "${workflowId}" (D27)`,
+      `Inserted coord node must have caller coord "${callerCoordNodeId}" in its parent set in workflow "${workflowId}"`,
     );
   }
 }
 
 /**
- * D29 violation. Thrown when a `kind='task'` node insert references
- * a parent in `{failed, cancelled}` — the task would be permanently
- * un-dispatchable (invariant #12 requires all parents `succeeded`
- * for task-kind). Coord-kind nodes accept any terminal parent
- * (they're supposed to wake on failure), so this error only fires
- * for task-kind.
+ * Thrown when a `kind='task'` node insert references a parent in
+ * `{failed, cancelled}` — the task would be permanently
+ * un-dispatchable because the task-kind dispatch-readiness rule
+ * requires every parent to be `succeeded`. Coordinator-kind nodes
+ * accept any terminal parent (they're specifically supposed to wake
+ * to handle failure), so this error fires only for task-kind inserts.
  */
 export class ParentStateError extends WorkflowError {
   override readonly name = "ParentStateError";
@@ -260,7 +260,7 @@ export class ParentStateError extends WorkflowError {
     public readonly parentStatus: string,
   ) {
     super(
-      `Cannot add ${nodeKind}-kind node with parent "${parentNodeId}" (status="${parentStatus}") in workflow "${workflowId}" (D29)`,
+      `Cannot add ${nodeKind}-kind node with parent "${parentNodeId}" (status="${parentStatus}") in workflow "${workflowId}"`,
     );
   }
 }
@@ -298,9 +298,9 @@ export class UnknownTempIdError extends WorkflowError {
 
 /**
  * Thrown by entity `fromRow` factories when a persisted enum value
- * is not in the v1 vocabulary (e.g. a leftover `'archived'` workflow
- * status from a v0.6.0 DB). Operator-config / migration bug; maps
- * to 500 with an opaque body.
+ * is not in the current vocabulary (e.g. a hand-edited DB or a
+ * pre-migration row that smuggled in an unknown status). Operator/
+ * data-corruption error; maps to 500 with an opaque body.
  */
 export class WorkflowEnumValueError extends WorkflowError {
   override readonly name = "WorkflowEnumValueError";

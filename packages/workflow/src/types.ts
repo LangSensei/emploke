@@ -1,5 +1,5 @@
 /**
- * Public types for `@emploke/workflow` (v1.0.0).
+ * Public types for `@emploke/workflow`.
  *
  * The workflow pkg is an open substrate: it stores `workflow_nodes`
  * rows with an opaque `{ kind: string, spec: unknown }` envelope and
@@ -13,12 +13,7 @@
  * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`, …) live in
  * `@emploke/contracts/workflows` and are re-exported below so
  * external callers don't need to know which package owns the wire
- * shapes (mirrors how `@emploke/schedule` does for schedule wire
- * targets).
- *
- * See `packages/workflow/SPEC.md` §"TS-layer types" for the
- * authoritative definitions and §"Locked design decisions" for the
- * rationale behind the FSM enums.
+ * shapes.
  */
 
 // ─── Re-exports from @emploke/contracts ─────────────────────────────
@@ -27,8 +22,7 @@
 // they cross the HTTP wire and are consumed by the SPA / CLI. The
 // workflow substrate re-exports them so consumers can `import { ... }
 // from "@emploke/workflow"` without learning that DTOs come from a
-// sibling package. Mirrors `@emploke/schedule`'s pattern of
-// re-exporting `TaskScheduleTargetWire` etc.
+// sibling package.
 export type {
   WorkflowCoordinatorNodeSpec,
   WorkflowCoordinatorNodeSpecWire,
@@ -40,27 +34,28 @@ export type {
 // ─── FSM enums ──────────────────────────────────────────────────────
 
 /**
- * Workflow-level FSM. **Four values, exactly one non-terminal** (D1,
- * D26). The substrate never writes `'coordinating'`; whether the
- * workflow is "actively coordinating right now" is derived from
- * `workflow_nodes` (`EXISTS WHERE kind='coordinator' AND status =
- * 'running'`) — see {@link hasLiveCoord}.
+ * Workflow-level FSM. Four values, exactly one non-terminal
+ * (`running`). The substrate deliberately does NOT persist a separate
+ * "actively coordinating right now" status — that's derived from
+ * `workflow_nodes` (any `coordinator`-kind node with `status =
+ * 'running'`); see {@link hasLiveCoord}.
  *
  * Forward-only: once a workflow hits a terminal status, no further
- * status mutation is allowed (engine invariant; Phase 2+).
+ * status mutation is allowed.
  */
 export type WorkflowStatus = "running" | "succeeded" | "failed" | "cancelled";
 
 /**
- * Per-node FSM (unchanged from v0.6.0; applies to BOTH task-kind and
- * coordinator-kind nodes per D2).
+ * Per-node FSM. Same vocabulary applies to BOTH task-kind and
+ * coordinator-kind nodes.
  *
  *   not_started ─ready─► ready ─launch─► running ─done────► succeeded
  *                                                └─fail────► failed
  *
- * `cancelled` is the cancel terminal (legal from `not_started`,
- * `ready`, or `running` for task-kind only — per Q-schema-9). Coord-
- * kind cancellation goes through `cancelWorkflow`, not `cancelNode`.
+ * `cancelled` is the cancel terminal, legal from `not_started`,
+ * `ready`, or `running` for task-kind only. Coordinator-kind nodes
+ * are never cancelled directly — workflow-level cancellation goes
+ * through `cancelWorkflow`, which cascades.
  */
 export type WorkflowNodeStatus =
   | "not_started"
@@ -73,9 +68,11 @@ export type WorkflowNodeStatus =
 // ─── Derived-view helpers (NOT persisted) ───────────────────────────
 
 /**
- * "Is there a coord actively running right now?" — derived from node
- * state, not from a workflow column (D15). Clients call this OR run
- * the equivalent SQL directly; this helper is the sugar.
+ * "Is there a coordinator actively running right now?" Pure derived
+ * predicate over the node set — there is intentionally no workflow-
+ * column equivalent, because making this stateful would mean every
+ * coord wake/sleep had to update two rows transactionally and the
+ * substrate would silently drift if the second write failed.
  *
  * Pure function; safe to call from anywhere (SPA, CLI, server).
  */
@@ -91,13 +88,13 @@ export function hasLiveCoord(
 /**
  * Iteration count — the number of coordinator-kind nodes ever
  * created in this workflow. UI / CLI use it to render "Iteration N"
- * labels. Silent-retry coord nodes (D20) ARE counted; per SPEC.md
- * §UI rendering, "a retry IS an iteration from the user's
- * perspective".
+ * labels. Silent-retry coord nodes (the substrate's automatic
+ * respawn when a coord exits without making forward progress) ARE
+ * counted: from the user's perspective, a retry IS another
+ * iteration.
  *
  * Pure function over a pre-computed count; the workflow pkg's
- * service layer (Phase 1+) provides a one-shot SQL to get the
- * count.
+ * service layer provides a one-shot SQL to get the count.
  */
 export function deriveIterationCount(coordNodeCount: number): number {
   return coordNodeCount;
@@ -114,8 +111,7 @@ export function deriveIterationCount(coordNodeCount: number): number {
  *
  * On disk: `kind` lives in `workflow_nodes.kind` and `spec` is
  * `JSON.stringify`ed into `workflow_nodes.spec_json`. The kind is
- * NOT redundantly nested inside `spec_json` (mirrors
- * `ScheduleEntity.toRow`).
+ * NOT redundantly nested inside `spec_json`.
  */
 export interface WorkflowNodeSpecEnvelope {
   readonly kind: string;
@@ -125,14 +121,19 @@ export interface WorkflowNodeSpecEnvelope {
 /**
  * Context threaded into `WorkflowNodeKindHandler.validate`. Carries
  * caller-coord identity so per-kind validators can enforce
- * cross-coord rules (e.g. invariant #9: a task-kind node's `agent`
- * must appear in the caller coord's `dependencies.agents`).
+ * cross-coord rules — most notably the task-kind rule that a node's
+ * `agent` FQN must appear in the caller coord agent's
+ * `dependencies.agents` declaration. Without this context the
+ * substrate would either have to know about catalog dependencies
+ * (breaking layering) or skip the check (losing the static guarantee
+ * that a coord can only dispatch agents it's declared a dependency
+ * on).
  *
- * For `createWorkflow`'s initial coord insert AND for the silent-
- * retry coord insert (D20), the substrate populates the ctx fields
- * with the just-inserted coord's identity (callerCoordNodeId =
- * self id; callerCoordSpec = self spec). See SPEC.md §"createWorkflow"
- * and §"silent retry" for the exact bootstrap rule.
+ * Bootstrap cases (the initial coord insert by `createWorkflow`, and
+ * the silent-retry coord insert) populate ctx with the just-inserted
+ * coord's identity (callerCoordNodeId = self id; callerCoordSpec =
+ * self spec). This keeps the validate API uniform: there is always a
+ * caller, even when the caller IS the node being validated.
  */
 export interface WorkflowNodeValidateCtx {
   readonly workflowId: string;
@@ -151,30 +152,28 @@ export interface WorkflowNodeValidateCtx {
   readonly callerCoordSpec: { readonly agent: string };
   /**
    * Useful for cross-workflow-state checks; rarely needed. Always
-   * `'running'` when called from a mutation primitive (the D22 auth
-   * gate rejects mutations on terminal workflows).
+   * `'running'` when called from a mutation primitive (the
+   * mutation-auth gate rejects mutations on terminal workflows).
    */
   readonly workflowStatus: WorkflowStatus;
 }
 
 /**
  * Per-kind handler registered at compose time via
- * `WorkflowService.registerKind(kind, handler)` (Phase 1+).
- * Implementations live wherever the kind is integrated — both v1
- * handlers live in `packages/api/src/wiring/` (Phase 4) because they
- * know about `@emploke/workflow`, `@emploke/task`, AND
+ * `WorkflowService.registerKind(kind, handler)`. Implementations
+ * live wherever the kind is integrated — both shipping handlers
+ * (`'task'` and `'coordinator'`) live in `packages/api/src/wiring/`
+ * because they know about `@emploke/workflow`, `@emploke/task`, AND
  * `@emploke/catalog`. The substrate pkg itself never imports any of
  * its callers.
  *
- * No capabilities flag (D18). The substrate's coord-special
- * behaviors are encoded in the engine itself (the auth gate, the
- * silent-retry trigger, the `workflows.coordinator_agent` denorm
- * sync) — NOT routed through a polymorphic interface method. The
- * handler interface is intentionally minimal: validate / dispatch /
- * hasInFlightForNode / cancel.
- *
- * Mirrors `@emploke/schedule`'s `ScheduleKindHandler` byte-for-byte
- * in role.
+ * No capabilities flag on the interface: coord-special behaviors
+ * (the mutation auth gate, silent-retry detection, the
+ * `workflows.coordinator_agent` denorm sync) are encoded in the
+ * engine itself, not routed through a polymorphic interface method.
+ * That keeps the handler interface intentionally minimal — validate
+ * / dispatch / hasInFlightForNode / cancel — and means a new kind
+ * only has to answer those four questions.
  */
 export interface WorkflowNodeKindHandler {
   /**
@@ -189,16 +188,16 @@ export interface WorkflowNodeKindHandler {
 
   /**
    * Fire the unit of work backing this node. Called by the substrate
-   * when the node transitions `not_started|ready → running` (via
-   * `dispatchAtomic`; see invariant #12 in SPEC.md). The handler
-   * dispatches whatever it needs (e.g. a task) and stamps
+   * when the node transitions `not_started|ready → running`. The
+   * handler dispatches whatever it needs (e.g. a task) and stamps
    * `{ workflowId, workflowNodeId }` into the unit's metadata so the
    * reverse-lookup partial indexes engage.
    *
    * Returns a substrate-side identifier (e.g. task id) for audit;
    * the substrate does NOT persist this id — reverse lookup goes
    * through the unit's metadata, not through a `workflow_nodes`
-   * column.
+   * column. (Persisting it would create a denorm the substrate would
+   * have to keep in sync with the unit-of-work side.)
    */
   dispatch(opts: {
     readonly workflowId: string;
@@ -210,17 +209,17 @@ export interface WorkflowNodeKindHandler {
   /**
    * Whether this kind currently has a dispatched-but-incomplete
    * unit-of-work for `nodeId`. Used by cancel reconciliation AND by
-   * engine-restart recovery (running rows with no in-flight unit get
-   * rolled back to ready).
+   * engine-restart recovery (`running` rows with no in-flight unit
+   * get rolled back to `ready`).
    */
   hasInFlightForNode(nodeId: string): Promise<boolean>;
 
   /**
    * Cancel the in-flight unit-of-work for `nodeId`. Idempotent;
-   * best-effort. See SPEC.md §"cancelNode" for the substrate's
-   * cancel semantics (cancellation is "the substrate will ignore
-   * the unit-of-work", NOT proof that the unit has actually
-   * stopped).
+   * best-effort. Cancellation semantically means "the substrate will
+   * ignore the unit's eventual outcome", NOT proof that the unit has
+   * actually stopped — the unit may still complete after the cancel
+   * returns, and its result will simply be discarded.
    */
   cancel(nodeId: string): Promise<void>;
 }

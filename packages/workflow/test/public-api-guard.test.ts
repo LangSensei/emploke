@@ -1,5 +1,5 @@
 /**
- * Compile-time public API guard for `@emploke/workflow` (v1.0.0).
+ * Compile-time public API guard for `@emploke/workflow`.
  *
  * WHAT this file does:
  *   Uses Vitest's `expectTypeOf<T>()` to lock the pkg's public surface
@@ -21,10 +21,6 @@
  *   - At `pnpm test` time: the file loads and the `describe(...)` /
  *     `it(...)` bodies execute, but `expectTypeOf` is a no-op at
  *     runtime.
- *
- * Phase 0 locks the data-layer surface only; Phase 1+ will extend
- * this with `WorkflowService` method assertions as the mutation
- * primitives ship.
  */
 
 import { describe, expectTypeOf, it } from "vitest";
@@ -81,7 +77,7 @@ import {
   workflowRoot,
 } from "../src/index.js";
 
-describe("@emploke/workflow public API guard (v1.0.0)", () => {
+describe("@emploke/workflow public API guard", () => {
   it("exports the concrete error classes with their canonical constructor signatures", () => {
     const errs: Error[] = [
       new WorkflowError("boom"),
@@ -109,18 +105,21 @@ describe("@emploke/workflow public API guard (v1.0.0)", () => {
     expectTypeOf(errs[0]!).toExtend<Error>();
   });
 
-  it("preserves the v1 FSM enum vocabularies", () => {
-    // 4-value workflow status (D1, D26).
+  it("preserves the FSM enum vocabularies", () => {
+    // Four-value workflow status: one non-terminal (`running`) and
+    // three terminals. The "actively coordinating right now" view is
+    // intentionally derived, not persisted.
     expectTypeOf<WorkflowStatus>().toEqualTypeOf<
       "running" | "succeeded" | "failed" | "cancelled"
     >();
-    // 6-value node status (unchanged from v0.6.0; D2).
+    // Six-value node status; applies to both task-kind and
+    // coordinator-kind nodes.
     expectTypeOf<WorkflowNodeStatus>().toEqualTypeOf<
       "not_started" | "ready" | "running" | "succeeded" | "failed" | "cancelled"
     >();
   });
 
-  it("preserves the substrate envelope + handler interface (D12 / D18)", () => {
+  it("preserves the substrate envelope + handler interface", () => {
     expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("kind");
     expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("spec");
 
@@ -135,7 +134,7 @@ describe("@emploke/workflow public API guard (v1.0.0)", () => {
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
   });
 
-  it("preserves the v1 wire spec DTOs re-exported from @emploke/contracts", () => {
+  it("preserves the wire spec DTOs re-exported from @emploke/contracts", () => {
     expectTypeOf<WorkflowTaskNodeSpec>().toHaveProperty("agent");
     expectTypeOf<WorkflowTaskNodeSpec>().toHaveProperty("brief");
     expectTypeOf<WorkflowCoordinatorNodeSpec>().toHaveProperty("agent");
@@ -190,7 +189,7 @@ describe("@emploke/workflow public API guard (v1.0.0)", () => {
     expectTypeOf<WorkflowEdgeEntity>().toHaveProperty("toRow");
   });
 
-  it("preserves the composition surface (Phase 1+ wires up the real impl)", () => {
+  it("preserves the composition surface", () => {
     expectTypeOf(composeWorkflowModule).parameters.toEqualTypeOf<[WorkflowModuleOptions]>();
     expectTypeOf(composeWorkflowModule).returns.resolves.toEqualTypeOf<WorkflowModule>();
     expectTypeOf<WorkflowModule>().toHaveProperty("close");

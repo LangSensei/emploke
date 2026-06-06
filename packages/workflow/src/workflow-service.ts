@@ -1,22 +1,21 @@
 /**
- * `WorkflowService` is being rewritten for the v1.0.0 substrate (4
- * read APIs + 8 mutation primitives + kind-handler registry + engine
- * event handlers). Phase 0 ships only the data layer; the service
- * lands in Phase 1+.
+ * `WorkflowService` is the substrate's public API: read APIs
+ * (`getWorkflow` / `getDag` / `getNode` / `getNodeDir`), mutation
+ * primitives (`addNode` / `addEdge` / `addSubgraph` / `removeNode` /
+ * `removeEdge` / `replaceNodeSpec` / `cancelNode` /
+ * `dispatchAtomic`), kind-handler registry, and engine event
+ * handlers. Currently a stub — the data layer (schema, entities,
+ * validate, errors) is in place but the service methods are not yet
+ * wired up.
  *
- * This stub exists so `compose.ts` continues to typecheck while the
- * Phase 1 work is in flight on `feat/workflow-v1`. The class throws
- * `WorkflowError` on every method invocation so test runs that try
- * to use it fail loudly. Phase 1+ replaces the body wholesale.
- *
- * See `packages/workflow/SPEC.md` §"Substrate API surface" for the
- * v1.0.0 public method set.
+ * This stub exists so `compose.ts` continues to typecheck. Every
+ * method throws `WorkflowError` so a test or caller that tries to
+ * use it fails loudly instead of silently working against a no-op.
  */
 
 import { WorkflowError } from "./errors.js";
 
-const NOT_IMPLEMENTED =
-  "@emploke/workflow v1.0.0 substrate is being rewritten on feat/workflow-v1; the service lands in Phase 1+.";
+const NOT_IMPLEMENTED = "WorkflowService is not yet implemented";
 
 export class WorkflowService {
   throwNotImplemented(): never {
