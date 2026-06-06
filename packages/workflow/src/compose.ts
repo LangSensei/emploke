@@ -1,70 +1,33 @@
-import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
-import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
-import type { Logger } from "pino";
-import { applyWorkflowMigrations } from "./migrations.js";
-import * as schema from "./schema.js";
-import type { TaskDispatcher } from "./types.js";
-import { WorkflowRepository } from "./workflow-repository.js";
-import { WorkflowService } from "./workflow-service.js";
+/**
+ * `composeWorkflowModule` is the production composition entrypoint
+ * for `@emploke/workflow`. Phase 0 ships only the data layer (schema,
+ * migrations, types, entities, errors, validate); the repository and
+ * service land in Phase 1+ on the same `feat/workflow-v1` branch.
+ *
+ * This file is intentionally a stub that throws on call so any caller
+ * importing the v0.6.0 shape fails loudly (no external pkgs import
+ * it today — see PR #320 description). Phase 1 replaces the body with
+ * the real composition wiring (DB open + migrations + repo + service
+ * + kind-handler registry).
+ *
+ * The migration runner (`applyWorkflowMigrations` from
+ * `./migrations.js`) IS production-ready as of Phase 0; ad-hoc
+ * callers needing the schema can use `openTestWorkflowDb()` from
+ * `./testing.js` directly.
+ */
 
-type Db = BetterSQLite3Database<typeof schema>;
+import { WorkflowError } from "./errors.js";
 
-export type WorkflowModuleOptions = (
-  | { readonly db: Db; readonly dbFile?: never }
-  | { readonly dbFile: string; readonly db?: never }
-) & {
-  readonly taskDispatcher: TaskDispatcher;
-  readonly logger?: Logger;
-  readonly now?: () => Date;
-};
+export interface WorkflowModuleOptions {
+  readonly dbFile?: string;
+}
 
 export interface WorkflowModule {
-  readonly service: WorkflowService;
   close(): Promise<void>;
 }
 
-/**
- * Single composition entry point. Production callers pass `dbFile`
- * (the pkg opens its own better-sqlite3 connection in WAL mode and
- * runs pending migrations); tests pass an existing `db` from
- * `openTestWorkflowDb()`.
- *
- * `taskDispatcher` is required — `launchNode` dispatches the backing
- * task via this interface. In production it's wired to
- * `@emploke/task`'s `TaskService`; in tests it's a stub that just
- * returns a deterministic id.
- */
-export async function composeWorkflowModule(opts: WorkflowModuleOptions): Promise<WorkflowModule> {
-  let sqlite: BetterSqliteDatabase | null = null;
-  let db: Db;
-  if ("db" in opts && opts.db !== undefined) {
-    db = opts.db;
-  } else {
-    sqlite = new Database(opts.dbFile as string);
-    sqlite.pragma("journal_mode = WAL");
-    sqlite.pragma("synchronous = NORMAL");
-    sqlite.pragma("busy_timeout = 5000");
-    db = drizzle(sqlite, { schema });
-    try {
-      applyWorkflowMigrations(db);
-    } catch (err) {
-      sqlite.close();
-      throw err;
-    }
-  }
-  const repo = new WorkflowRepository({
-    db,
-    ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-  });
-  const service = new WorkflowService({
-    repo,
-    taskDispatcher: opts.taskDispatcher,
-    ...(opts.now !== undefined ? { now: opts.now } : {}),
-  });
-  return {
-    service,
-    async close() {
-      sqlite?.close();
-    },
-  };
+export async function composeWorkflowModule(_opts: WorkflowModuleOptions): Promise<WorkflowModule> {
+  throw new WorkflowError(
+    "@emploke/workflow v1.0.0 substrate is being rewritten on feat/workflow-v1; composeWorkflowModule lands in Phase 1+.",
+  );
 }
