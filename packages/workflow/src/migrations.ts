@@ -24,23 +24,23 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
   },
   {
     sql: [
-      "DROP TABLE IF EXISTS `workflow_edges`;\r\n",
-      "\r\nDROP TABLE IF EXISTS `workflow_nodes`;\r\n",
-      "\r\nDROP TABLE IF EXISTS `workflows`;\r\n",
-      "\r\nCREATE TABLE `workflows` (\r\n\t`id` text PRIMARY KEY NOT NULL,\r\n\t`brief` text NOT NULL,\r\n\t`details` text,\r\n\t`coordinator_agent` text NOT NULL,\r\n\t`status` text NOT NULL,\r\n\t`metadata` text DEFAULT '{}' NOT NULL,\r\n\t`created_at` text NOT NULL,\r\n\t`started_at` text,\r\n\t`ended_at` text\r\n);\r\n",
-      "\r\nCREATE INDEX `workflows_status_idx` ON `workflows` (`status`);",
-      "\r\nCREATE INDEX `workflows_coordinator_agent_idx` ON `workflows` (`coordinator_agent`);",
-      "\r\nCREATE TABLE `workflow_nodes` (\r\n\t`id` text PRIMARY KEY NOT NULL,\r\n\t`workflow_id` text NOT NULL,\r\n\t`kind` text NOT NULL,\r\n\t`spec_json` text NOT NULL,\r\n\t`phase` integer NOT NULL,\r\n\t`status` text NOT NULL,\r\n\t`created_at` text NOT NULL,\r\n\t`ready_at` text,\r\n\t`running_at` text,\r\n\t`ended_at` text\r\n);\r\n",
-      "\r\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
-      "\r\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
-      "\r\nCREATE INDEX `workflow_nodes_phase_idx` ON `workflow_nodes` (`workflow_id`,`phase`);",
-      "\r\nCREATE TABLE `workflow_edges` (\r\n\t`workflow_id` text NOT NULL,\r\n\t`from_node_id` text NOT NULL,\r\n\t`to_node_id` text NOT NULL,\r\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\r\n);\r\n",
-      "\r\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
-      "\r\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\r\n"
+      "DROP TABLE IF EXISTS `workflow_edges`;\n",
+      "\nDROP TABLE IF EXISTS `workflow_nodes`;\n",
+      "\nDROP TABLE IF EXISTS `workflows`;\n",
+      "\nCREATE TABLE `workflows` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`details` text,\n\t`coordinator_agent` text NOT NULL,\n\t`status` text NOT NULL,\n\t`metadata` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`started_at` text,\n\t`ended_at` text\n);\n",
+      "\nCREATE INDEX `workflows_status_idx` ON `workflows` (`status`);",
+      "\nCREATE INDEX `workflows_coordinator_agent_idx` ON `workflows` (`coordinator_agent`);",
+      "\nCREATE TABLE `workflow_nodes` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workflow_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`spec_json` text NOT NULL,\n\t`phase` integer NOT NULL,\n\t`status` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`ready_at` text,\n\t`running_at` text,\n\t`ended_at` text\n);\n",
+      "\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
+      "\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
+      "\nCREATE INDEX `workflow_nodes_phase_idx` ON `workflow_nodes` (`workflow_id`,`phase`);",
+      "\nCREATE TABLE `workflow_edges` (\n\t`workflow_id` text NOT NULL,\n\t`from_node_id` text NOT NULL,\n\t`to_node_id` text NOT NULL,\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\n);\n",
+      "\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
+      "\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\n"
     ],
     bps: true,
     folderMillis: 2,
-    hash: "3cde0c8b2b325fcd803a733fbb9299a69561cdbc7d3fed486d098b9cbc968a7c",
+    hash: "b04ef66661c80db01ebf25556a772781b67352307144033a98f620f79106832d",
   },
 ];
 
