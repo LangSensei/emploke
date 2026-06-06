@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workflow",
   "version": "0.0.1",
-  "description": "Workflows — append-only DAG substrate for emploke (workflows / workflow_nodes / workflow_edges)",
+  "description": "Workflow DAG substrate for emploke (workflows / workflow_nodes / workflow_edges)",
   "license": "MIT",
   "type": "module",
   "engines": {

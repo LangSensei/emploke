@@ -12,10 +12,10 @@ export function workflowRoot(workspaceDir: string): string {
 }
 
 /**
- * Path-traversal defense. Mirrors `packages/task/src/paths.ts` — given a
- * validated id (caller has already run `assertValidWorkflowId` /
- * `assertValidWorkflowNodeId`), construct the workdir path and assert
- * it is a proper child of root. Throws on escape or aliasing-equality.
+ * Path-traversal defense. Given a validated id (caller has already
+ * run `assertValidWorkflowId` / `assertValidWorkflowNodeId`),
+ * construct the workdir path and assert it is a proper child of
+ * root. Throws on escape or aliasing-equality.
  */
 export function safeJoinUnderRoot(root: string, id: string): string {
   // Defense in depth: even though callers should have already run
@@ -52,11 +52,10 @@ export function workflowDir(workspaceDir: string, workflowId: string): string {
 }
 
 /**
- * Resolve `<workspaceDir>/workflows/<workflowId>/nodes/<nodeId>/`. The
- * shape mirrors §4.6 of the implementation spec: every node owns a
- * sibling sub-directory under the workflow's shared scratch dir, so a
- * `type='task'` node can hand the resulting path straight to the task
- * manager as the task's `workdir`.
+ * Resolve `<workspaceDir>/workflows/<workflowId>/nodes/<nodeId>/`.
+ * Every node owns a sibling sub-directory under the workflow's
+ * shared scratch dir, so a `kind='task'` node can hand the resulting
+ * path straight to the task manager as the task's `workdir`.
  */
 export function workflowNodeDir(workspaceDir: string, workflowId: string, nodeId: string): string {
   const wfDir = workflowDir(workspaceDir, workflowId);

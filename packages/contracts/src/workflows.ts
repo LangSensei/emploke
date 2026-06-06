@@ -35,11 +35,11 @@ export interface WorkflowTaskNodeSpec {
    * task-kind handler at insert time).
    */
   readonly agent: string;
-  /** Single line, ≤ 200 chars. Mirrors `@emploke/task` `DispatchOpts.brief`. */
+  /** Worker brief: single line, ≤ 200 chars (no `\n` / `\r`). */
   readonly brief: string;
-  /** Multi-line, optional. Mirrors `@emploke/task` `DispatchOpts.details`. */
+  /** Optional multi-line context for the worker. */
   readonly details?: string;
-  /** Optional runtime override. Mirrors `@emploke/task` `DispatchOpts.runtime`. */
+  /** Optional runtime override (e.g. `bash`, `python`). Non-empty when present. */
   readonly runtime?: string;
 }
 
