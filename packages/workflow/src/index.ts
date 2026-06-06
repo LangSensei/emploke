@@ -38,6 +38,7 @@ export {
   WorkflowEnumValueError,
   WorkflowError,
   WorkflowMutationUnauthorizedError,
+  WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,

@@ -22,6 +22,7 @@ import {
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
   WorkflowEnumValueError,
+  WorkflowNodeKindShapeError,
 } from "./errors.js";
 import type { WorkflowNodeStatus, WorkflowStatus } from "./types.js";
 
@@ -92,14 +93,6 @@ const VALID_NODE_STATUSES: readonly WorkflowNodeStatus[] = [
   "cancelled",
 ];
 
-// The kind-set is open: the substrate ships `'task'` + `'coordinator'`
-// as the baseline kinds, but new kinds register at compose time
-// against the service layer. This list exists only so dashboard /
-// test code can branch on the well-known baseline; the validator
-// below accepts any non-empty string, and "is this kind actually
-// registered?" is enforced by the service layer's handler registry.
-const BASELINE_KINDS: readonly string[] = ["task", "coordinator"];
-
 /**
  * Enum-membership check for `workflow.status`. Throws
  * {@link WorkflowEnumValueError} on miss — used by
@@ -128,14 +121,15 @@ export function assertValidWorkflowNodeStatusEnum(
 }
 
 /**
- * Shape check for `workflow_nodes.kind`. Accepts any non-empty
- * string so rows of unknown / future kinds still round-trip;
- * enforcement of "kind must be registered with the service" lives at
- * the service layer with the handler registry, since only the
- * registry knows what's actually wired in.
+ * Shape check for `workflow_nodes.kind`. The kind-set is open: the
+ * substrate ships `'task'` + `'coordinator'` as baseline kinds, but
+ * new kinds register at compose time against the service layer's
+ * handler registry. This guard only enforces the shape contract
+ * (non-empty string); "is this kind actually registered?" is the
+ * service layer's job, since only the registry knows what's wired in.
  */
 export function assertValidWorkflowNodeKind(kind: unknown): asserts kind is string {
   if (typeof kind !== "string" || kind.length === 0) {
-    throw new WorkflowEnumValueError("kind", String(kind), BASELINE_KINDS);
+    throw new WorkflowNodeKindShapeError(String(kind));
   }
 }

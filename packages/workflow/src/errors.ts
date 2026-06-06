@@ -13,9 +13,9 @@
  */
 
 export class WorkflowError extends Error {
+  override readonly name: string = "WorkflowError";
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options as ErrorOptions);
-    this.name = "WorkflowError";
   }
 }
 
@@ -310,5 +310,20 @@ export class WorkflowEnumValueError extends WorkflowError {
     public readonly allowed: readonly string[],
   ) {
     super(`Invalid value "${value}" for "${field}"; allowed: ${allowed.join(", ")}`);
+  }
+}
+
+/**
+ * Thrown by `assertValidWorkflowNodeKind` when the value is not a
+ * non-empty string. Distinct from {@link WorkflowEnumValueError}:
+ * `kind` membership is open (the substrate accepts any non-empty
+ * string and defers "is this kind registered?" to the service-layer
+ * handler registry), so the shape guard reports a different failure
+ * mode than the closed-enum guard.
+ */
+export class WorkflowNodeKindShapeError extends WorkflowError {
+  override readonly name = "WorkflowNodeKindShapeError";
+  constructor(public readonly value: string) {
+    super(`Invalid workflow node kind: "${value}" (must be a non-empty string)`);
   }
 }
