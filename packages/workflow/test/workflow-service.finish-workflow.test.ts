@@ -66,11 +66,26 @@ describe("WorkflowService.finishWorkflow", () => {
 
   it("invokes handler.cancel on running non-caller nodes during reconciliation", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
+    // Materialise a parent task and force it terminal so the
+    // running task lands in `running` via eager dispatch.
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "w", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     const { nodeId: runningTask } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
       spec: { agent: "w", brief: "x" },
-      parents: [],
+      parents: [parentTaskId],
     });
     expect((await h.service.getNode(runningTask)).status).toBe("running");
 

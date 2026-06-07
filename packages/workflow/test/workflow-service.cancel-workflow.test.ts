@@ -27,11 +27,27 @@ describe("WorkflowService.cancelWorkflow", () => {
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
+    // Materialise a parent task and force it terminal so the
+    // `running` task lands in `running` via eager dispatch — needed
+    // so the cancel reconciliation invokes handler.cancel for it.
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "w", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     const { nodeId: running } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
       spec: { agent: "w", brief: "y" },
-      parents: [],
+      parents: [parentTaskId],
     });
     await h.service.cancelWorkflow({ workflowId });
     const wf = await h.service.getWorkflow(workflowId);

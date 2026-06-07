@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  EmptyParentsError,
   MultipleSuccessorCoordsError,
   OrphanCoordInsertError,
   ParentStateError,
@@ -196,13 +197,13 @@ describe("WorkflowService.addNode", () => {
   // ─── Auth gate ────────────────────────────────────────────
 
   it("REJECTS when caller node does not exist", async () => {
-    await bootstrap(h);
+    const { initialCoordNodeId } = await bootstrap(h);
     await expect(
       h.service.addNode({
         callerCoordNodeId: VALID_UUIDS[15]!,
         kind: "task",
         spec: { agent: "x", brief: "y" },
-        parents: [],
+        parents: [initialCoordNodeId],
       }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
@@ -220,7 +221,7 @@ describe("WorkflowService.addNode", () => {
         callerCoordNodeId: taskId,
         kind: "task",
         spec: { agent: "writer", brief: "y" },
-        parents: [],
+        parents: [initialCoordNodeId],
       }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
@@ -239,7 +240,7 @@ describe("WorkflowService.addNode", () => {
         callerCoordNodeId: initialCoordNodeId,
         kind: "task",
         spec: { agent: "writer", brief: "x" },
-        parents: [],
+        parents: [initialCoordNodeId],
       }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
@@ -252,7 +253,7 @@ describe("WorkflowService.addNode", () => {
         callerCoordNodeId: initialCoordNodeId,
         kind: "task",
         spec: { agent: "writer", brief: "x" },
-        parents: [],
+        parents: [initialCoordNodeId],
       }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
@@ -283,7 +284,7 @@ describe("WorkflowService.addNode", () => {
         callerCoordNodeId: initialCoordNodeId,
         kind: "evaluator",
         spec: {},
-        parents: [],
+        parents: [initialCoordNodeId],
       }),
     ).rejects.toBeInstanceOf(WorkflowNodeKindUnknownError);
   });
@@ -354,17 +355,44 @@ describe("WorkflowService.addNode", () => {
     expect(h.taskHandler.dispatchCalls.map((c) => c.nodeId)).not.toContain(child.nodeId);
   });
 
-  it("eager dispatch: roots (zero parents) fire immediately", async () => {
+  it("eager dispatch: when all parents are already terminal, dispatches immediately", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
+    // Materialise a parent task and force it terminal so the new
+    // task's parent-readiness predicate is satisfied at insert time.
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "writer", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     h.taskHandler.dispatchCalls.length = 0;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
-      spec: { agent: "writer", brief: "root" },
-      parents: [],
+      spec: { agent: "writer", brief: "child" },
+      parents: [parentTaskId],
     });
     const n = await h.service.getNode(nodeId);
     expect(n.status).toBe("running");
     expect(h.taskHandler.dispatchCalls.map((c) => c.nodeId)).toContain(nodeId);
+  });
+
+  it("REJECTS when parents is empty", async () => {
+    const { initialCoordNodeId } = await bootstrap(h);
+    await expect(
+      h.service.addNode({
+        callerCoordNodeId: initialCoordNodeId,
+        kind: "task",
+        spec: { agent: "writer", brief: "x" },
+        parents: [],
+      }),
+    ).rejects.toBeInstanceOf(EmptyParentsError);
   });
 });

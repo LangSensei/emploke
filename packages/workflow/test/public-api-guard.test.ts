@@ -32,6 +32,7 @@ import {
   assertValidWorkflowStatusEnum,
   composeWorkflowModule,
   deriveIterationCount,
+  EmptyParentsError,
   generateWorkflowId,
   generateWorkflowNodeId,
   hasLiveCoord,
@@ -39,17 +40,13 @@ import {
   InvalidWorkflowNodeIdError,
   MultipleSuccessorCoordsError,
   OrphanCoordInsertError,
-  ParentlessTempError,
   ParentStateError,
-  UnknownTempIdError,
   type WORKFLOW_NODES_SUBDIR,
   type WORKFLOW_SUBDIR,
   WorkflowAlreadyTerminalError,
   type WorkflowDagSnapshot,
-  WorkflowEdgeAlreadyExistsError,
   WorkflowEdgeCycleError,
   type WorkflowEdgeEntity,
-  WorkflowEdgeNotFoundError,
   type WorkflowEntity,
   WorkflowEnumValueError,
   WorkflowError,
@@ -70,10 +67,8 @@ import {
   type WorkflowNodeStatus,
   type WorkflowNodeValidateCtx,
   WorkflowNotFoundError,
-  type WorkflowRepository,
   type WorkflowService,
   type WorkflowStatus,
-  WouldOrphanChildError,
   workflowDir,
   workflowNodeDir,
   workflowRoot,
@@ -86,23 +81,19 @@ describe("@emploke/workflow public API guard", () => {
       new WorkflowError("boom", { cause: new Error("upstream") }),
       new WorkflowNotFoundError("wf-id"),
       new WorkflowNodeNotFoundError("wf-id", "node-id"),
-      new WorkflowEdgeNotFoundError("wf-id", "node-a", "node-b"),
       new InvalidWorkflowIdError("bad"),
       new InvalidWorkflowNodeIdError("bad"),
       new WorkflowAlreadyTerminalError("wf-id"),
       new WorkflowMutationUnauthorizedError("wf-id", "caller-id", "not coord"),
       new WorkflowNodeNotMutableError("wf-id", "node-id", "running", "removeNode"),
       new WorkflowEdgeCycleError("wf-id", "node-a", "node-b"),
-      new WorkflowEdgeAlreadyExistsError("wf-id", "node-a", "node-b"),
-      new WouldOrphanChildError("wf-id", "node-id", "child-id"),
       new WorkflowNodeKindUnknownError("evaluator"),
       new WorkflowNodeKindShapeError(""),
       new WorkflowNodeSpecError("task", "agent missing"),
       new MultipleSuccessorCoordsError("wf-id", "caller-id"),
       new OrphanCoordInsertError("wf-id", "caller-id"),
       new ParentStateError("wf-id", "task", "parent-id", "failed"),
-      new ParentlessTempError("wf-id", "temp-1"),
-      new UnknownTempIdError("wf-id", "temp-1"),
+      new EmptyParentsError("wf-id"),
       new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
       new WorkflowKindRegistryFrozenError("task"),
       new WorkflowNodeKindAlreadyRegisteredError("task"),
@@ -187,8 +178,7 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowModule>().toHaveProperty("close");
   });
 
-  it("preserves the repository + service classes", () => {
-    expectTypeOf<typeof WorkflowRepository>().toBeConstructibleWith({ db: {} as never });
+  it("preserves the service class", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("registerKind");
     expectTypeOf<WorkflowService>().toHaveProperty("recover");
     expectTypeOf<WorkflowService>().toHaveProperty("getWorkflow");
@@ -205,110 +195,5 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("workflow");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("nodes");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("edges");
-  });
-});
-
-describe("@emploke/workflow public API guard", () => {
-  it("exports the concrete error classes with their canonical constructor signatures", () => {
-    const errs: Error[] = [
-      new WorkflowError("boom"),
-      new WorkflowError("boom", { cause: new Error("upstream") }),
-      new WorkflowNotFoundError("wf-id"),
-      new WorkflowNodeNotFoundError("wf-id", "node-id"),
-      new WorkflowEdgeNotFoundError("wf-id", "node-a", "node-b"),
-      new InvalidWorkflowIdError("bad"),
-      new InvalidWorkflowNodeIdError("bad"),
-      new WorkflowAlreadyTerminalError("wf-id"),
-      new WorkflowMutationUnauthorizedError("wf-id", "caller-id", "not coord"),
-      new WorkflowNodeNotMutableError("wf-id", "node-id", "running", "removeNode"),
-      new WorkflowEdgeCycleError("wf-id", "node-a", "node-b"),
-      new WorkflowEdgeAlreadyExistsError("wf-id", "node-a", "node-b"),
-      new WouldOrphanChildError("wf-id", "node-id", "child-id"),
-      new WorkflowNodeKindUnknownError("evaluator"),
-      new WorkflowNodeKindShapeError(""),
-      new WorkflowNodeSpecError("task", "agent missing"),
-      new MultipleSuccessorCoordsError("wf-id", "caller-id"),
-      new OrphanCoordInsertError("wf-id", "caller-id"),
-      new ParentStateError("wf-id", "task", "parent-id", "failed"),
-      new ParentlessTempError("wf-id", "temp-1"),
-      new UnknownTempIdError("wf-id", "temp-1"),
-      new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
-    ];
-    expectTypeOf(errs[0]!).toExtend<Error>();
-  });
-
-  it("preserves the FSM enum vocabularies", () => {
-    // Four-value workflow status: one non-terminal (`running`) and
-    // three terminals. The "actively coordinating right now" view is
-    // intentionally derived, not persisted.
-    expectTypeOf<WorkflowStatus>().toEqualTypeOf<
-      "running" | "succeeded" | "failed" | "cancelled"
-    >();
-    // Six-value node status; applies to both task-kind and
-    // coordinator-kind nodes.
-    expectTypeOf<WorkflowNodeStatus>().toEqualTypeOf<
-      "not_started" | "ready" | "running" | "succeeded" | "failed" | "cancelled"
-    >();
-  });
-
-  it("preserves the substrate envelope + handler interface", () => {
-    expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("kind");
-    expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("spec");
-
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("validate");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("dispatch");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("hasInFlightForNode");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("cancel");
-
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowId");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordNodeId");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordSpec");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
-  });
-
-  it("preserves derived-view helpers (hasLiveCoord, deriveIterationCount)", () => {
-    expectTypeOf(hasLiveCoord).toBeFunction();
-    expectTypeOf(hasLiveCoord).returns.toBeBoolean();
-    expectTypeOf(deriveIterationCount).toBeFunction();
-    expectTypeOf(deriveIterationCount).returns.toBeNumber();
-  });
-
-  it("preserves the validators + id generators", () => {
-    expectTypeOf(assertValidWorkflowId).toBeFunction();
-    expectTypeOf(assertValidWorkflowNodeId).toBeFunction();
-    expectTypeOf(assertValidWorkflowStatusEnum).toBeFunction();
-    expectTypeOf(assertValidWorkflowNodeStatusEnum).toBeFunction();
-    expectTypeOf(assertValidWorkflowNodeKind).toBeFunction();
-    expectTypeOf(generateWorkflowId).toBeFunction();
-    expectTypeOf(generateWorkflowNodeId).toBeFunction();
-    expectTypeOf(generateWorkflowId).returns.toBeString();
-    expectTypeOf(generateWorkflowNodeId).returns.toBeString();
-  });
-
-  it("preserves the exported path helpers + subdir constants", () => {
-    expectTypeOf(workflowDir).toBeFunction();
-    expectTypeOf(workflowNodeDir).toBeFunction();
-    expectTypeOf(workflowRoot).toBeFunction();
-    // String-literal subtypes; assert assignability to `string` rather
-    // than exact equality so renaming the literal value remains an
-    // internal change while the public type stays string-shaped.
-    expectTypeOf<typeof WORKFLOW_SUBDIR>().toExtend<string>();
-    expectTypeOf<typeof WORKFLOW_NODES_SUBDIR>().toExtend<string>();
-  });
-
-  it("preserves the entity classes with fromRow / toRow round-trip", () => {
-    expectTypeOf<typeof WorkflowEntity>().toHaveProperty("fromRow");
-    expectTypeOf<WorkflowEntity>().toHaveProperty("toRow");
-    expectTypeOf<typeof WorkflowNodeEntity>().toHaveProperty("fromRow");
-    expectTypeOf<WorkflowNodeEntity>().toHaveProperty("toRow");
-    expectTypeOf<WorkflowNodeEntity>().toHaveProperty("toEnvelope");
-    expectTypeOf<typeof WorkflowEdgeEntity>().toHaveProperty("fromRow");
-    expectTypeOf<WorkflowEdgeEntity>().toHaveProperty("toRow");
-  });
-
-  it("preserves the composition surface", () => {
-    expectTypeOf(composeWorkflowModule).parameters.toEqualTypeOf<[WorkflowModuleOptions]>();
-    expectTypeOf(composeWorkflowModule).returns.resolves.toEqualTypeOf<WorkflowModule>();
-    expectTypeOf<WorkflowModule>().toHaveProperty("close");
   });
 });

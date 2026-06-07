@@ -120,26 +120,54 @@ describe("WorkflowService.dispatchAtomic", () => {
 
   it("on handler.dispatch throw, marks the node failed via a separate tx", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
+    // Materialise a parent task and force it terminal so the new
+    // task's parent-readiness predicate fires eager dispatch on insert.
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "w", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     h.taskHandler.dispatchShouldThrow = true;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
       spec: { agent: "w", brief: "x" },
-      parents: [],
+      parents: [parentTaskId],
     });
     const n = await h.service.getNode(nodeId);
     expect(n.status).toBe("failed");
     expect(n.endedAt).toBeDefined();
   });
 
-  it("eager dispatch reaction from addNode (root task) commits then dispatches once", async () => {
+  it("eager dispatch reaction from addNode commits then dispatches once", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "w", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     const before = h.taskHandler.dispatchCalls.length;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
       spec: { agent: "w", brief: "y" },
-      parents: [],
+      parents: [parentTaskId],
     });
     expect((await h.service.getNode(nodeId)).status).toBe("running");
     expect(h.taskHandler.dispatchCalls.length).toBe(before + 1);

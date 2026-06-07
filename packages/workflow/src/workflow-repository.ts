@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { WorkflowNodeNotFoundError, WorkflowNotFoundError } from "./errors.js";
+import { WorkflowNodeNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
 import {
   type WorkflowEdgeRow,
@@ -87,22 +87,6 @@ export class WorkflowRepository {
       .where(and(eq(workflows.id, opts.id), eq(workflows.status, opts.fromStatus)))
       .run();
     return result.changes > 0;
-  }
-
-  /**
-   * Targeted update of the `coordinator_agent` denormalization. Used
-   * inside the same transaction as a coord-kind insert so the cached
-   * value never drifts from the most-recently-inserted coord's
-   * `spec.agent`.
-   */
-  updateWorkflowCoordinatorAgent(tx: Db, id: string, agent: string): void {
-    assertValidWorkflowId(id);
-    const result = tx
-      .update(workflows)
-      .set({ coordinatorAgent: agent })
-      .where(eq(workflows.id, id))
-      .run();
-    if (result.changes === 0) throw new WorkflowNotFoundError(id);
   }
 
   // ─── Node row ────────────────────────────────────────────

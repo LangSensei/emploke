@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  InvalidWorkflowIdError,
-  InvalidWorkflowNodeIdError,
-  WorkflowNotFoundError,
-} from "../src/errors.js";
+import { InvalidWorkflowIdError, InvalidWorkflowNodeIdError } from "../src/errors.js";
 import { openTestWorkflowDb } from "../src/testing.js";
 import { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "../src/workflow-entity.js";
 import { WorkflowRepository } from "../src/workflow-repository.js";
@@ -117,14 +113,6 @@ describe("WorkflowRepository — CRUD round-trips", () => {
       }),
     );
     expect(okSecond).toBe(false);
-  });
-
-  it("updateWorkflowCoordinatorAgent throws WorkflowNotFoundError on missing id", () => {
-    expect(() =>
-      db.db.transaction((tx) => {
-        repo.updateWorkflowCoordinatorAgent(tx, WF_ID, "agent-2");
-      }),
-    ).toThrow(WorkflowNotFoundError);
   });
 
   it("updateNodeLifecycle updates the requested fields and leaves others intact", async () => {

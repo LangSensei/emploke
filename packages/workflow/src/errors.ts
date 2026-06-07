@@ -38,17 +38,6 @@ export class WorkflowNodeNotFoundError extends WorkflowError {
   }
 }
 
-export class WorkflowEdgeNotFoundError extends WorkflowError {
-  override readonly name = "WorkflowEdgeNotFoundError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly from: string,
-    public readonly to: string,
-  ) {
-    super(`Workflow edge ${from}→${to} not found in workflow "${workflowId}"`);
-  }
-}
-
 // ─── Id-grammar guards (thrown by validate.ts) ──────────────────────
 
 export class InvalidWorkflowIdError extends WorkflowError {
@@ -133,34 +122,6 @@ export class WorkflowEdgeCycleError extends WorkflowError {
     public readonly to: string,
   ) {
     super(`Adding edge ${from}→${to} would create a cycle in workflow "${workflowId}"`);
-  }
-}
-
-export class WorkflowEdgeAlreadyExistsError extends WorkflowError {
-  override readonly name = "WorkflowEdgeAlreadyExistsError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly from: string,
-    public readonly to: string,
-  ) {
-    super(`Edge ${from}→${to} already exists in workflow "${workflowId}"`);
-  }
-}
-
-/**
- * Thrown by `removeNode` / `removeEdge` when the removal would leave
- * a downstream child with zero parents. The coord must remove the
- * child first (cascading bottom-up) OR add a replacement parent edge
- * before removing.
- */
-export class WouldOrphanChildError extends WorkflowError {
-  override readonly name = "WouldOrphanChildError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly nodeId: string,
-    public readonly orphanedChildId: string,
-  ) {
-    super(`Removing ${nodeId} would orphan child "${orphanedChildId}" in workflow "${workflowId}"`);
   }
 }
 
@@ -266,31 +227,17 @@ export class ParentStateError extends WorkflowError {
 }
 
 /**
- * `addSubgraph` rejection: a temp node has no parents (neither
- * `existingParents` entries nor incoming intra-batch edges). Every
- * temp must root somewhere in the existing DAG.
+ * Thrown by `addNode` when `parents.length === 0`. The substrate
+ * mandates `parents.length ≥ 1` on every primitive insert: the
+ * initial coord (created via `createWorkflow`) is the unique
+ * phase-0 entry point, and every subsequent node roots in the
+ * existing DAG. Structural rejection — fires before the auth gate
+ * so the precondition is order-independent of caller state.
  */
-export class ParentlessTempError extends WorkflowError {
-  override readonly name = "ParentlessTempError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly tempId: string,
-  ) {
-    super(`addSubgraph: temp node "${tempId}" has no parents (workflow "${workflowId}")`);
-  }
-}
-
-/**
- * `addSubgraph` rejection: an edge references a `tempId` not
- * declared in `batch.nodes`.
- */
-export class UnknownTempIdError extends WorkflowError {
-  override readonly name = "UnknownTempIdError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly tempId: string,
-  ) {
-    super(`addSubgraph: edge references unknown tempId "${tempId}" (workflow "${workflowId}")`);
+export class EmptyParentsError extends WorkflowError {
+  override readonly name = "EmptyParentsError";
+  constructor(public readonly workflowId: string) {
+    super(`addNode: parents must be non-empty (workflow "${workflowId}")`);
   }
 }
 

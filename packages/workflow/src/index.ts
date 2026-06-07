@@ -24,17 +24,14 @@ export {
 } from "./compose.js";
 // ─── Errors ─────────────────────────────────────────────────────────
 export {
+  EmptyParentsError,
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
   MultipleSuccessorCoordsError,
   OrphanCoordInsertError,
-  ParentlessTempError,
   ParentStateError,
-  UnknownTempIdError,
   WorkflowAlreadyTerminalError,
-  WorkflowEdgeAlreadyExistsError,
   WorkflowEdgeCycleError,
-  WorkflowEdgeNotFoundError,
   WorkflowEnumValueError,
   WorkflowError,
   WorkflowKindRegistryFrozenError,
@@ -47,7 +44,6 @@ export {
   WorkflowNodeNotMutableError,
   WorkflowNodeSpecError,
   WorkflowNotFoundError,
-  WouldOrphanChildError,
 } from "./errors.js";
 // ─── Path helpers ───────────────────────────────────────────────────
 export {
@@ -82,8 +78,6 @@ export {
   WorkflowEntity,
   WorkflowNodeEntity,
 } from "./workflow-entity.js";
-// ─── Repository (package-internal for tests) ────────────────────────
-export { WorkflowRepository } from "./workflow-repository.js";
 // ─── Service ────────────────────────────────────────────────────────
 export {
   type AddEdgeArgs,

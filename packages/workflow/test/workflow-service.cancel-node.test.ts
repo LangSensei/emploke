@@ -43,11 +43,26 @@ describe("WorkflowService.cancelNode", () => {
 
   it("cancels a task-kind node in `running` and routes through handler.cancel post-commit", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
+    // Materialise a parent task and force it terminal so the child
+    // task lands in `running` via eager dispatch on insert.
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "w", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
       spec: { agent: "w", brief: "x" },
-      parents: [],
+      parents: [parentTaskId],
     });
     expect((await h.service.getNode(nodeId)).status).toBe("running");
     await h.service.cancelNode({ callerCoordNodeId: initialCoordNodeId, nodeId });
@@ -92,11 +107,24 @@ describe("WorkflowService.cancelNode", () => {
 
   it("handler.cancel failure is logged but the substrate still marks the node cancelled", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
+    const { nodeId: parentTaskId } = await h.service.addNode({
+      callerCoordNodeId: initialCoordNodeId,
+      kind: "task",
+      spec: { agent: "w", brief: "p" },
+      parents: [initialCoordNodeId],
+    });
+    h.db.db.transaction((tx) => {
+      h.repo.updateNodeLifecycle(tx, {
+        id: parentTaskId,
+        status: "succeeded",
+        endedAt: "2026-06-07T01:00:00.000Z",
+      });
+    });
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "task",
       spec: { agent: "w", brief: "x" },
-      parents: [],
+      parents: [parentTaskId],
     });
     h.taskHandler.cancelShouldThrow = true;
     await h.service.cancelNode({ callerCoordNodeId: initialCoordNodeId, nodeId });
