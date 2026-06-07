@@ -327,3 +327,49 @@ export class WorkflowNodeKindShapeError extends WorkflowError {
     super(`Invalid workflow node kind: "${value}" (must be a non-empty string)`);
   }
 }
+
+// ─── Open kind-handler registry ─────────────────────────────────────
+
+/**
+ * Thrown by `WorkflowService.registerKind` when a duplicate kind is
+ * registered on the same service instance. Each `kind` resolves to a
+ * single handler; double-registration is always operator-config error.
+ */
+export class WorkflowNodeKindAlreadyRegisteredError extends WorkflowError {
+  override readonly name = "WorkflowNodeKindAlreadyRegisteredError";
+  constructor(public readonly kind: string) {
+    super(`Workflow node kind "${kind}" is already registered on this service`);
+  }
+}
+
+/**
+ * Thrown by `WorkflowService.registerKind` when invoked after
+ * `recover()` has frozen the registry. Late-bound handlers would
+ * change the preflight outcome silently — the registry must be
+ * fully populated BEFORE recovery so persisted rows are checked
+ * against the final set.
+ */
+export class WorkflowKindRegistryFrozenError extends WorkflowError {
+  override readonly name = "WorkflowKindRegistryFrozenError";
+  constructor(public readonly kind: string) {
+    super(
+      `Cannot register kind "${kind}": the workflow kind registry is frozen (recover() was already called). All registerKind calls must precede recover().`,
+    );
+  }
+}
+
+/**
+ * Thrown by `WorkflowService.recover` when a persisted
+ * `workflow_nodes.kind` value has no registered handler. Catches
+ * the orphan-disabled-row failure mode where a kind drops out of
+ * compose code but its rows linger.
+ */
+export class WorkflowNodeKindNotRegisteredError extends WorkflowError {
+  override readonly name = "WorkflowNodeKindNotRegisteredError";
+  constructor(
+    public readonly kind: string,
+    detail: string,
+  ) {
+    super(`Workflow node kind "${kind}" is not registered: ${detail}`);
+  }
+}

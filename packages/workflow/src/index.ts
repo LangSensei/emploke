@@ -37,7 +37,10 @@ export {
   WorkflowEdgeNotFoundError,
   WorkflowEnumValueError,
   WorkflowError,
+  WorkflowKindRegistryFrozenError,
   WorkflowMutationUnauthorizedError,
+  WorkflowNodeKindAlreadyRegisteredError,
+  WorkflowNodeKindNotRegisteredError,
   WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
@@ -79,3 +82,20 @@ export {
   WorkflowEntity,
   WorkflowNodeEntity,
 } from "./workflow-entity.js";
+// ─── Repository (package-internal for tests) ────────────────────────
+export { WorkflowRepository } from "./workflow-repository.js";
+// ─── Service ────────────────────────────────────────────────────────
+export {
+  type AddEdgeArgs,
+  type AddEdgeResult,
+  type AddNodeArgs,
+  type AddNodeResult,
+  type CancelNodeArgs,
+  type CancelWorkflowArgs,
+  type CreateWorkflowArgs,
+  type CreateWorkflowResult,
+  type FinishWorkflowArgs,
+  type WorkflowDagSnapshot,
+  WorkflowService,
+  type WorkflowServiceOpts,
+} from "./workflow-service.js";

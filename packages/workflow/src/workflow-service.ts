@@ -1,0 +1,1176 @@
+import { randomUUID as nodeRandomUUID } from "node:crypto";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import pino, { type Logger } from "pino";
+import { assertCoordinatorSpecAgent, assertValidKindName } from "./_helpers.js";
+import {
+  MultipleSuccessorCoordsError,
+  OrphanCoordInsertError,
+  ParentStateError,
+  WorkflowAlreadyTerminalError,
+  WorkflowEdgeCycleError,
+  WorkflowError,
+  WorkflowKindRegistryFrozenError,
+  WorkflowMutationUnauthorizedError,
+  WorkflowNodeKindAlreadyRegisteredError,
+  WorkflowNodeKindNotRegisteredError,
+  WorkflowNodeKindUnknownError,
+  WorkflowNodeNotFoundError,
+  WorkflowNodeNotMutableError,
+  WorkflowNotFoundError,
+} from "./errors.js";
+import { workflowNodeDir } from "./paths.js";
+import type * as schema from "./schema.js";
+import type {
+  WorkflowNodeKindHandler,
+  WorkflowNodeStatus,
+  WorkflowNodeValidateCtx,
+} from "./types.js";
+import { generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
+import { type WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
+import type { WorkflowRepository } from "./workflow-repository.js";
+
+type Db = BetterSQLite3Database<typeof schema>;
+
+const COORDINATOR_KIND = "coordinator";
+const TASK_KIND = "task";
+
+const TERMINAL_NODE_STATUSES: ReadonlySet<WorkflowNodeStatus> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
+const silentLogger: Logger = pino({ level: "silent" });
+
+export interface WorkflowServiceOpts {
+  readonly repo: WorkflowRepository;
+  readonly db: Db;
+  readonly workspaceDir: string;
+  readonly logger?: Logger;
+  readonly now?: () => Date;
+  readonly randomUUID?: () => string;
+}
+
+export interface CreateWorkflowArgs {
+  readonly brief: string;
+  readonly details?: string;
+  readonly coordinatorAgent: string;
+}
+
+export interface CreateWorkflowResult {
+  readonly workflowId: string;
+  readonly initialCoordNodeId: string;
+}
+
+export interface AddNodeArgs {
+  readonly callerCoordNodeId: string;
+  readonly kind: string;
+  readonly spec: unknown;
+  readonly parents: ReadonlyArray<string>;
+}
+
+export interface AddNodeResult {
+  readonly nodeId: string;
+  readonly phase: number;
+}
+
+export interface AddEdgeArgs {
+  readonly callerCoordNodeId: string;
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+}
+
+export interface AddEdgeResult {
+  readonly toPhase: number;
+}
+
+export interface CancelNodeArgs {
+  readonly callerCoordNodeId: string;
+  readonly nodeId: string;
+}
+
+export interface FinishWorkflowArgs {
+  readonly callerCoordNodeId: string;
+  readonly outcome: "succeeded" | "failed";
+}
+
+export interface CancelWorkflowArgs {
+  readonly workflowId: string;
+}
+
+export interface WorkflowDagSnapshot {
+  readonly workflow: WorkflowEntity;
+  readonly nodes: readonly WorkflowNodeEntity[];
+  readonly edges: readonly WorkflowEdgeEntity[];
+}
+
+/**
+ * Public surface for `@emploke/workflow`. Owns:
+ *
+ *   - reads + writes against `workflows` / `workflow_nodes` /
+ *     `workflow_edges`
+ *   - an OPEN registry of per-kind handlers
+ *   - the cross-cut auth gate: every mutation primitive except
+ *     `cancelWorkflow` re-checks atomically that the caller is a
+ *     running coordinator-kind node in a running workflow
+ *   - the `dispatchAtomic` primitive that flips a node from
+ *     `not_started|ready` → `running` and invokes the registered
+ *     handler's `dispatch` outside the DB tx
+ *
+ * ## Open registry (matches `@emploke/schedule`)
+ *
+ * ```ts
+ * const wf = await composeWorkflowModule({ dbFile, workspaceDir });
+ * wf.service.registerKind("task", makeTaskKindHandler({ tasks }));
+ * wf.service.registerKind("coordinator", makeCoordinatorKindHandler({ sessions }));
+ * await wf.service.recover();   // freezes registry; MUST come AFTER all registerKind
+ * ```
+ *
+ * `recover()` freezes the registry on first call and preflights
+ * every persisted node row's `kind` against the registry; any
+ * unregistered kind throws {@link WorkflowNodeKindNotRegisteredError}.
+ *
+ * ## Auth gate
+ *
+ * Every mutation method (except `cancelWorkflow`) requires the caller
+ * to pass an explicit `callerCoordNodeId`. The service evaluates the
+ * cross-cut predicate
+ *
+ * ```text
+ *   caller.kind   = 'coordinator'
+ * AND caller.status = 'running'
+ * AND workflow.status = 'running'
+ * ```
+ *
+ * via a single JOIN inside the mutation transaction. Failure throws
+ * {@link WorkflowMutationUnauthorizedError}. Workflow-level
+ * `cancelWorkflow` is an external operator API and bypasses the
+ * caller-coord gate; HTTP / IPC surface enforces the operator's
+ * authority.
+ */
+export class WorkflowService {
+  private readonly repo: WorkflowRepository;
+  private readonly db: Db;
+  private readonly workspaceDir: string;
+  private readonly logger: Logger;
+  private readonly now: () => Date;
+  private readonly randomUUID: () => string;
+  private readonly handlers = new Map<string, WorkflowNodeKindHandler>();
+  private registryFrozen = false;
+
+  constructor(opts: WorkflowServiceOpts) {
+    this.repo = opts.repo;
+    this.db = opts.db;
+    this.workspaceDir = opts.workspaceDir;
+    this.logger = opts.logger ?? silentLogger;
+    this.now = opts.now ?? (() => new Date());
+    this.randomUUID = opts.randomUUID ?? (() => nodeRandomUUID());
+  }
+
+  // ─── Registry ─────────────────────────────────────────────
+
+  /**
+   * Register a per-kind handler. Throws if:
+   *   - `kind` is not a non-empty `^[a-z][a-z0-9_-]*$` string
+   *   - the registry was already frozen by a prior `recover()`
+   *   - the same `kind` was already registered on this service
+   *
+   * MUST be called BEFORE `recover()`.
+   */
+  registerKind(kind: string, handler: WorkflowNodeKindHandler): void {
+    assertValidKindName(kind);
+    if (this.registryFrozen) throw new WorkflowKindRegistryFrozenError(kind);
+    if (this.handlers.has(kind)) throw new WorkflowNodeKindAlreadyRegisteredError(kind);
+    this.handlers.set(kind, handler);
+  }
+
+  /**
+   * Boot-time recovery. Freezes the registry on first call and
+   * preflights every persisted node row's `kind` against the
+   * registry. Any kind with no registered handler throws
+   * {@link WorkflowNodeKindNotRegisteredError} naming the kind +
+   * the register-before-recover requirement.
+   *
+   * Subsequent calls after the first return immediately (no double
+   * preflight, no re-freeze).
+   *
+   * **On preflight failure, the registry remains frozen.** The only
+   * correct recovery path is to dispose this service via
+   * `composeWorkflowModule().close()` and rebuild.
+   */
+  async recover(): Promise<void> {
+    if (this.registryFrozen) return;
+    this.registryFrozen = true;
+    const preflightRows = await this.repo.allRowsForPreflight();
+    for (const row of preflightRows) {
+      if (!this.handlers.has(row.kind)) {
+        throw new WorkflowNodeKindNotRegisteredError(
+          row.kind,
+          `Workflow node row "${row.id}" has kind="${row.kind}" but no handler is registered. Call service.registerKind("${row.kind}", handler) at compose time before service.recover().`,
+        );
+      }
+    }
+  }
+
+  private handlerFor(kind: string): WorkflowNodeKindHandler {
+    const h = this.handlers.get(kind);
+    if (h === undefined) throw new WorkflowNodeKindUnknownError(kind);
+    return h;
+  }
+
+  // ─── Reads ────────────────────────────────────────────────
+
+  async getWorkflow(workflowId: string): Promise<WorkflowEntity> {
+    const wf = await this.repo.readWorkflow(workflowId);
+    if (wf === null) throw new WorkflowNotFoundError(workflowId);
+    return wf;
+  }
+
+  async getDag(workflowId: string): Promise<WorkflowDagSnapshot> {
+    const wf = await this.repo.readWorkflow(workflowId);
+    if (wf === null) throw new WorkflowNotFoundError(workflowId);
+    const [nodes, edges] = await Promise.all([
+      this.repo.listNodesByWorkflow(workflowId),
+      this.repo.listEdgesByWorkflow(workflowId),
+    ]);
+    return { workflow: wf, nodes, edges };
+  }
+
+  async getNode(nodeId: string): Promise<WorkflowNodeEntity> {
+    const node = await this.repo.readNode(nodeId);
+    if (node === null) throw new WorkflowNodeNotFoundError("<unknown>", nodeId);
+    return node;
+  }
+
+  /**
+   * Resolves the on-disk directory for a node, or `null` when the
+   * directory is not yet considered live.
+   *
+   * Returned as `null` for nodes still in `not_started` or `ready`:
+   * the directory is materialized at dispatch time, so callers (UI,
+   * audit) would otherwise observe a path that doesn't exist on disk.
+   * A vanishingly short window inside `dispatchAtomic` — after the
+   * status has flipped to `running` but before `handler.dispatch`
+   * actually creates the directory — may return the path before the
+   * directory exists; callers must tolerate that.
+   *
+   * For `running` and all terminal statuses, returns the resolved
+   * path (so audit / replay can find the unit's working directory
+   * even after completion).
+   */
+  async getNodeDir(nodeId: string): Promise<string | null> {
+    const node = await this.repo.readNode(nodeId);
+    if (node === null) throw new WorkflowNodeNotFoundError("<unknown>", nodeId);
+    if (node.status === "not_started" || node.status === "ready") return null;
+    return workflowNodeDir(this.workspaceDir, node.workflowId, node.id);
+  }
+
+  // ─── createWorkflow ──────────────────────────────────────
+
+  /**
+   * Create a new workflow with its initial coordinator node attached.
+   * The workflow row + the initial coord node row + the
+   * `coordinator_agent` denorm are all inserted in one transaction;
+   * the dispatch reaction fires AFTER the tx commits so the handler
+   * never runs while a write lock is held.
+   *
+   * `coordinatorAgent` shape is validated as a non-empty string
+   * (cross-package catalog validation is wired by the compose-layer
+   * coordinator handler; the substrate stays shape-only here).
+   */
+  async createWorkflow(args: CreateWorkflowArgs): Promise<CreateWorkflowResult> {
+    if (typeof args.brief !== "string" || args.brief.trim().length === 0) {
+      throw new WorkflowError("createWorkflow: brief must be a non-empty string");
+    }
+    if (typeof args.coordinatorAgent !== "string" || args.coordinatorAgent.length === 0) {
+      throw new WorkflowError("createWorkflow: coordinatorAgent must be a non-empty string");
+    }
+
+    const handler = this.handlerFor(COORDINATOR_KIND);
+    const workflowId = generateWorkflowId(this.randomUUID);
+    const initialCoordNodeId = generateWorkflowNodeId(this.randomUUID);
+    const nowIso = this.now().toISOString();
+    const coordSpec: { readonly agent: string } = { agent: args.coordinatorAgent };
+
+    // The bootstrap insert is its own validate-context source: the
+    // caller IS the node being validated, so callerCoordNodeId =
+    // self and callerCoordSpec = self spec. The substrate treats
+    // this as a degenerate but uniform case.
+    const validateCtx: WorkflowNodeValidateCtx = {
+      workflowId,
+      callerCoordNodeId: initialCoordNodeId,
+      callerCoordSpec: coordSpec,
+      workflowStatus: "running",
+    };
+    const validatedSpec = await handler.validate(coordSpec, validateCtx);
+    assertCoordinatorSpecAgent(validatedSpec);
+
+    this.db.transaction((tx) => {
+      const wfEntity = workflowEntityFor({
+        id: workflowId,
+        brief: args.brief,
+        details: args.details,
+        coordinatorAgent: validatedSpec.agent,
+        nowIso,
+      });
+      this.repo.insertWorkflow(tx, wfEntity);
+      this.insertCoordNodeInTx(tx, {
+        workflowId,
+        nodeId: initialCoordNodeId,
+        validatedSpec,
+        parents: [],
+        nowIso,
+      });
+    });
+
+    await this.dispatchAtomic(initialCoordNodeId);
+    return { workflowId, initialCoordNodeId };
+  }
+
+  // ─── addNode ─────────────────────────────────────────────
+
+  async addNode(args: AddNodeArgs): Promise<AddNodeResult> {
+    if (typeof args.kind !== "string" || args.kind.length === 0) {
+      throw new WorkflowError("addNode: kind must be a non-empty string");
+    }
+    if (args.parents.length === 0 && args.kind !== TASK_KIND && args.kind !== COORDINATOR_KIND) {
+      // The substrate accepts any registered kind; the per-kind
+      // readiness rule still applies. An unknown kind is rejected
+      // by handlerFor below; an empty parent set is allowed (root
+      // task / root coord — both produce phase 0).
+    }
+
+    const handler = this.handlerFor(args.kind);
+    const nodeId = generateWorkflowNodeId(this.randomUUID);
+    const nowIso = this.now().toISOString();
+
+    // The validate ctx needs the caller coord's spec; pull it from
+    // the same JOIN read used by the auth gate to avoid a second
+    // round-trip outside the tx.
+    let validateCtx: WorkflowNodeValidateCtx | null = null;
+    let workflowId: string;
+
+    // Phase A: a tx-less read just to construct the validate ctx so
+    // handler.validate (which may do async catalog lookups) runs
+    // outside the write tx.
+    {
+      const ctx = this.db.transaction((tx) =>
+        this.assertAuthCallerCoord(tx, args.callerCoordNodeId),
+      );
+      validateCtx = {
+        workflowId: ctx.workflowId,
+        callerCoordNodeId: args.callerCoordNodeId,
+        callerCoordSpec: ctx.callerSpec,
+        workflowStatus: "running",
+      };
+      workflowId = ctx.workflowId;
+    }
+
+    const validatedSpec = await handler.validate(args.spec, validateCtx);
+
+    // For coord-kind, the substrate needs `spec.agent` to maintain
+    // `workflows.coordinator_agent`. Surface a clear error if the
+    // handler returned a shape without it (mirrors invariant that
+    // every coord spec carries an agent FQN).
+    if (args.kind === COORDINATOR_KIND) {
+      assertCoordinatorSpecAgent(validatedSpec);
+    }
+
+    let resultPhase = 0;
+    let newNodeIsRoot = false;
+    this.db.transaction((tx) => {
+      // Re-check auth inside the write tx so a concurrent caller-coord
+      // termination between the validate phase and the insert is
+      // caught atomically.
+      this.assertAuthCallerCoord(tx, args.callerCoordNodeId, workflowId);
+
+      // Read the parent set inside the tx.
+      const uniqueParents = Array.from(new Set(args.parents));
+      const parentEntities = this.repo.readNodesByIds(tx, uniqueParents);
+      if (parentEntities.length !== uniqueParents.length) {
+        const found = new Set(parentEntities.map((p) => p.id));
+        const missing = uniqueParents.find((p) => !found.has(p));
+        if (missing !== undefined) throw new WorkflowNodeNotFoundError(workflowId, missing);
+      }
+      for (const p of parentEntities) {
+        if (p.workflowId !== workflowId) {
+          throw new WorkflowMutationUnauthorizedError(
+            workflowId,
+            args.callerCoordNodeId,
+            `parent node "${p.id}" is in a different workflow`,
+          );
+        }
+      }
+
+      // Kind-aware parent-state restriction.
+      if (args.kind === TASK_KIND) {
+        for (const p of parentEntities) {
+          if (p.status === "failed" || p.status === "cancelled") {
+            throw new ParentStateError(workflowId, args.kind, p.id, p.status);
+          }
+        }
+      }
+
+      if (args.kind === COORDINATOR_KIND) {
+        if (!uniqueParents.includes(args.callerCoordNodeId)) {
+          throw new OrphanCoordInsertError(workflowId, args.callerCoordNodeId);
+        }
+        // Caller MUST NOT already have a coord-kind child. Inspect
+        // the live edge set + node kinds for any (caller → coord)
+        // edge already present.
+        const allEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+        const callerChildren = allEdges
+          .filter((e) => e.from === args.callerCoordNodeId)
+          .map((e) => e.to);
+        if (callerChildren.length > 0) {
+          const childNodes = this.repo.readNodesByIds(tx, callerChildren);
+          if (childNodes.some((c) => c.kind === COORDINATOR_KIND)) {
+            throw new MultipleSuccessorCoordsError(workflowId, args.callerCoordNodeId);
+          }
+        }
+      }
+
+      const phase = computePhaseFromParents(parentEntities);
+      resultPhase = phase;
+      newNodeIsRoot = uniqueParents.length === 0;
+
+      if (args.kind === COORDINATOR_KIND) {
+        this.insertCoordNodeInTx(tx, {
+          workflowId,
+          nodeId,
+          validatedSpec: validatedSpec as { agent: string },
+          parents: uniqueParents,
+          nowIso,
+        });
+      } else {
+        const node = nodeEntityFor({
+          id: nodeId,
+          workflowId,
+          kind: args.kind,
+          spec: validatedSpec,
+          phase,
+          status: "not_started",
+          nowIso,
+        });
+        this.repo.insertNode(tx, node);
+        for (const p of uniqueParents) {
+          this.repo.insertEdge(tx, { workflowId, from: p, to: nodeId });
+        }
+      }
+    });
+
+    // Post-commit eager-dispatch reaction. Without this, a coord that
+    // adds a node whose parents are all already terminal would
+    // deadlock — no future parent-termination event would ever fire
+    // to wake the new node. `dispatchAtomic` re-checks readiness
+    // atomically so a concurrent parent cancel is handled safely.
+    const parentEntitiesForReadiness = await Promise.all(
+      args.parents.map((id) => this.repo.readNode(id)),
+    );
+    const liveParents = parentEntitiesForReadiness.filter(
+      (n): n is WorkflowNodeEntity => n !== null,
+    );
+    if (newNodeIsRoot || parentsReadyForKind(args.kind, liveParents)) {
+      await this.dispatchAtomic(nodeId);
+    }
+
+    return { nodeId, phase: resultPhase };
+  }
+
+  // ─── addEdge ─────────────────────────────────────────────
+
+  async addEdge(args: AddEdgeArgs): Promise<AddEdgeResult> {
+    let resultToPhase = 0;
+    let toKind = "";
+    let toNodeStatusAfter: WorkflowNodeStatus = "not_started";
+    let dispatchCandidates: string[] = [];
+
+    this.db.transaction((tx) => {
+      const ctx = this.assertAuthCallerCoord(tx, args.callerCoordNodeId);
+      const workflowId = ctx.workflowId;
+
+      const endpoints = this.repo.readNodesByIds(tx, [args.fromNodeId, args.toNodeId]);
+      const fromNode = endpoints.find((n) => n.id === args.fromNodeId);
+      const toNode = endpoints.find((n) => n.id === args.toNodeId);
+      if (fromNode === undefined) throw new WorkflowNodeNotFoundError(workflowId, args.fromNodeId);
+      if (toNode === undefined) throw new WorkflowNodeNotFoundError(workflowId, args.toNodeId);
+
+      if (fromNode.workflowId !== workflowId || toNode.workflowId !== workflowId) {
+        throw new WorkflowMutationUnauthorizedError(
+          workflowId,
+          args.callerCoordNodeId,
+          "edge endpoint(s) are in a different workflow",
+        );
+      }
+
+      if (toNode.status !== "not_started") {
+        throw new WorkflowNodeNotMutableError(workflowId, args.toNodeId, toNode.status, "addEdge");
+      }
+
+      // Kind-aware from-state by the to-node's kind. Task-kind
+      // dispatch needs every parent succeeded; coordinator-kind
+      // dispatch accepts any terminal parent (wakes on failure).
+      if (toNode.kind === TASK_KIND) {
+        if (fromNode.status === "failed" || fromNode.status === "cancelled") {
+          throw new ParentStateError(workflowId, toNode.kind, fromNode.id, fromNode.status);
+        }
+      }
+
+      // Cycle check on live DAG ∪ {new edge}. DFS from to-node
+      // looking for from-node — if reachable, adding the edge
+      // closes a cycle.
+      const liveEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+      if (
+        wouldCreateCycle(liveEdges, {
+          from: args.fromNodeId,
+          to: args.toNodeId,
+        })
+      ) {
+        throw new WorkflowEdgeCycleError(workflowId, args.fromNodeId, args.toNodeId);
+      }
+
+      this.repo.insertEdge(tx, {
+        workflowId,
+        from: args.fromNodeId,
+        to: args.toNodeId,
+      });
+
+      // Recompute phase across the not_started subtree rooted at
+      // the to-node. Running / terminal descendants are sealed; the
+      // recompute skips them so phase changes never touch a node
+      // whose phase is already engaged by the dispatch loop.
+      const phaseDiff = this.recomputePhasesInTx(tx, workflowId, args.toNodeId);
+      this.repo.updateNodePhases(tx, phaseDiff);
+      resultToPhase = phaseDiff.get(args.toNodeId) ?? toNode.phase;
+      toKind = toNode.kind;
+      toNodeStatusAfter = toNode.status;
+
+      // Candidates for the post-commit dispatch reaction: the to-node
+      // plus any not_started descendant whose phase was recomputed.
+      // (The recompute set IS the set of not_started descendants.)
+      dispatchCandidates = Array.from(phaseDiff.keys());
+    });
+
+    // Post-commit eager-dispatch reaction. dispatchAtomic re-checks
+    // readiness inside its own tx, so a concurrent parent cancel
+    // between this read and the dispatch tx is a no-op.
+    void toKind;
+    void toNodeStatusAfter;
+    for (const candidateId of dispatchCandidates) {
+      const node = await this.repo.readNode(candidateId);
+      if (node === null) continue;
+      if (node.status !== "not_started" && node.status !== "ready") continue;
+      const allNodes = await this.repo.listNodesByWorkflow(node.workflowId);
+      const allEdges = await this.repo.listEdgesByWorkflow(node.workflowId);
+      const parents = parentsOf(node.id, allEdges)
+        .map((pid) => allNodes.find((n) => n.id === pid))
+        .filter((n): n is WorkflowNodeEntity => n !== undefined);
+      if (parents.length === 0) {
+        await this.dispatchAtomic(candidateId);
+      } else if (parentsReadyForKind(node.kind, parents)) {
+        await this.dispatchAtomic(candidateId);
+      }
+    }
+
+    return { toPhase: resultToPhase };
+  }
+
+  // ─── cancelNode ──────────────────────────────────────────
+
+  /**
+   * Cancel a task-kind node. Coord-kind cancellation is deferred —
+   * cancel the workflow instead via `cancelWorkflow`.
+   *
+   * Allowed source statuses: `not_started`, `ready`, `running`. When
+   * the node was running, `handler.cancel(nodeId)` is invoked AFTER
+   * the tx commits (best-effort; the unit-of-work may still complete
+   * after the cancel returns and its result is discarded).
+   */
+  async cancelNode(args: CancelNodeArgs): Promise<void> {
+    let wasRunning = false;
+    let nodeKind = "";
+    this.db.transaction((tx) => {
+      const ctx = this.assertAuthCallerCoord(tx, args.callerCoordNodeId);
+      const node = this.repo.readNodeTx(tx, args.nodeId);
+      if (node === null) throw new WorkflowNodeNotFoundError(ctx.workflowId, args.nodeId);
+      if (node.workflowId !== ctx.workflowId) {
+        throw new WorkflowMutationUnauthorizedError(
+          ctx.workflowId,
+          args.callerCoordNodeId,
+          `target node "${args.nodeId}" is in a different workflow`,
+        );
+      }
+      if (node.kind !== TASK_KIND) {
+        throw new WorkflowNodeNotMutableError(
+          ctx.workflowId,
+          args.nodeId,
+          node.status,
+          "cancelNode",
+        );
+      }
+      const allowedSources: WorkflowNodeStatus[] = ["not_started", "ready", "running"];
+      if (!allowedSources.includes(node.status)) {
+        throw new WorkflowNodeNotMutableError(
+          ctx.workflowId,
+          args.nodeId,
+          node.status,
+          "cancelNode",
+        );
+      }
+      wasRunning = node.status === "running";
+      nodeKind = node.kind;
+      const nowIso = this.now().toISOString();
+      this.repo.updateNodeLifecycle(tx, {
+        id: args.nodeId,
+        status: "cancelled",
+        endedAt: nowIso,
+      });
+    });
+
+    if (wasRunning) {
+      const handler = this.handlerFor(nodeKind);
+      try {
+        await handler.cancel(args.nodeId);
+      } catch (err) {
+        this.logger.warn(
+          { nodeId: args.nodeId, err },
+          "cancelNode: handler.cancel failed (substrate state remains cancelled)",
+        );
+      }
+    }
+  }
+
+  // ─── finishWorkflow ──────────────────────────────────────
+
+  /**
+   * Marks the workflow terminal. CAS-guarded so a second caller
+   * cannot double-terminate; a 0-row result throws
+   * {@link WorkflowAlreadyTerminalError}.
+   *
+   * Post-tx reconciliation: every non-terminal node in the workflow
+   * EXCEPT the calling coord itself is cancelled via
+   * `handler.cancel(node.id)` followed by `status='cancelled'`. The
+   * caller is excluded so the substrate never cancels the task
+   * currently inside `finishWorkflow`; the caller continues to its
+   * natural exit and the eventual coord-termination handler (future
+   * engine phase) flips it terminal.
+   */
+  async finishWorkflow(args: FinishWorkflowArgs): Promise<void> {
+    if (args.outcome !== "succeeded" && args.outcome !== "failed") {
+      throw new WorkflowError(
+        `finishWorkflow: outcome must be 'succeeded' or 'failed', got "${args.outcome}"`,
+      );
+    }
+
+    let workflowId: string;
+    {
+      const ctx = this.db.transaction((tx) =>
+        this.assertAuthCallerCoord(tx, args.callerCoordNodeId),
+      );
+      workflowId = ctx.workflowId;
+    }
+
+    let casOk = false;
+    const nowIso = this.now().toISOString();
+    this.db.transaction((tx) => {
+      // Re-check auth atomically with the CAS so a concurrent
+      // caller-coord termination is caught here too.
+      this.assertAuthCallerCoord(tx, args.callerCoordNodeId, workflowId);
+      casOk = this.repo.casUpdateWorkflowStatus(tx, {
+        id: workflowId,
+        fromStatus: "running",
+        toStatus: args.outcome,
+        endedAt: nowIso,
+      });
+    });
+    if (!casOk) throw new WorkflowAlreadyTerminalError(workflowId);
+
+    await this.reconcileCancelExceptCaller(workflowId, args.callerCoordNodeId);
+  }
+
+  // ─── cancelWorkflow ──────────────────────────────────────
+
+  /**
+   * External operator API — no caller-coord gate (surface-layer auth
+   * governs caller authority). CAS-guarded; throws
+   * {@link WorkflowAlreadyTerminalError} on a second call.
+   *
+   * Post-tx reconciliation cancels every non-terminal node in the
+   * workflow (including any running coord — there is no caller to
+   * exclude here).
+   */
+  async cancelWorkflow(args: CancelWorkflowArgs): Promise<void> {
+    let casOk = false;
+    const nowIso = this.now().toISOString();
+    this.db.transaction((tx) => {
+      const wf = this.repo.readWorkflowTx(tx, args.workflowId);
+      if (wf === null) throw new WorkflowNotFoundError(args.workflowId);
+      casOk = this.repo.casUpdateWorkflowStatus(tx, {
+        id: args.workflowId,
+        fromStatus: "running",
+        toStatus: "cancelled",
+        endedAt: nowIso,
+      });
+    });
+    if (!casOk) throw new WorkflowAlreadyTerminalError(args.workflowId);
+
+    await this.reconcileCancelExceptCaller(args.workflowId, null);
+  }
+
+  // ─── dispatchAtomic ──────────────────────────────────────
+
+  /**
+   * Substrate primitive: flip a node from `not_started|ready` →
+   * `running` and invoke its registered handler's `dispatch` AFTER
+   * the tx commits. On dispatch throw, a separate tx writes
+   * `status='failed'`.
+   *
+   * Inside the tx:
+   *   - re-reads `workflow.status` (defends against cancel race)
+   *   - re-reads `node.status` (defends against parallel dispatch)
+   *   - re-checks per-kind parent readiness (defends against
+   *     parent-cancel race between the eager-dispatch reaction and
+   *     this method)
+   *
+   * If any check fails, the tx is a no-op and the method returns
+   * silently — the substrate's invariant is "calling dispatchAtomic
+   * is always safe; it does nothing when the node is not eligible".
+   *
+   * The handler invocation is OUTSIDE the tx because holding a
+   * write lock across an async network call would serialize the
+   * entire workflow engine on a slow dispatch.
+   */
+  async dispatchAtomic(nodeId: string): Promise<void> {
+    let dispatchPayload: {
+      readonly handler: WorkflowNodeKindHandler;
+      readonly workflowId: string;
+      readonly nodeId: string;
+      readonly spec: unknown;
+      readonly nodeDir: string;
+    } | null = null;
+
+    this.db.transaction((tx) => {
+      const node = this.repo.readNodeTx(tx, nodeId);
+      if (node === null) return;
+      if (node.status !== "not_started" && node.status !== "ready") return;
+      const wf = this.repo.readWorkflowTx(tx, node.workflowId);
+      if (wf === null || wf.status !== "running") return;
+
+      const handler = this.handlerFor(node.kind);
+
+      // Per-kind parent readiness re-check inside the tx.
+      const allEdges = this.repo.listEdgesByWorkflowTx(tx, node.workflowId);
+      const parentIds = parentsOf(node.id, allEdges);
+      const parents = this.repo.readNodesByIds(tx, parentIds);
+      if (parentIds.length !== parents.length) return;
+      if (parents.length > 0 && !parentsReadyForKind(node.kind, parents)) return;
+
+      const nowIso = this.now().toISOString();
+      this.repo.updateNodeLifecycle(tx, {
+        id: nodeId,
+        status: "running",
+        runningAt: nowIso,
+      });
+
+      dispatchPayload = {
+        handler,
+        workflowId: node.workflowId,
+        nodeId,
+        spec: node.spec,
+        nodeDir: workflowNodeDir(this.workspaceDir, node.workflowId, nodeId),
+      };
+    });
+
+    if (dispatchPayload === null) return;
+    const payload = dispatchPayload as {
+      readonly handler: WorkflowNodeKindHandler;
+      readonly workflowId: string;
+      readonly nodeId: string;
+      readonly spec: unknown;
+      readonly nodeDir: string;
+    };
+    try {
+      await payload.handler.dispatch({
+        workflowId: payload.workflowId,
+        nodeId: payload.nodeId,
+        spec: payload.spec,
+        nodeDir: payload.nodeDir,
+      });
+    } catch (err) {
+      this.logger.warn(
+        { nodeId, err },
+        "dispatchAtomic: handler.dispatch threw; marking node failed",
+      );
+      const failedAtIso = this.now().toISOString();
+      try {
+        this.db.transaction((tx) => {
+          this.repo.updateNodeLifecycle(tx, {
+            id: nodeId,
+            status: "failed",
+            endedAt: failedAtIso,
+          });
+        });
+      } catch (writeErr) {
+        this.logger.error(
+          { nodeId, err: writeErr },
+          "dispatchAtomic: failed to write failed status after dispatch error",
+        );
+      }
+    }
+  }
+
+  // ─── Internals ───────────────────────────────────────────
+
+  /**
+   * Cross-cut auth predicate. JOIN-backed read inside the caller's
+   * tx so the (caller coord status, workflow status) pair is
+   * evaluated atomically.
+   *
+   * Returns the workflow id and the caller's coord spec for callers
+   * that need them (e.g. `addNode` threads the spec into the
+   * handler's validate context). Throws
+   * {@link WorkflowMutationUnauthorizedError} on any failure.
+   *
+   * `expectedWorkflowId` is checked when present so a caller passing
+   * a coord id from workflow A while operating on workflow B is
+   * rejected as unauthorized rather than silently accepted.
+   */
+  private assertAuthCallerCoord(
+    tx: Db,
+    callerCoordNodeId: string,
+    expectedWorkflowId?: string,
+  ): { readonly workflowId: string; readonly callerSpec: { readonly agent: string } } {
+    const ctx = this.repo.readCallerCoordContext(tx, callerCoordNodeId);
+    if (ctx === null) {
+      throw new WorkflowMutationUnauthorizedError(
+        expectedWorkflowId ?? "<unknown>",
+        callerCoordNodeId,
+        "caller node not found",
+      );
+    }
+    if (expectedWorkflowId !== undefined && ctx.callerWorkflowId !== expectedWorkflowId) {
+      throw new WorkflowMutationUnauthorizedError(
+        expectedWorkflowId,
+        callerCoordNodeId,
+        "caller is in a different workflow than the target",
+      );
+    }
+    if (ctx.callerKind !== COORDINATOR_KIND) {
+      throw new WorkflowMutationUnauthorizedError(
+        ctx.callerWorkflowId,
+        callerCoordNodeId,
+        `caller kind is "${ctx.callerKind}", expected "${COORDINATOR_KIND}"`,
+      );
+    }
+    if (ctx.callerStatus !== "running") {
+      throw new WorkflowMutationUnauthorizedError(
+        ctx.callerWorkflowId,
+        callerCoordNodeId,
+        `caller status is "${ctx.callerStatus}", expected "running"`,
+      );
+    }
+    if (ctx.workflowStatus !== "running") {
+      throw new WorkflowMutationUnauthorizedError(
+        ctx.callerWorkflowId,
+        callerCoordNodeId,
+        `workflow status is "${ctx.workflowStatus}", expected "running"`,
+      );
+    }
+    const parsed = parseSpecJson(ctx.callerSpecJson);
+    assertCoordinatorSpecAgent(parsed);
+    return { workflowId: ctx.callerWorkflowId, callerSpec: parsed };
+  }
+
+  /**
+   * Package-internal helper: insert a coordinator-kind node row,
+   * insert its parent edges, and UPDATE `workflows.coordinator_agent`
+   * to the node's `spec.agent` — all inside the caller's tx so the
+   * INSERT and the denormalization can never get out of sync.
+   *
+   * Used by both `createWorkflow` (initial coord, no parents) and
+   * `addNode(kind='coordinator')` (subsequent coord, parents include
+   * the caller).
+   */
+  private insertCoordNodeInTx(
+    tx: Db,
+    args: {
+      readonly workflowId: string;
+      readonly nodeId: string;
+      readonly validatedSpec: { readonly agent: string };
+      readonly parents: ReadonlyArray<string>;
+      readonly nowIso: string;
+    },
+  ): void {
+    const parentEntities = this.repo.readNodesByIds(tx, args.parents);
+    const phase = computePhaseFromParents(parentEntities);
+    const node = nodeEntityFor({
+      id: args.nodeId,
+      workflowId: args.workflowId,
+      kind: COORDINATOR_KIND,
+      spec: args.validatedSpec,
+      phase,
+      status: "not_started",
+      nowIso: args.nowIso,
+    });
+    this.repo.insertNode(tx, node);
+    for (const p of args.parents) {
+      this.repo.insertEdge(tx, { workflowId: args.workflowId, from: p, to: args.nodeId });
+    }
+    this.repo.updateWorkflowCoordinatorAgent(tx, args.workflowId, args.validatedSpec.agent);
+  }
+
+  /**
+   * Recompute phase across the `not_started` subtree rooted at
+   * `startNodeId`. Skips running / terminal descendants — their
+   * phase is sealed for the lifetime of the workflow because the
+   * dispatch loop has already engaged.
+   *
+   * Returns the diff (id → new phase) so the caller can issue the
+   * bulk UPDATE inside the same tx.
+   */
+  private recomputePhasesInTx(
+    tx: Db,
+    workflowId: string,
+    startNodeId: string,
+  ): Map<string, number> {
+    const allNodes = this.repo.listNodesByWorkflowTx(tx, workflowId);
+    const allEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+    const byId = new Map(allNodes.map((n) => [n.id, n]));
+    const childrenOf = new Map<string, string[]>();
+    const parentsOfMap = new Map<string, string[]>();
+    for (const e of allEdges) {
+      if (!childrenOf.has(e.from)) childrenOf.set(e.from, []);
+      childrenOf.get(e.from)!.push(e.to);
+      if (!parentsOfMap.has(e.to)) parentsOfMap.set(e.to, []);
+      parentsOfMap.get(e.to)!.push(e.from);
+    }
+
+    const start = byId.get(startNodeId);
+    const inScope = new Set<string>();
+    if (start !== undefined && start.status === "not_started") {
+      inScope.add(startNodeId);
+      const queue: string[] = [startNodeId];
+      while (queue.length > 0) {
+        const cur = queue.shift() as string;
+        for (const c of childrenOf.get(cur) ?? []) {
+          if (inScope.has(c)) continue;
+          const node = byId.get(c);
+          if (node?.status === "not_started") {
+            inScope.add(c);
+            queue.push(c);
+          }
+        }
+      }
+    }
+
+    // Topo sort (Kahn) restricted to in-scope nodes. In-degree is
+    // the count of parents that are also in-scope; out-of-scope
+    // parents (terminal / running) contribute a sealed phase but
+    // not an unresolved dependency.
+    const indeg = new Map<string, number>();
+    for (const id of inScope) {
+      let d = 0;
+      for (const p of parentsOfMap.get(id) ?? []) {
+        if (inScope.has(p)) d++;
+      }
+      indeg.set(id, d);
+    }
+    const ready: string[] = [];
+    for (const [id, d] of indeg) if (d === 0) ready.push(id);
+
+    const diff = new Map<string, number>();
+    while (ready.length > 0) {
+      const cur = ready.shift() as string;
+      const parentIds = parentsOfMap.get(cur) ?? [];
+      let maxParentPhase = -1;
+      for (const p of parentIds) {
+        const ph = diff.has(p) ? (diff.get(p) as number) : (byId.get(p)?.phase ?? -1);
+        if (ph > maxParentPhase) maxParentPhase = ph;
+      }
+      diff.set(cur, maxParentPhase + 1);
+      for (const c of childrenOf.get(cur) ?? []) {
+        if (!inScope.has(c)) continue;
+        const nd = (indeg.get(c) ?? 0) - 1;
+        indeg.set(c, nd);
+        if (nd === 0) ready.push(c);
+      }
+    }
+    return diff;
+  }
+
+  /**
+   * Shared cancel-reconciliation path used by `finishWorkflow` and
+   * `cancelWorkflow`. Loads the live non-terminal node set OUTSIDE
+   * a write tx, calls `handler.cancel` for each, then writes
+   * `status='cancelled'` in a per-node tx.
+   *
+   * `excludeNodeId` excludes the calling coord in the `finishWorkflow`
+   * flow so the substrate never cancels the very task that's still
+   * inside the call frame.
+   */
+  private async reconcileCancelExceptCaller(
+    workflowId: string,
+    excludeNodeId: string | null,
+  ): Promise<void> {
+    const nodes = await this.repo.listNodesByWorkflow(workflowId);
+    const targets = nodes.filter(
+      (n) =>
+        n.id !== excludeNodeId &&
+        (n.status === "not_started" || n.status === "ready" || n.status === "running"),
+    );
+    for (const node of targets) {
+      if (node.status === "running") {
+        const handler = this.handlerFor(node.kind);
+        try {
+          await handler.cancel(node.id);
+        } catch (err) {
+          this.logger.warn(
+            { nodeId: node.id, err },
+            "reconcile: handler.cancel failed (substrate marks cancelled regardless)",
+          );
+        }
+      }
+      const nowIso = this.now().toISOString();
+      try {
+        this.db.transaction((tx) => {
+          // CAS: only flip non-terminal nodes. A concurrent terminate
+          // for the same node wins; this writer becomes a no-op.
+          const fresh = this.repo.readNodeTx(tx, node.id);
+          if (fresh === null) return;
+          if (
+            fresh.status !== "not_started" &&
+            fresh.status !== "ready" &&
+            fresh.status !== "running"
+          ) {
+            return;
+          }
+          this.repo.updateNodeLifecycle(tx, {
+            id: node.id,
+            status: "cancelled",
+            endedAt: nowIso,
+          });
+        });
+      } catch (err) {
+        this.logger.warn({ nodeId: node.id, err }, "reconcile: writing cancelled status failed");
+      }
+    }
+  }
+}
+
+// ─── Pure helpers (module-private) ──────────────────────────
+
+function workflowEntityFor(args: {
+  readonly id: string;
+  readonly brief: string;
+  readonly details: string | undefined;
+  readonly coordinatorAgent: string;
+  readonly nowIso: string;
+}): WorkflowEntity {
+  return WorkflowEntity.fromRow({
+    id: args.id,
+    brief: args.brief,
+    details: args.details ?? null,
+    coordinatorAgent: args.coordinatorAgent,
+    status: "running",
+    metadata: "{}",
+    createdAt: args.nowIso,
+    startedAt: args.nowIso,
+    endedAt: null,
+  });
+}
+
+function nodeEntityFor(args: {
+  readonly id: string;
+  readonly workflowId: string;
+  readonly kind: string;
+  readonly spec: unknown;
+  readonly phase: number;
+  readonly status: WorkflowNodeStatus;
+  readonly nowIso: string;
+}): WorkflowNodeEntity {
+  return WorkflowNodeEntity.fromRow({
+    id: args.id,
+    workflowId: args.workflowId,
+    kind: args.kind,
+    specJson: JSON.stringify(args.spec),
+    phase: args.phase,
+    status: args.status,
+    createdAt: args.nowIso,
+    readyAt: null,
+    runningAt: null,
+    endedAt: null,
+  });
+}
+
+function computePhaseFromParents(parents: readonly WorkflowNodeEntity[]): number {
+  if (parents.length === 0) return 0;
+  let maxPhase = -1;
+  for (const p of parents) if (p.phase > maxPhase) maxPhase = p.phase;
+  return maxPhase + 1;
+}
+
+function parentsOf(
+  nodeId: string,
+  edges: readonly { readonly from: string; readonly to: string }[],
+): string[] {
+  return edges.filter((e) => e.to === nodeId).map((e) => e.from);
+}
+
+/**
+ * Per-kind parent-readiness predicate. The substrate's two known
+ * kinds:
+ *   - `task`: every parent must be `succeeded` (a failed parent
+ *     would block forever; the task-kind contract demands all
+ *     prerequisites complete cleanly).
+ *   - `coordinator`: every parent must be in any terminal status
+ *     (coord wakes on failures specifically to drive recovery).
+ *
+ * Any other kind throws — kind-handler registration covers the
+ * substrate's storage / dispatch concerns, but the parent-readiness
+ * rule is one of the two strings hard-coded in the substrate.
+ */
+function parentsReadyForKind(kind: string, parents: readonly WorkflowNodeEntity[]): boolean {
+  if (parents.length === 0) return true;
+  if (kind === TASK_KIND) {
+    return parents.every((p) => p.status === "succeeded");
+  }
+  if (kind === COORDINATOR_KIND) {
+    return parents.every((p) => TERMINAL_NODE_STATUSES.has(p.status));
+  }
+  throw new WorkflowNodeKindUnknownError(kind);
+}
+
+function wouldCreateCycle(
+  edges: readonly { readonly from: string; readonly to: string }[],
+  newEdge: { readonly from: string; readonly to: string },
+): boolean {
+  // Search for a path from newEdge.to back to newEdge.from in the
+  // live DAG. If found, adding newEdge closes that loop. Skip the
+  // trivial self-edge case explicitly.
+  if (newEdge.from === newEdge.to) return true;
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!adj.has(e.from)) adj.set(e.from, []);
+    adj.get(e.from)!.push(e.to);
+  }
+  const visited = new Set<string>();
+  const stack: string[] = [newEdge.to];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    if (cur === newEdge.from) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    for (const n of adj.get(cur) ?? []) stack.push(n);
+  }
+  return false;
+}
+
+function parseSpecJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new WorkflowError(
+      `Failed to parse coord spec_json: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
