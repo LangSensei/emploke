@@ -73,6 +73,93 @@ describe("WorkflowService.removeNode", () => {
     expect((await h.service.getNode(c)).phase).toBe(2);
   });
 
+  it("recomputes phases convergently when removal yields multi-seed overlapping subtrees (P15-g)", async () => {
+    // P15-g: BFS convergence for multi-seed `recomputePhasesInTx`.
+    // `addEdge` has a 1-seed test already; `removeNode` of a parent
+    // with 2+ children is the canonical multi-seed trigger and the
+    // overlap between the seeds (shared descendant subtree) is what
+    // stresses the convergence path.
+    const { workflowId, initialCoordNodeId: coord } = await bootstrap(h);
+    // Shape:
+    //   coord ──→ M ──→ A ──→ D
+    //         │       \ /    ↑
+    //         │        X     │
+    //         │       / \    │
+    //         └──→ B ──→ E ──┘  (D and E both have parents {A, B})
+    //
+    // Phases pre-removal: coord=0, M=1, A=2, B=2, D=3, E=3.
+    const { nodeId: m } = await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "m" },
+      parents: [coord],
+    });
+    const { nodeId: a } = await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "a" },
+      parents: [coord, m],
+    });
+    const { nodeId: b } = await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "b" },
+      parents: [coord, m],
+    });
+    const { nodeId: d } = await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "d" },
+      parents: [a, b],
+    });
+    const { nodeId: e } = await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "e" },
+      parents: [a, b],
+    });
+    expect((await h.service.getNode(a)).phase).toBe(2);
+    expect((await h.service.getNode(b)).phase).toBe(2);
+    expect((await h.service.getNode(d)).phase).toBe(3);
+    expect((await h.service.getNode(e)).phase).toBe(3);
+
+    // Remove M. Seeds = {A, B}; both lost their M-edge. {D, E} are
+    // the overlapping descendant subtree fed by both seeds — the
+    // BFS-convergence path must process them once per seed without
+    // double-counting, then assign the single correct phase.
+    await h.service.removeNode({ workflowId, nodeId: m });
+    expect((await h.service.getNode(a)).phase).toBe(1);
+    expect((await h.service.getNode(b)).phase).toBe(1);
+    expect((await h.service.getNode(d)).phase).toBe(2);
+    expect((await h.service.getNode(e)).phase).toBe(2);
+
+    // Idempotence: a second multi-seed recompute over the same
+    // overlapping descendants must NOT shift phases. Trigger via
+    // `addSubgraph` with a temp T that fans out to BOTH D and E and
+    // whose own phase (1, as a child of coord) matches the existing
+    // max-parent-phase of {D, E}. Multi-seed recompute runs over
+    // {D, E}; the new max-parent-phase is still 1 → phases stable.
+    await h.service.addSubgraph({
+      workflowId,
+      nodes: [
+        {
+          tempId: "t",
+          kind: "worker",
+          spec: { agent: "w", brief: "t" },
+          existingParents: [coord],
+        },
+      ],
+      edges: [
+        { from: { kind: "temp", tempId: "t" }, to: { kind: "existing", id: d } },
+        { from: { kind: "temp", tempId: "t" }, to: { kind: "existing", id: e } },
+      ],
+    });
+    expect((await h.service.getNode(a)).phase).toBe(1);
+    expect((await h.service.getNode(b)).phase).toBe(1);
+    expect((await h.service.getNode(d)).phase).toBe(2);
+    expect((await h.service.getNode(e)).phase).toBe(2);
+  });
+
   it("removes all adjacent edges (incoming + outgoing) in the same tx", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({

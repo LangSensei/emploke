@@ -62,6 +62,7 @@ export {
   workflowNodeDir,
   workflowRoot,
 } from "./paths.js";
+// ─── Re-exported types ──────────────────────────────────────────────
 export type {
   NodeKind,
   WorkflowNodeRunner,

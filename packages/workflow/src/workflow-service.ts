@@ -7,6 +7,7 @@ import {
   computePhaseFromParents,
   type NodeRef,
   nodeEntityFor,
+  normalizeSubgraphInput,
   parentsOf,
   parentsReadyForKind,
   parseSpecJson,
@@ -1085,14 +1086,25 @@ export class WorkflowService {
 
     const workflowId = args.workflowId;
 
-    // Normalize the input into the pure-helper shape so the
-    // structural checks operate on a single representation.
-    const tempNodes: SubgraphTempNodeShape[] = args.nodes.map((n) => ({
+    // Normalize the raw input into the pure-helper shape, then dedupe
+    // (P15-a). Callers may pass the same `existingParents` ref twice
+    // or declare an `edges[]` entry twice; the substrate silently
+    // collapses both because they're semantically idempotent (and
+    // would otherwise trip the composite-PK constraint at insert
+    // time as a generic SQLite error rather than a domain rejection).
+    // Downstream topology + insert logic always sees the deduplicated
+    // form. Mirrors `addNode`'s `Array.from(new Set(args.parents))`
+    // convention.
+    const rawTempNodes: SubgraphTempNodeShape[] = args.nodes.map((n) => ({
       tempId: n.tempId,
       kind: n.kind,
       existingParents: n.existingParents ?? [],
     }));
-    const tempEdges: SubgraphEdgeShape[] = args.edges.map((e) => ({ from: e.from, to: e.to }));
+    const rawTempEdges: SubgraphEdgeShape[] = args.edges.map((e) => ({ from: e.from, to: e.to }));
+    const { nodes: tempNodes, edges: tempEdges } = normalizeSubgraphInput({
+      nodes: rawTempNodes,
+      edges: rawTempEdges,
+    });
 
     // Pure-helper validation (steps 2, 3, 4, 9 + intra-batch ref
     // resolution part of 5). Throws on first violation.
@@ -1104,6 +1116,42 @@ export class WorkflowService {
     const topoOrder = resolveSubgraphTopology(workflowId, tempNodes, tempEdges);
 
     const C = await this.deriveCallerCoord(workflowId);
+
+    // Pass A (P15-c): cheap existing-ref existence + workflow-membership
+    // pre-check. Runs BEFORE the per-temp `runner.validate` calls so
+    // a malformed batch with a typo'd ref short-circuits without
+    // paying N validate calls. Mirrors the inside-tx recheck below
+    // exactly (same error types, same predicates) so a caller cannot
+    // observe a different rejection depending on which pass caught
+    // the issue. The joined-DAG cycle check stays inside the write
+    // tx — it needs snapshot consistency that a pre-tx read cannot
+    // provide.
+    const existingRefIds = new Set<string>();
+    for (const t of tempNodes) {
+      for (const p of t.existingParents) existingRefIds.add(p);
+    }
+    for (const e of tempEdges) {
+      if (e.from.kind === "existing") existingRefIds.add(e.from.id);
+      if (e.to.kind === "existing") existingRefIds.add(e.to.id);
+    }
+    if (existingRefIds.size > 0) {
+      const refIdList = Array.from(existingRefIds);
+      const preReadNodes = this.repo.readNodesByIds(this.db, refIdList);
+      const preReadById = new Map(preReadNodes.map((n) => [n.id, n]));
+      for (const refId of refIdList) {
+        const node = preReadById.get(refId);
+        if (node === undefined) {
+          throw new WorkflowSubgraphNodeRefUnresolvedError(workflowId, "existing", refId);
+        }
+        if (node.workflowId !== workflowId) {
+          throw new WorkflowMutationUnauthorizedError(
+            workflowId,
+            C.id,
+            `referenced existing node "${refId}" is in a different workflow`,
+          );
+        }
+      }
+    }
 
     // Substrate-internal index lookups built once per batch.
     const tempByTempId = new Map<string, SubgraphTempNodeShape>();
@@ -1339,10 +1387,22 @@ export class WorkflowService {
 
       // Denorm sync if the batch carries a coord temp — by the
       // batch's own ordering, that coord is the latest coord in this
-      // workflow at commit time.
+      // workflow at commit time. The `findLatestCoordIdTx`-guarded
+      // write (P15-f) unifies the addSubgraph denorm sync with the
+      // sibling pattern in `replaceNodeSpec`: both consult the same
+      // helper for "is this row the latest coord?" so the substrate
+      // has a single source of truth for the (created_at DESC, id
+      // DESC) ordering. The equality holds in normal operation
+      // (freshly-inserted coord wins on createdAt), but the explicit
+      // check defends against any future schema-corruption case the
+      // helper is hardened against.
       if (latestCoordTempId !== null) {
         const validatedSpec = validatedSpecByTempId.get(latestCoordTempId) as { agent: string };
-        this.repo.updateWorkflowCoordinatorAgentTx(tx, workflowId, validatedSpec.agent);
+        const newCoordNodeId = tempIdToNodeId.get(latestCoordTempId) as string;
+        const latestCoordId = this.repo.findLatestCoordIdTx(tx, workflowId);
+        if (latestCoordId === newCoordNodeId) {
+          this.repo.updateWorkflowCoordinatorAgentTx(tx, workflowId, validatedSpec.agent);
+        }
       }
 
       // Phase recompute on every existing not_started to-node that

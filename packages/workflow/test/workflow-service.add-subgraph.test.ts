@@ -391,6 +391,30 @@ describe("WorkflowService.addSubgraph", () => {
     ).rejects.toBeInstanceOf(WorkflowSubgraphNodeRefUnresolvedError);
   });
 
+  it("rejects an unresolved existingParents ref BEFORE calling runner.validate (P15-c Pass A)", async () => {
+    const { workflowId } = await bootstrap(h);
+    // Bootstrap only invokes the coord runner's validate; the worker
+    // runner is untouched. Snapshot the worker spy at 0 so any leak
+    // into Pass B (the per-temp runner.validate loop) is visible.
+    expect(h.workerRunner.validateCalls.length).toBe(0);
+    await expect(
+      h.service.addSubgraph({
+        workflowId,
+        nodes: [
+          {
+            tempId: "t",
+            kind: "worker",
+            spec: { agent: "w", brief: "x" },
+            existingParents: [VALID_UUIDS[15]!],
+          },
+        ],
+        edges: [],
+      }),
+    ).rejects.toBeInstanceOf(WorkflowSubgraphNodeRefUnresolvedError);
+    // Pass A short-circuited before Pass B fired runner.validate.
+    expect(h.workerRunner.validateCalls.length).toBe(0);
+  });
+
   it("REJECTS a cross-workflow existing-ref", async () => {
     const { workflowId } = await bootstrap(h);
     const { workflowId: otherWfId, initialCoordNodeId: otherCoord } =
@@ -449,6 +473,68 @@ describe("WorkflowService.addSubgraph", () => {
         edges: [{ from: { kind: "temp", tempId: "t" }, to: { kind: "existing", id: target } }],
       }),
     ).rejects.toBeInstanceOf(WorkflowNodeNotMutableError);
+  });
+
+  // ─── Happy paths: input normalization (P15-a) ────────────
+
+  it("dedupes duplicate existingParents within a temp (P15-a)", async () => {
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
+    // Caller passes the same parent ref three times. The substrate
+    // must silently collapse to a single edge (matches `addNode`'s
+    // `Array.from(new Set(args.parents))` convention) rather than
+    // surfacing a composite-PK violation as a generic SQLite error.
+    const res = await h.service.addSubgraph({
+      workflowId,
+      nodes: [
+        {
+          tempId: "t",
+          kind: "worker",
+          spec: { agent: "w", brief: "x" },
+          existingParents: [initialCoordNodeId, initialCoordNodeId, initialCoordNodeId],
+        },
+      ],
+      edges: [],
+    });
+    expect(res.insertedNodes.length).toBe(1);
+    const t = res.insertedNodes[0]!;
+    expect(t.phase).toBe(1);
+    // Exactly one edge from coord → t (dedup collapsed the triple).
+    const dag = await h.service.getDag(workflowId);
+    const incoming = dag.edges.filter((e) => e.to === t.nodeId);
+    expect(incoming.length).toBe(1);
+    expect(incoming[0]!.from).toBe(initialCoordNodeId);
+  });
+
+  it("dedupes duplicate edges entries by (from, to) identity (P15-a)", async () => {
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
+    const res = await h.service.addSubgraph({
+      workflowId,
+      nodes: [
+        {
+          tempId: "a",
+          kind: "worker",
+          spec: { agent: "w", brief: "a" },
+          existingParents: [initialCoordNodeId],
+        },
+        {
+          tempId: "b",
+          kind: "worker",
+          spec: { agent: "w", brief: "b" },
+          existingParents: [],
+        },
+      ],
+      // Same (from, to) pair declared twice — collapse to one edge.
+      edges: [
+        { from: { kind: "temp", tempId: "a" }, to: { kind: "temp", tempId: "b" } },
+        { from: { kind: "temp", tempId: "a" }, to: { kind: "temp", tempId: "b" } },
+      ],
+    });
+    expect(res.insertedNodes.length).toBe(2);
+    const aNode = res.insertedNodes.find((n) => n.tempId === "a")!;
+    const bNode = res.insertedNodes.find((n) => n.tempId === "b")!;
+    const dag = await h.service.getDag(workflowId);
+    const aToBs = dag.edges.filter((e) => e.from === aNode.nodeId && e.to === bNode.nodeId);
+    expect(aToBs.length).toBe(1);
   });
 
   // ─── Sad paths: parent-state + D-rules ───────────────────

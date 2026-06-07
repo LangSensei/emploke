@@ -254,11 +254,57 @@ export function validateSubgraphShape(
     }
   }
   for (const n of nodes) {
-    const parentCount = (n.existingParents.length ?? 0) + (intraIncoming.get(n.tempId) ?? 0);
+    const parentCount = n.existingParents.length + (intraIncoming.get(n.tempId) ?? 0);
     if (parentCount === 0) {
       throw new WorkflowSubgraphTempParentlessError(n.tempId);
     }
   }
+}
+
+/**
+ * Shape returned by {@link normalizeSubgraphInput}. Carries the same
+ * `SubgraphTempNodeShape` / `SubgraphEdgeShape` arrays but with
+ * duplicates collapsed:
+ *
+ *   - Each temp's `existingParents` is deduped via `Array.from(new Set(...))`.
+ *   - The `edges[]` array is deduped by the `(from, to)` pair under
+ *     the {@link NodeRef} discriminator (two `existing→existing` edges
+ *     with the same ids collapse; two `temp→temp` edges with the same
+ *     tempIds collapse; mixed `temp→existing` and `existing→temp`
+ *     never collapse with anything since their keys differ).
+ *
+ * The substrate's downstream topology + insert logic always sees the
+ * normalized form so a caller passing a duplicate ref does not trip
+ * the SQLite composite-PK constraint as a generic error. Matches the
+ * sibling pattern in `addNode` (`Array.from(new Set(args.parents))`).
+ */
+export interface NormalizedSubgraphInput {
+  readonly nodes: readonly SubgraphTempNodeShape[];
+  readonly edges: readonly SubgraphEdgeShape[];
+}
+
+function serializeNodeRef(ref: NodeRef): string {
+  return ref.kind === "existing" ? `existing:${ref.id}` : `temp:${ref.tempId}`;
+}
+
+export function normalizeSubgraphInput(input: {
+  readonly nodes: readonly SubgraphTempNodeShape[];
+  readonly edges: readonly SubgraphEdgeShape[];
+}): NormalizedSubgraphInput {
+  const nodes: SubgraphTempNodeShape[] = input.nodes.map((n) => ({
+    tempId: n.tempId,
+    kind: n.kind,
+    existingParents: Array.from(new Set(n.existingParents)),
+  }));
+  const seen = new Set<string>();
+  const edges: SubgraphEdgeShape[] = [];
+  for (const e of input.edges) {
+    const key = `${serializeNodeRef(e.from)}->${serializeNodeRef(e.to)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ from: e.from, to: e.to });
+  }
+  return { nodes, edges };
 }
 
 /**

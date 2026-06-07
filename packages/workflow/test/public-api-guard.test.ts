@@ -300,6 +300,7 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<RemoveEdgeArgs["toNodeId"]>().toBeString();
     expectTypeOf<ReplaceNodeSpecArgs>().toHaveProperty("nodeId");
     expectTypeOf<ReplaceNodeSpecArgs>().toHaveProperty("newSpec");
+    expectTypeOf<ReplaceNodeSpecArgs>().not.toHaveProperty("newKind");
     expectTypeOf<AddSubgraphArgs>().toHaveProperty("nodes");
     expectTypeOf<AddSubgraphArgs>().toHaveProperty("edges");
   });
