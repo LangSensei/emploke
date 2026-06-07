@@ -25,30 +25,33 @@
 
 import { describe, expectTypeOf, it } from "vitest";
 import {
+  type AddEdgeArgs,
+  type AddNodeArgs,
   assertValidWorkflowId,
   assertValidWorkflowNodeId,
   assertValidWorkflowNodeKind,
   assertValidWorkflowNodeStatusEnum,
   assertValidWorkflowStatusEnum,
+  type CancelNodeArgs,
   composeWorkflowModule,
   deriveIterationCount,
+  EmptyParentsError,
+  type FinishWorkflowArgs,
   generateWorkflowId,
   generateWorkflowNodeId,
   hasLiveCoord,
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
   MultipleSuccessorCoordsError,
+  type NodeKind,
   OrphanCoordInsertError,
-  ParentlessTempError,
   ParentStateError,
-  UnknownTempIdError,
   type WORKFLOW_NODES_SUBDIR,
   type WORKFLOW_SUBDIR,
   WorkflowAlreadyTerminalError,
-  WorkflowEdgeAlreadyExistsError,
+  type WorkflowDagSnapshot,
   WorkflowEdgeCycleError,
   type WorkflowEdgeEntity,
-  WorkflowEdgeNotFoundError,
   type WorkflowEntity,
   WorkflowEnumValueError,
   WorkflowError,
@@ -56,18 +59,19 @@ import {
   type WorkflowModuleOptions,
   WorkflowMutationUnauthorizedError,
   type WorkflowNodeEntity,
-  type WorkflowNodeKindHandler,
   WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
+  type WorkflowNodeRunner,
   type WorkflowNodeSpecEnvelope,
   WorkflowNodeSpecError,
   type WorkflowNodeStatus,
   type WorkflowNodeValidateCtx,
   WorkflowNotFoundError,
+  type WorkflowRunners,
+  type WorkflowService,
   type WorkflowStatus,
-  WouldOrphanChildError,
   workflowDir,
   workflowNodeDir,
   workflowRoot,
@@ -80,23 +84,25 @@ describe("@emploke/workflow public API guard", () => {
       new WorkflowError("boom", { cause: new Error("upstream") }),
       new WorkflowNotFoundError("wf-id"),
       new WorkflowNodeNotFoundError("wf-id", "node-id"),
-      new WorkflowEdgeNotFoundError("wf-id", "node-a", "node-b"),
       new InvalidWorkflowIdError("bad"),
       new InvalidWorkflowNodeIdError("bad"),
       new WorkflowAlreadyTerminalError("wf-id"),
       new WorkflowMutationUnauthorizedError("wf-id", "caller-id", "not coord"),
       new WorkflowNodeNotMutableError("wf-id", "node-id", "running", "removeNode"),
       new WorkflowEdgeCycleError("wf-id", "node-a", "node-b"),
-      new WorkflowEdgeAlreadyExistsError("wf-id", "node-a", "node-b"),
-      new WouldOrphanChildError("wf-id", "node-id", "child-id"),
+      // Defensive guard — fires only when a persisted row carries a
+      // kind value outside `NodeKind`, signalling schema corruption
+      // or a row written by an older binary. Unreachable through
+      // typed callers because `runnerFor` accepts `NodeKind`.
       new WorkflowNodeKindUnknownError("evaluator"),
       new WorkflowNodeKindShapeError(""),
-      new WorkflowNodeSpecError("task", "agent missing"),
+      new WorkflowNodeSpecError("worker", "agent missing"),
       new MultipleSuccessorCoordsError("wf-id", "caller-id"),
       new OrphanCoordInsertError("wf-id", "caller-id"),
-      new ParentStateError("wf-id", "task", "parent-id", "failed"),
-      new ParentlessTempError("wf-id", "temp-1"),
-      new UnknownTempIdError("wf-id", "temp-1"),
+      new ParentStateError("wf-id", "worker", "parent-id", "failed"),
+      // Zero-arg now: structural precondition (≥1 parent) is workflow-
+      // and caller-independent, so the error doesn't take an id.
+      new EmptyParentsError(),
       new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
     ];
     expectTypeOf(errs[0]!).toExtend<Error>();
@@ -109,26 +115,47 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowStatus>().toEqualTypeOf<
       "running" | "succeeded" | "failed" | "cancelled"
     >();
-    // Six-value node status; applies to both task-kind and
+    // Six-value node status; applies to both worker-kind and
     // coordinator-kind nodes.
     expectTypeOf<WorkflowNodeStatus>().toEqualTypeOf<
       "not_started" | "ready" | "running" | "succeeded" | "failed" | "cancelled"
     >();
   });
 
-  it("preserves the substrate envelope + handler interface", () => {
+  it("locks the closed NodeKind enum to {'coordinator', 'worker'}", () => {
+    // Closed-enum substrate: adding a new kind requires updating
+    // `NodeKind`, adding a `WorkflowRunners` field, and the exhaustive
+    // `switch (kind)` branches inside the service. This assertion
+    // fails on every kind addition/removal — that's the point.
+    expectTypeOf<NodeKind>().toEqualTypeOf<"coordinator" | "worker">();
+  });
+
+  it("preserves the substrate envelope + runner interface", () => {
+    // The envelope's `kind` is the closed-enum type so any downstream
+    // pattern-match on it is exhaustive.
     expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("kind");
     expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("spec");
 
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("validate");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("dispatch");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("hasInFlightForNode");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("cancel");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("validate");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("dispatch");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("hasInFlightForNode");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("cancel");
 
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowId");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordNodeId");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordSpec");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
+  });
+
+  it("requires a runner per NodeKind via WorkflowRunners", () => {
+    // Both fields non-optional: `composeWorkflowModule({ runners: {
+    // coordinator } })` is a TypeScript compile error, not a runtime
+    // throw. This is the static replacement for the deleted runtime
+    // `service.registerKind(...)` / `service.recover()` registry.
+    expectTypeOf<WorkflowRunners>().toHaveProperty("coordinator");
+    expectTypeOf<WorkflowRunners>().toHaveProperty("worker");
+    expectTypeOf<WorkflowRunners["coordinator"]>().toEqualTypeOf<WorkflowNodeRunner>();
+    expectTypeOf<WorkflowRunners["worker"]>().toEqualTypeOf<WorkflowNodeRunner>();
   });
 
   it("preserves derived-view helpers (hasLiveCoord, deriveIterationCount)", () => {
@@ -174,6 +201,52 @@ describe("@emploke/workflow public API guard", () => {
   it("preserves the composition surface", () => {
     expectTypeOf(composeWorkflowModule).parameters.toEqualTypeOf<[WorkflowModuleOptions]>();
     expectTypeOf(composeWorkflowModule).returns.resolves.toEqualTypeOf<WorkflowModule>();
+    expectTypeOf<WorkflowModule>().toHaveProperty("service");
     expectTypeOf<WorkflowModule>().toHaveProperty("close");
+    // `runners` is part of the composition surface — every caller
+    // must supply both arms of `WorkflowRunners`.
+    expectTypeOf<WorkflowModuleOptions>().toHaveProperty("runners");
+  });
+
+  it("preserves the service class", () => {
+    expectTypeOf<WorkflowService>().toHaveProperty("getWorkflow");
+    expectTypeOf<WorkflowService>().toHaveProperty("getDag");
+    expectTypeOf<WorkflowService>().toHaveProperty("getNode");
+    expectTypeOf<WorkflowService>().toHaveProperty("getNodeDir");
+    expectTypeOf<WorkflowService>().toHaveProperty("createWorkflow");
+    expectTypeOf<WorkflowService>().toHaveProperty("addNode");
+    expectTypeOf<WorkflowService>().toHaveProperty("addEdge");
+    expectTypeOf<WorkflowService>().toHaveProperty("cancelNode");
+    expectTypeOf<WorkflowService>().toHaveProperty("finishWorkflow");
+    expectTypeOf<WorkflowService>().toHaveProperty("cancelWorkflow");
+    expectTypeOf<WorkflowService>().toHaveProperty("dispatchAtomic");
+    expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("workflow");
+    expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("nodes");
+    expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("edges");
+  });
+
+  it("R4: the four mutation Args carry `workflowId` (NOT `callerCoordNodeId`)", () => {
+    // R4 derivation: the substrate determines the calling coord from
+    // `workflowId` (the unique running coord per workflow, invariant
+    // #2). The leaked-id field `callerCoordNodeId` is removed from
+    // these Args; only the structural `workflowId` remains. Adding
+    // it back here is a compile-time error — this guard ensures it
+    // never silently re-appears.
+    expectTypeOf<AddNodeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<AddEdgeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<CancelNodeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<FinishWorkflowArgs>().toHaveProperty("workflowId");
+    expectTypeOf<AddNodeArgs["workflowId"]>().toBeString();
+    expectTypeOf<AddEdgeArgs["workflowId"]>().toBeString();
+    expectTypeOf<CancelNodeArgs["workflowId"]>().toBeString();
+    expectTypeOf<FinishWorkflowArgs["workflowId"]>().toBeString();
+    // Defence-in-depth: `callerCoordNodeId` must NOT be exposed on
+    // any of the four mutation Args. `not.toHaveProperty` is the
+    // type-level assertion that fails if a future refactor leaks
+    // the derived id back into the public surface.
+    expectTypeOf<AddNodeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<AddEdgeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<CancelNodeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<FinishWorkflowArgs>().not.toHaveProperty("callerCoordNodeId");
   });
 });

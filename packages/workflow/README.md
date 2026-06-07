@@ -1,10 +1,10 @@
 # @emploke/workflow
 
-Open substrate for workflow DAGs in emploke. Owns three tables —
+Closed-kind substrate for workflow DAGs in emploke. Owns three tables —
 `workflows` / `workflow_nodes` / `workflow_edges` — plus the entity
 layer that round-trips them, the error catalog, and the
-`WorkflowNodeKindHandler` interface that callers register concrete
-kinds against at compose time.
+`WorkflowNodeRunner` interface that callers implement once per
+`NodeKind` and inject at compose time.
 
 > **Status: rewrite in progress.** This branch is a ground-up rewrite
 > of the v0.6.0 append-only-DAG substrate. The data layer (schema,
@@ -34,9 +34,11 @@ prerogative.
   current coord agent FQN is denormalized into
   `workflows.coordinator_agent` for cheap "who's running this
   workflow" queries.
-- **Kind-agnostic**: the substrate ships zero hard-coded kinds.
-  Each baseline kind (`task`, `coordinator`) is registered at
-  compose time via `workflowService.registerKind(kind, handler)`.
+- **Closed kind enum**: the substrate ships exactly two `NodeKind`
+  values — `'coordinator'` and `'worker'`. Adding a new kind is a
+  substrate change: extend `NodeKind`, add a matching field on
+  `WorkflowRunners`, and the compiler walks every `switch (kind)`
+  branch until each is handled.
 
 ## API surface
 
@@ -59,12 +61,12 @@ src/
   workflow-entity.ts    Row ↔ entity round-trip (header / node / edge)
   workflow-repository.ts Drizzle-backed CRUD (private)
   workflow-service.ts   Mutation primitives + read APIs
-  compose.ts            composeWorkflowModule({ dbFile, ... })
+  compose.ts            composeWorkflowModule({ dbFile, runners, ... })
   testing.ts            openTestWorkflowDb() in-memory test helper
   errors.ts             WorkflowError + concrete subclasses
   validate.ts           Id-grammar + enum-membership guards (pure)
   paths.ts              workflowDir / workflowNodeDir helpers
-  types.ts              FSM enums + handler interface + ctx
+  types.ts              NodeKind + FSM enums + runner interface + ctx
   index.ts              public barrel
 drizzle/                generated SQL migrations (committed)
 README.md               this file
@@ -72,11 +74,20 @@ README.md               this file
 
 ## Wiring
 
+Runners are injected at compose time. Both fields are non-optional,
+so a missing runner is a TypeScript compile error rather than a
+runtime throw:
+
 ```ts
-const workflowModule = await composeWorkflowModule({ dbFile });
-workflowModule.service.registerKind("task",        makeTaskNodeHandler({ ... }));
-workflowModule.service.registerKind("coordinator", makeCoordinatorNodeHandler({ ... }));
+const workflowModule = await composeWorkflowModule({
+  dbFile,
+  workspaceDir,
+  runners: {
+    coordinator: makeCoordinatorNodeRunner({ ... }),
+    worker:      makeWorkerNodeRunner({ ... }),
+  },
+});
 ```
 
-Both handlers live in `packages/api/src/wiring/` because they bridge
+Both runners live in `packages/api/src/wiring/` because they bridge
 `@emploke/workflow`, `@emploke/task`, and `@emploke/catalog`.

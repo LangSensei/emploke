@@ -55,21 +55,21 @@ export const workflows = sqliteTable(
 /**
  * Persisted row for one workflow node.
  *
- * Polymorphic on `kind`. Two kinds ship: `'task'` and `'coordinator'`.
+ * Polymorphic on `kind`. Two kinds ship: `'worker'` and `'coordinator'`.
  * (`'human'` is reserved for a future iteration.) The substrate is
- * kind-agnostic — each row is routed through a registered
- * `WorkflowNodeKindHandler` for kind-specific concerns (spec
+ * kind-agnostic — each row is routed through a compose-time
+ * `WorkflowNodeRunner` for kind-specific concerns (spec
  * validation, dispatch, cancel).
  *
  * `kind` and `spec_json` are stored without a column DEFAULT: every
- * INSERT must spell them out. This keeps the kind-handler
- * registration story honest — there's no implicit "default kind" a
+ * INSERT must spell them out. This keeps the per-kind runner
+ * indirection honest — there's no implicit "default kind" a
  * caller could rely on, and the substrate never invents a spec.
  *
- * `spec_json` is opaque JSON owned by the registered kind handler;
+ * `spec_json` is opaque JSON owned by the per-kind runner;
  * the substrate never introspects it. Cross-kind invariants (e.g.
- * "task's `agent` exists in the catalog") are validated by the
- * handler's `validate(spec, ctx)` at insert time, not by SQL.
+ * "worker's `agent` exists in the catalog") are validated by the
+ * runner's `validate(spec, ctx)` at insert time, not by SQL.
  *
  * `phase` is the node's topological depth = `MAX(parents.phase) + 1`
  * (roots are phase 0). It's recomputed across the `not_started`

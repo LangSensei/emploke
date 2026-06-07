@@ -2,8 +2,8 @@
  * Runtime tests for the pure validators in `src/validate.ts`.
  *
  * Covers the id-grammar contract (UUIDv4 always; legacy `<date>-<8hex>`
- * for workflow ids only, lowercase-only) and the closed-enum / open-
- * kind shape checks. Pure functions, no I/O, no fixtures — same shape
+ * for workflow ids only, lowercase-only) and the closed-enum
+ * shape checks. Pure functions, no I/O, no fixtures — same shape
  * as `schema.test.ts` but at the validator layer.
  */
 
@@ -161,15 +161,23 @@ describe("assertValidWorkflowNodeStatusEnum", () => {
   });
 });
 
-describe("assertValidWorkflowNodeKind (open substrate: any non-empty string)", () => {
-  it("accepts the baseline kinds", () => {
-    expect(() => assertValidWorkflowNodeKind("task")).not.toThrow();
+describe("assertValidWorkflowNodeKind (closed enum: 'coordinator' | 'worker')", () => {
+  it("accepts the two NodeKind values", () => {
+    expect(() => assertValidWorkflowNodeKind("worker")).not.toThrow();
     expect(() => assertValidWorkflowNodeKind("coordinator")).not.toThrow();
   });
 
-  it("accepts an arbitrary non-baseline kind (substrate is kind-agnostic)", () => {
-    expect(() => assertValidWorkflowNodeKind("evaluator")).not.toThrow();
-    expect(() => assertValidWorkflowNodeKind("future-kind-99")).not.toThrow();
+  it("rejects values outside the closed NodeKind enum", () => {
+    // The substrate's `NodeKind` is `'coordinator' | 'worker'`. Any
+    // other persisted value signals schema corruption or a row
+    // written by an older binary; the validator surfaces it as a
+    // shape error so entity round-trips fail loudly at
+    // `fromRow()` rather than smuggling junk into the typed runtime.
+    for (const bad of ["task", "evaluator", "future-kind-99", "Worker", "WORKER", "human"]) {
+      expect(() => assertValidWorkflowNodeKind(bad), `expected reject: ${bad}`).toThrowError(
+        WorkflowNodeKindShapeError,
+      );
+    }
   });
 
   it("rejects the empty string with WorkflowNodeKindShapeError (not WorkflowEnumValueError)", () => {

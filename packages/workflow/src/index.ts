@@ -1,16 +1,17 @@
 /**
  * Public API of `@emploke/workflow`.
  *
- * An open substrate for a workflow DAG with mutation primitives. The
- * pkg owns three tables (`workflows` / `workflow_nodes` /
+ * A closed-kind substrate for a workflow DAG with mutation primitives.
+ * The pkg owns three tables (`workflows` / `workflow_nodes` /
  * `workflow_edges`), the entity layer that round-trips them, the
- * error catalog, and the kind-handler interface that callers register
- * concrete kinds against at compose time.
+ * error catalog, and the `WorkflowNodeRunner` interface that callers
+ * implement once per `NodeKind` and inject at compose time via the
+ * `runners: WorkflowRunners` field on {@link composeWorkflowModule}.
  *
- * Construction goes through `composeWorkflowModule({ dbFile, … })`.
- * Tests use `openTestWorkflowDb()` from `./testing`.
+ * Construction goes through `composeWorkflowModule({ dbFile, …,
+ * runners })`. Tests use `openTestWorkflowDb()` from `./testing`.
  *
- * Per-kind wire DTOs (`WorkflowTaskNodeSpec`,
+ * Per-kind wire DTOs (`WorkflowWorkerNodeSpec`,
  * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`, …) are owned
  * by and imported directly from `@emploke/contracts`; the substrate
  * stays kind-agnostic and takes no workspace dep on the wire pkg.
@@ -24,17 +25,14 @@ export {
 } from "./compose.js";
 // ─── Errors ─────────────────────────────────────────────────────────
 export {
+  EmptyParentsError,
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
   MultipleSuccessorCoordsError,
   OrphanCoordInsertError,
-  ParentlessTempError,
   ParentStateError,
-  UnknownTempIdError,
   WorkflowAlreadyTerminalError,
-  WorkflowEdgeAlreadyExistsError,
   WorkflowEdgeCycleError,
-  WorkflowEdgeNotFoundError,
   WorkflowEnumValueError,
   WorkflowError,
   WorkflowMutationUnauthorizedError,
@@ -44,7 +42,6 @@ export {
   WorkflowNodeNotMutableError,
   WorkflowNodeSpecError,
   WorkflowNotFoundError,
-  WouldOrphanChildError,
 } from "./errors.js";
 // ─── Path helpers ───────────────────────────────────────────────────
 export {
@@ -56,10 +53,12 @@ export {
 } from "./paths.js";
 // ─── Substrate types ────────────────────────────────────────────────
 export type {
-  WorkflowNodeKindHandler,
+  NodeKind,
+  WorkflowNodeRunner,
   WorkflowNodeSpecEnvelope,
   WorkflowNodeStatus,
   WorkflowNodeValidateCtx,
+  WorkflowRunners,
   WorkflowStatus,
 } from "./types.js";
 export { deriveIterationCount, hasLiveCoord } from "./types.js";
@@ -79,3 +78,18 @@ export {
   WorkflowEntity,
   WorkflowNodeEntity,
 } from "./workflow-entity.js";
+// ─── Service ────────────────────────────────────────────────────────
+export {
+  type AddEdgeArgs,
+  type AddEdgeResult,
+  type AddNodeArgs,
+  type AddNodeResult,
+  type CancelNodeArgs,
+  type CancelWorkflowArgs,
+  type CreateWorkflowArgs,
+  type CreateWorkflowResult,
+  type FinishWorkflowArgs,
+  type WorkflowDagSnapshot,
+  WorkflowService,
+  type WorkflowServiceOpts,
+} from "./workflow-service.js";

@@ -38,17 +38,6 @@ export class WorkflowNodeNotFoundError extends WorkflowError {
   }
 }
 
-export class WorkflowEdgeNotFoundError extends WorkflowError {
-  override readonly name = "WorkflowEdgeNotFoundError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly from: string,
-    public readonly to: string,
-  ) {
-    super(`Workflow edge ${from}→${to} not found in workflow "${workflowId}"`);
-  }
-}
-
 // ─── Id-grammar guards (thrown by validate.ts) ──────────────────────
 
 export class InvalidWorkflowIdError extends WorkflowError {
@@ -103,7 +92,7 @@ export class WorkflowMutationUnauthorizedError extends WorkflowError {
  * `removeNode` reject anything not `not_started`; `addEdge` /
  * `removeEdge` reject if the to-node isn't `not_started`;
  * `cancelNode` is the only mutation legal on `running` (and only
- * for task-kind nodes). Maps to 409.
+ * for worker-kind nodes). Maps to 409.
  */
 export class WorkflowNodeNotMutableError extends WorkflowError {
   override readonly name = "WorkflowNodeNotMutableError";
@@ -136,55 +125,34 @@ export class WorkflowEdgeCycleError extends WorkflowError {
   }
 }
 
-export class WorkflowEdgeAlreadyExistsError extends WorkflowError {
-  override readonly name = "WorkflowEdgeAlreadyExistsError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly from: string,
-    public readonly to: string,
-  ) {
-    super(`Edge ${from}→${to} already exists in workflow "${workflowId}"`);
-  }
-}
-
-/**
- * Thrown by `removeNode` / `removeEdge` when the removal would leave
- * a downstream child with zero parents. The coord must remove the
- * child first (cascading bottom-up) OR add a replacement parent edge
- * before removing.
- */
-export class WouldOrphanChildError extends WorkflowError {
-  override readonly name = "WouldOrphanChildError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly nodeId: string,
-    public readonly orphanedChildId: string,
-  ) {
-    super(`Removing ${nodeId} would orphan child "${orphanedChildId}" in workflow "${workflowId}"`);
-  }
-}
-
 // ─── Per-kind insert structural rules ───────────────────────────────
 
 /**
- * Thrown when `addNode(kind, …)` or `addSubgraph` references a
- * `kind` that has no registered handler. Operator-config bug; the
- * server's error-policy table maps to 500.
+ * Defensive runtime guard against schema corruption — thrown when a
+ * persisted `workflow_nodes.kind` value falls outside the substrate's
+ * closed kind enum (`'coordinator' | 'worker'`). Cannot fire from
+ * caller-supplied input: the mutation primitives type `kind` as
+ * `NodeKind`, so TypeScript rejects unknown literals at compile time.
+ *
+ * Real-world trigger paths: a hand-edited DB row, or a row written by
+ * an older binary that supported a kind value since removed from the
+ * enum. Operator/data-corruption class; the server's error-policy
+ * table maps to 500.
  */
 export class WorkflowNodeKindUnknownError extends WorkflowError {
   override readonly name = "WorkflowNodeKindUnknownError";
   constructor(public readonly kind: string) {
     super(
-      `Workflow node kind "${kind}" is not registered. Call workflowService.registerKind("${kind}", handler) at compose time.`,
+      `Workflow node kind "${kind}" is not a known kind (expected one of: "coordinator", "worker"). This indicates schema corruption or a row written by an older binary.`,
     );
   }
 }
 
 /**
- * Generic spec validation error thrown by `WorkflowNodeKindHandler.
+ * Generic spec validation error thrown by `WorkflowNodeRunner.
  * validate` implementations and re-thrown by the substrate's
- * mutation primitives. Per-kind handlers SHOULD throw a subclass
- * (e.g. `WorkflowTaskNodeSpecError`) for finer error mapping; this
+ * mutation primitives. Per-kind runners SHOULD throw a subclass
+ * (e.g. `WorkflowWorkerNodeSpecError`) for finer error mapping; this
  * base class catches the generic case and provides a coherent name
  * for the error-policy table to map to 400.
  */
@@ -244,12 +212,13 @@ export class OrphanCoordInsertError extends WorkflowError {
 }
 
 /**
- * Thrown when a `kind='task'` node insert references a parent in
- * `{failed, cancelled}` — the task would be permanently
- * un-dispatchable because the task-kind dispatch-readiness rule
+ * Thrown when a `kind='worker'` node insert references a parent in
+ * `{failed, cancelled}` — the worker would be permanently
+ * un-dispatchable because the worker-kind dispatch-readiness rule
  * requires every parent to be `succeeded`. Coordinator-kind nodes
  * accept any terminal parent (they're specifically supposed to wake
- * to handle failure), so this error fires only for task-kind inserts.
+ * to handle failure), so this error fires only for worker-kind
+ * inserts.
  */
 export class ParentStateError extends WorkflowError {
   override readonly name = "ParentStateError";
@@ -266,31 +235,17 @@ export class ParentStateError extends WorkflowError {
 }
 
 /**
- * `addSubgraph` rejection: a temp node has no parents (neither
- * `existingParents` entries nor incoming intra-batch edges). Every
- * temp must root somewhere in the existing DAG.
+ * Thrown by `addNode` when `parents.length === 0`. The substrate
+ * mandates `parents.length ≥ 1` on every primitive insert: the
+ * initial coord (created via `createWorkflow`) is the unique
+ * phase-0 entry point, and every subsequent node roots in the
+ * existing DAG. Structural rejection — fires before the auth gate
+ * so the precondition is order-independent of caller state.
  */
-export class ParentlessTempError extends WorkflowError {
-  override readonly name = "ParentlessTempError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly tempId: string,
-  ) {
-    super(`addSubgraph: temp node "${tempId}" has no parents (workflow "${workflowId}")`);
-  }
-}
-
-/**
- * `addSubgraph` rejection: an edge references a `tempId` not
- * declared in `batch.nodes`.
- */
-export class UnknownTempIdError extends WorkflowError {
-  override readonly name = "UnknownTempIdError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly tempId: string,
-  ) {
-    super(`addSubgraph: edge references unknown tempId "${tempId}" (workflow "${workflowId}")`);
+export class EmptyParentsError extends WorkflowError {
+  override readonly name = "EmptyParentsError";
+  constructor() {
+    super("node parents must contain at least one parent node");
   }
 }
 
@@ -316,10 +271,10 @@ export class WorkflowEnumValueError extends WorkflowError {
 /**
  * Thrown by `assertValidWorkflowNodeKind` when the value is not a
  * non-empty string. Distinct from {@link WorkflowEnumValueError}:
- * `kind` membership is open (the substrate accepts any non-empty
- * string and defers "is this kind registered?" to the service-layer
- * handler registry), so the shape guard reports a different failure
- * mode than the closed-enum guard.
+ * the entity-layer kind guard checks shape only (`assertValidXxx`
+ * pattern); membership against the closed `NodeKind` enum is
+ * enforced separately by {@link WorkflowNodeKindUnknownError} when
+ * the substrate routes per-kind logic against a persisted row.
  */
 export class WorkflowNodeKindShapeError extends WorkflowError {
   override readonly name = "WorkflowNodeKindShapeError";

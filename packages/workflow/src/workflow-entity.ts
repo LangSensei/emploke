@@ -34,7 +34,12 @@ import type {
   WorkflowNodeRow,
   WorkflowRow,
 } from "./schema.js";
-import type { WorkflowNodeSpecEnvelope, WorkflowNodeStatus, WorkflowStatus } from "./types.js";
+import type {
+  NodeKind,
+  WorkflowNodeSpecEnvelope,
+  WorkflowNodeStatus,
+  WorkflowStatus,
+} from "./types.js";
 import {
   assertValidWorkflowId,
   assertValidWorkflowNodeId,
@@ -116,8 +121,8 @@ export class WorkflowEntity {
 /**
  * Pure value-object representation of one `workflow_nodes` row.
  *
- * The substrate stores `spec` opaquely (`unknown`). The registered
- * `WorkflowNodeKindHandler` for `this.kind` is the only piece of code
+ * The substrate stores `spec` opaquely (`unknown`). The per-kind
+ * `WorkflowNodeRunner` for `this.kind` is the only piece of code
  * that knows the typed shape; the entity itself never branches on
  * `kind`.
  */
@@ -125,7 +130,7 @@ export class WorkflowNodeEntity {
   private constructor(
     readonly id: string,
     readonly workflowId: string,
-    readonly kind: string,
+    readonly kind: NodeKind,
     readonly spec: unknown,
     readonly phase: number,
     readonly status: WorkflowNodeStatus,
@@ -141,7 +146,9 @@ export class WorkflowNodeEntity {
    *   - `InvalidWorkflowIdError` / `InvalidWorkflowNodeIdError` if
    *     ids fail grammar.
    *   - `WorkflowEnumValueError` if `status` is not in the known
-   *     node-status vocabulary or if `kind` is empty.
+   *     node-status vocabulary.
+   *   - `WorkflowNodeKindShapeError` if `kind` is not a known
+   *     `NodeKind` (defensive guard against schema corruption).
    *   - `WorkflowError` if `spec_json` is not valid JSON.
    */
   static fromRow(row: WorkflowNodeRow): WorkflowNodeEntity {
