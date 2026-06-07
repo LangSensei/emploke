@@ -461,9 +461,6 @@ importers:
 
   packages/workflow:
     dependencies:
-      '@emploke/contracts':
-        specifier: workspace:*
-        version: link:../contracts
       '@emploke/task':
         specifier: workspace:*
         version: link:../task

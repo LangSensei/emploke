@@ -11,25 +11,11 @@
  *
  * Per-kind wire DTOs (`WorkflowTaskNodeSpec`,
  * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`, …) live in
- * `@emploke/contracts/workflows` and are re-exported below so
- * external callers don't need to know which package owns the wire
- * shapes.
+ * `@emploke/contracts`; this file owns only substrate-side types
+ * (`WorkflowStatus`, `WorkflowNodeStatus`, `WorkflowNodeSpecEnvelope`,
+ * `WorkflowNodeValidateCtx`, `WorkflowNodeKindHandler`, and the two
+ * derived-view helpers `hasLiveCoord` / `deriveIterationCount`).
  */
-
-// ─── Re-exports from @emploke/contracts ─────────────────────────────
-//
-// Workflow node spec wire types live in `@emploke/contracts` because
-// they cross the HTTP wire and are consumed by the SPA / CLI. The
-// workflow substrate re-exports them so consumers can `import { ... }
-// from "@emploke/workflow"` without learning that DTOs come from a
-// sibling package.
-export type {
-  WorkflowCoordinatorNodeSpec,
-  WorkflowCoordinatorNodeSpecWire,
-  WorkflowNodeWireSpec,
-  WorkflowTaskNodeSpec,
-  WorkflowTaskNodeSpecWire,
-} from "@emploke/contracts";
 
 // ─── FSM enums ──────────────────────────────────────────────────────
 

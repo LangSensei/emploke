@@ -11,9 +11,9 @@
  * Tests use `openTestWorkflowDb()` from `./testing`.
  *
  * Per-kind wire DTOs (`WorkflowTaskNodeSpec`,
- * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`) are re-
- * exported via `./types.ts` from `@emploke/contracts` so external
- * callers don't need to know which package owns the wire shapes.
+ * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`, …) are owned
+ * by and imported directly from `@emploke/contracts`; the substrate
+ * stays kind-agnostic and takes no workspace dep on the wire pkg.
  */
 
 // ─── Composition ────────────────────────────────────────────────────
@@ -54,18 +54,13 @@ export {
   workflowNodeDir,
   workflowRoot,
 } from "./paths.js";
-// ─── Types & wire re-exports ────────────────────────────────────────
+// ─── Substrate types ────────────────────────────────────────────────
 export type {
-  WorkflowCoordinatorNodeSpec,
-  WorkflowCoordinatorNodeSpecWire,
   WorkflowNodeKindHandler,
   WorkflowNodeSpecEnvelope,
   WorkflowNodeStatus,
   WorkflowNodeValidateCtx,
-  WorkflowNodeWireSpec,
   WorkflowStatus,
-  WorkflowTaskNodeSpec,
-  WorkflowTaskNodeSpecWire,
 } from "./types.js";
 export { deriveIterationCount, hasLiveCoord } from "./types.js";
 // ─── Validators ─────────────────────────────────────────────────────

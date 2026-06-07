@@ -45,8 +45,6 @@ import {
   type WORKFLOW_NODES_SUBDIR,
   type WORKFLOW_SUBDIR,
   WorkflowAlreadyTerminalError,
-  type WorkflowCoordinatorNodeSpec,
-  type WorkflowCoordinatorNodeSpecWire,
   WorkflowEdgeAlreadyExistsError,
   WorkflowEdgeCycleError,
   type WorkflowEdgeEntity,
@@ -67,11 +65,8 @@ import {
   WorkflowNodeSpecError,
   type WorkflowNodeStatus,
   type WorkflowNodeValidateCtx,
-  type WorkflowNodeWireSpec,
   WorkflowNotFoundError,
   type WorkflowStatus,
-  type WorkflowTaskNodeSpec,
-  type WorkflowTaskNodeSpecWire,
   WouldOrphanChildError,
   workflowDir,
   workflowNodeDir,
@@ -136,19 +131,33 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
   });
 
-  it("preserves the wire spec DTOs re-exported from @emploke/contracts", () => {
-    expectTypeOf<WorkflowTaskNodeSpec>().toHaveProperty("agent");
-    expectTypeOf<WorkflowTaskNodeSpec>().toHaveProperty("brief");
-    expectTypeOf<WorkflowCoordinatorNodeSpec>().toHaveProperty("agent");
-
-    // Flat discriminated-union wire projections.
-    expectTypeOf<WorkflowTaskNodeSpecWire>().toExtend<{ readonly kind: "task" }>();
-    expectTypeOf<WorkflowCoordinatorNodeSpecWire>().toExtend<{
-      readonly kind: "coordinator";
-    }>();
-
-    // The catch-all preserves the forward-compat slot.
-    expectTypeOf<WorkflowNodeWireSpec>().toExtend<{ readonly kind: string }>();
+  it("does NOT re-export per-kind wire DTOs (canonical home: @emploke/contracts)", () => {
+    /*
+     * Regression guard for the substrate→wire-pkg back-edge. The
+     * per-kind wire DTOs (`WorkflowTaskNodeSpec`,
+     * `WorkflowTaskNodeSpecWire`, `WorkflowCoordinatorNodeSpec`,
+     * `WorkflowCoordinatorNodeSpecWire`, `WorkflowNodeWireSpec`) live
+     * in `@emploke/contracts/workflows` and MUST NOT be re-exported
+     * from `@emploke/workflow` — re-introducing the re-export would
+     * re-add the workspace dep on `@emploke/contracts` and the
+     * topo-ordering nuisance (see PR #320 round 3).
+     *
+     * Each `@ts-expect-error` below is satisfied iff the named type
+     * is absent from the workflow barrel. If a future change re-adds
+     * any re-export, the directive becomes an "unused @ts-expect-
+     * error" diagnostic and `pnpm -F @emploke/workflow typecheck`
+     * fails.
+     */
+    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
+    expectTypeOf<import("../src/index.js").WorkflowTaskNodeSpec>().toBeAny();
+    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
+    expectTypeOf<import("../src/index.js").WorkflowTaskNodeSpecWire>().toBeAny();
+    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
+    expectTypeOf<import("../src/index.js").WorkflowCoordinatorNodeSpec>().toBeAny();
+    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
+    expectTypeOf<import("../src/index.js").WorkflowCoordinatorNodeSpecWire>().toBeAny();
+    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
+    expectTypeOf<import("../src/index.js").WorkflowNodeWireSpec>().toBeAny();
   });
 
   it("preserves derived-view helpers (hasLiveCoord, deriveIterationCount)", () => {
