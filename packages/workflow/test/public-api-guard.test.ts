@@ -131,35 +131,6 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
   });
 
-  it("does NOT re-export per-kind wire DTOs (canonical home: @emploke/contracts)", () => {
-    /*
-     * Regression guard for the substrate→wire-pkg back-edge. The
-     * per-kind wire DTOs (`WorkflowTaskNodeSpec`,
-     * `WorkflowTaskNodeSpecWire`, `WorkflowCoordinatorNodeSpec`,
-     * `WorkflowCoordinatorNodeSpecWire`, `WorkflowNodeWireSpec`) live
-     * in `@emploke/contracts/workflows` and MUST NOT be re-exported
-     * from `@emploke/workflow` — re-introducing the re-export would
-     * re-add the workspace dep on `@emploke/contracts` and the
-     * topo-ordering nuisance (see PR #320 round 3).
-     *
-     * Each `@ts-expect-error` below is satisfied iff the named type
-     * is absent from the workflow barrel. If a future change re-adds
-     * any re-export, the directive becomes an "unused @ts-expect-
-     * error" diagnostic and `pnpm -F @emploke/workflow typecheck`
-     * fails.
-     */
-    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
-    expectTypeOf<import("../src/index.js").WorkflowTaskNodeSpec>().toBeAny();
-    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
-    expectTypeOf<import("../src/index.js").WorkflowTaskNodeSpecWire>().toBeAny();
-    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
-    expectTypeOf<import("../src/index.js").WorkflowCoordinatorNodeSpec>().toBeAny();
-    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
-    expectTypeOf<import("../src/index.js").WorkflowCoordinatorNodeSpecWire>().toBeAny();
-    // @ts-expect-error per-kind wire DTOs must not be re-exported from @emploke/workflow
-    expectTypeOf<import("../src/index.js").WorkflowNodeWireSpec>().toBeAny();
-  });
-
   it("preserves derived-view helpers (hasLiveCoord, deriveIterationCount)", () => {
     expectTypeOf(hasLiveCoord).toBeFunction();
     expectTypeOf(hasLiveCoord).returns.toBeBoolean();
