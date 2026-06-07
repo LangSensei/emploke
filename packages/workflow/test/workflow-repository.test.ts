@@ -7,7 +7,7 @@ import { WorkflowRepository } from "../src/workflow-repository.js";
 const NOW = "2026-06-07T00:00:00.000Z";
 const WF_ID = "550e8400-e29b-41d4-a716-446655440000";
 const COORD_ID = "550e8400-e29b-41d4-a716-446655440001";
-const TASK_ID = "550e8400-e29b-41d4-a716-446655440002";
+const WORKER_ID = "550e8400-e29b-41d4-a716-446655440002";
 
 function makeWf(over?: Partial<{ status: string; coordinatorAgent: string }>): WorkflowEntity {
   return WorkflowEntity.fromRow({
@@ -80,12 +80,12 @@ describe("WorkflowRepository — CRUD round-trips", () => {
     db.db.transaction((tx) => {
       repo.insertWorkflow(tx, makeWf());
       repo.insertNode(tx, makeNode({ id: COORD_ID, kind: "coordinator" }));
-      repo.insertNode(tx, makeNode({ id: TASK_ID, kind: "task", phase: 1 }));
+      repo.insertNode(tx, makeNode({ id: WORKER_ID, kind: "worker", phase: 1 }));
     });
     const nodes = await repo.listNodesByWorkflow(WF_ID);
     expect(nodes).toHaveLength(2);
     const ids = nodes.map((n) => n.id).sort();
-    expect(ids).toEqual([COORD_ID, TASK_ID].sort());
+    expect(ids).toEqual([COORD_ID, WORKER_ID].sort());
   });
 
   it("CAS-updates workflow status only when the from-status matches", () => {
@@ -137,16 +137,16 @@ describe("WorkflowRepository — CRUD round-trips", () => {
     db.db.transaction((tx) => {
       repo.insertWorkflow(tx, makeWf());
       repo.insertNode(tx, makeNode({ id: COORD_ID, phase: 0 }));
-      repo.insertNode(tx, makeNode({ id: TASK_ID, kind: "task", phase: 1 }));
+      repo.insertNode(tx, makeNode({ id: WORKER_ID, kind: "worker", phase: 1 }));
     });
     db.db.transaction((tx) => {
       const diff = new Map<string, number>();
       diff.set(COORD_ID, 2);
-      diff.set(TASK_ID, 3);
+      diff.set(WORKER_ID, 3);
       repo.updateNodePhases(tx, diff);
     });
     const a = await repo.readNode(COORD_ID);
-    const b = await repo.readNode(TASK_ID);
+    const b = await repo.readNode(WORKER_ID);
     expect(a?.phase).toBe(2);
     expect(b?.phase).toBe(3);
   });
@@ -155,14 +155,14 @@ describe("WorkflowRepository — CRUD round-trips", () => {
     db.db.transaction((tx) => {
       repo.insertWorkflow(tx, makeWf());
       repo.insertNode(tx, makeNode({ id: COORD_ID }));
-      repo.insertNode(tx, makeNode({ id: TASK_ID, kind: "task", phase: 1 }));
-      repo.insertEdge(tx, { workflowId: WF_ID, from: COORD_ID, to: TASK_ID });
+      repo.insertNode(tx, makeNode({ id: WORKER_ID, kind: "worker", phase: 1 }));
+      repo.insertEdge(tx, { workflowId: WF_ID, from: COORD_ID, to: WORKER_ID });
     });
     const edges = await repo.listEdgesByWorkflow(WF_ID);
     expect(edges).toHaveLength(1);
     expect(edges[0]).toBeInstanceOf(WorkflowEdgeEntity);
     expect(edges[0]?.from).toBe(COORD_ID);
-    expect(edges[0]?.to).toBe(TASK_ID);
+    expect(edges[0]?.to).toBe(WORKER_ID);
   });
 
   it("readCallerCoordContext returns the JOIN row when both sides exist", () => {
@@ -184,29 +184,19 @@ describe("WorkflowRepository — CRUD round-trips", () => {
     expect(ctx).toBeNull();
   });
 
-  it("allRowsForPreflight projects only id + kind across all nodes", async () => {
-    db.db.transaction((tx) => {
-      repo.insertWorkflow(tx, makeWf());
-      repo.insertNode(tx, makeNode({ id: COORD_ID }));
-      repo.insertNode(tx, makeNode({ id: TASK_ID, kind: "task", phase: 1 }));
-    });
-    const rows = await repo.allRowsForPreflight();
-    expect(rows).toHaveLength(2);
-    const byId = new Map(rows.map((r) => [r.id, r.kind]));
-    expect(byId.get(COORD_ID)).toBe("coordinator");
-    expect(byId.get(TASK_ID)).toBe("task");
-  });
-
   it("listNonTerminalNodes filters to {not_started, ready, running}", () => {
     db.db.transaction((tx) => {
       repo.insertWorkflow(tx, makeWf());
       repo.insertNode(tx, makeNode({ id: COORD_ID, status: "running" }));
-      repo.insertNode(tx, makeNode({ id: TASK_ID, kind: "task", phase: 1, status: "succeeded" }));
+      repo.insertNode(
+        tx,
+        makeNode({ id: WORKER_ID, kind: "worker", phase: 1, status: "succeeded" }),
+      );
       repo.insertNode(
         tx,
         makeNode({
           id: "550e8400-e29b-41d4-a716-446655440003",
-          kind: "task",
+          kind: "worker",
           phase: 1,
           status: "not_started",
         }),

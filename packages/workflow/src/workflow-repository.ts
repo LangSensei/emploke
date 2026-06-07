@@ -151,17 +151,6 @@ export class WorkflowRepository {
     }
   }
 
-  /**
-   * Project just the columns needed by registry preflight so the
-   * preflight scan doesn't pull every `spec_json` blob into memory.
-   */
-  async allRowsForPreflight(): Promise<readonly { readonly id: string; readonly kind: string }[]> {
-    return this.db
-      .select({ id: workflowNodes.id, kind: workflowNodes.kind })
-      .from(workflowNodes)
-      .all();
-  }
-
   // ─── Edge row ────────────────────────────────────────────
 
   async listEdgesByWorkflow(workflowId: string): Promise<readonly WorkflowEdgeEntity[]> {

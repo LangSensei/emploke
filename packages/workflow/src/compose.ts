@@ -1,17 +1,19 @@
 /**
  * `composeWorkflowModule` is the production composition entrypoint
  * for `@emploke/workflow`: open the DB, run migrations, wire the
- * repository + service + kind-handler registry hooks.
+ * repository + service with the caller-supplied per-kind runners.
  *
  * Production callers pass `dbFile` (the pkg opens its own
  * better-sqlite3 connection in WAL mode and runs pending migrations);
  * tests pass an existing `db` from `openTestWorkflowDb()`.
  *
- * Callers register every node kind they need via
- * {@link WorkflowService.registerKind} BEFORE calling
- * {@link WorkflowService.recover}. `recover()` freezes the registry
- * and preflights every persisted row's `kind` against it, throwing
- * if any are unregistered.
+ * Runners are injected at compose time via the `runners` field. The
+ * `WorkflowRunners` type is `{ coordinator, worker }`; both fields
+ * are non-optional so a missing runner is a TypeScript compile error
+ * rather than a runtime throw. To add a new kind, extend
+ * `NodeKind` and add a matching field on `WorkflowRunners` — the
+ * substrate's exhaustive `switch (kind)` branches will fail to
+ * compile until every new kind has a runner.
  */
 
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
@@ -19,6 +21,7 @@ import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3"
 import type { Logger } from "pino";
 import { applyWorkflowMigrations } from "./migrations.js";
 import * as schema from "./schema.js";
+import type { WorkflowRunners } from "./types.js";
 import { WorkflowRepository } from "./workflow-repository.js";
 import { WorkflowService } from "./workflow-service.js";
 
@@ -29,6 +32,7 @@ export type WorkflowModuleOptions = (
   | { readonly dbFile: string; readonly db?: never }
 ) & {
   readonly workspaceDir: string;
+  readonly runners: WorkflowRunners;
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
@@ -62,6 +66,7 @@ export async function composeWorkflowModule(opts: WorkflowModuleOptions): Promis
     repo,
     db,
     workspaceDir: opts.workspaceDir,
+    runners: opts.runners,
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
     ...(opts.randomUUID !== undefined ? { randomUUID: opts.randomUUID } : {}),

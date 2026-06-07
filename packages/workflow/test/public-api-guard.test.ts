@@ -39,6 +39,7 @@ import {
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
   MultipleSuccessorCoordsError,
+  type NodeKind,
   OrphanCoordInsertError,
   ParentStateError,
   type WORKFLOW_NODES_SUBDIR,
@@ -50,23 +51,21 @@ import {
   type WorkflowEntity,
   WorkflowEnumValueError,
   WorkflowError,
-  WorkflowKindRegistryFrozenError,
   type WorkflowModule,
   type WorkflowModuleOptions,
   WorkflowMutationUnauthorizedError,
   type WorkflowNodeEntity,
-  WorkflowNodeKindAlreadyRegisteredError,
-  type WorkflowNodeKindHandler,
-  WorkflowNodeKindNotRegisteredError,
   WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
+  type WorkflowNodeRunner,
   type WorkflowNodeSpecEnvelope,
   WorkflowNodeSpecError,
   type WorkflowNodeStatus,
   type WorkflowNodeValidateCtx,
   WorkflowNotFoundError,
+  type WorkflowRunners,
   type WorkflowService,
   type WorkflowStatus,
   workflowDir,
@@ -87,17 +86,20 @@ describe("@emploke/workflow public API guard", () => {
       new WorkflowMutationUnauthorizedError("wf-id", "caller-id", "not coord"),
       new WorkflowNodeNotMutableError("wf-id", "node-id", "running", "removeNode"),
       new WorkflowEdgeCycleError("wf-id", "node-a", "node-b"),
+      // Defensive guard — fires only when a persisted row carries a
+      // kind value outside `NodeKind`, signalling schema corruption
+      // or a row written by an older binary. Unreachable through
+      // typed callers because `runnerFor` accepts `NodeKind`.
       new WorkflowNodeKindUnknownError("evaluator"),
       new WorkflowNodeKindShapeError(""),
-      new WorkflowNodeSpecError("task", "agent missing"),
+      new WorkflowNodeSpecError("worker", "agent missing"),
       new MultipleSuccessorCoordsError("wf-id", "caller-id"),
       new OrphanCoordInsertError("wf-id", "caller-id"),
-      new ParentStateError("wf-id", "task", "parent-id", "failed"),
-      new EmptyParentsError("wf-id"),
+      new ParentStateError("wf-id", "worker", "parent-id", "failed"),
+      // Zero-arg now: structural precondition (≥1 parent) is workflow-
+      // and caller-independent, so the error doesn't take an id.
+      new EmptyParentsError(),
       new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
-      new WorkflowKindRegistryFrozenError("task"),
-      new WorkflowNodeKindAlreadyRegisteredError("task"),
-      new WorkflowNodeKindNotRegisteredError("task", "no handler at compose time"),
     ];
     expectTypeOf(errs[0]!).toExtend<Error>();
   });
@@ -109,26 +111,47 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowStatus>().toEqualTypeOf<
       "running" | "succeeded" | "failed" | "cancelled"
     >();
-    // Six-value node status; applies to both task-kind and
+    // Six-value node status; applies to both worker-kind and
     // coordinator-kind nodes.
     expectTypeOf<WorkflowNodeStatus>().toEqualTypeOf<
       "not_started" | "ready" | "running" | "succeeded" | "failed" | "cancelled"
     >();
   });
 
-  it("preserves the substrate envelope + handler interface", () => {
+  it("locks the closed NodeKind enum to {'coordinator', 'worker'}", () => {
+    // Closed-enum substrate: adding a new kind requires updating
+    // `NodeKind`, adding a `WorkflowRunners` field, and the exhaustive
+    // `switch (kind)` branches inside the service. This assertion
+    // fails on every kind addition/removal — that's the point.
+    expectTypeOf<NodeKind>().toEqualTypeOf<"coordinator" | "worker">();
+  });
+
+  it("preserves the substrate envelope + runner interface", () => {
+    // The envelope's `kind` is the closed-enum type so any downstream
+    // pattern-match on it is exhaustive.
     expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("kind");
     expectTypeOf<WorkflowNodeSpecEnvelope>().toHaveProperty("spec");
 
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("validate");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("dispatch");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("hasInFlightForNode");
-    expectTypeOf<WorkflowNodeKindHandler>().toHaveProperty("cancel");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("validate");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("dispatch");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("hasInFlightForNode");
+    expectTypeOf<WorkflowNodeRunner>().toHaveProperty("cancel");
 
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowId");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordNodeId");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordSpec");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
+  });
+
+  it("requires a runner per NodeKind via WorkflowRunners", () => {
+    // Both fields non-optional: `composeWorkflowModule({ runners: {
+    // coordinator } })` is a TypeScript compile error, not a runtime
+    // throw. This is the static replacement for the deleted runtime
+    // `service.registerKind(...)` / `service.recover()` registry.
+    expectTypeOf<WorkflowRunners>().toHaveProperty("coordinator");
+    expectTypeOf<WorkflowRunners>().toHaveProperty("worker");
+    expectTypeOf<WorkflowRunners["coordinator"]>().toEqualTypeOf<WorkflowNodeRunner>();
+    expectTypeOf<WorkflowRunners["worker"]>().toEqualTypeOf<WorkflowNodeRunner>();
   });
 
   it("preserves derived-view helpers (hasLiveCoord, deriveIterationCount)", () => {
@@ -176,11 +199,12 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf(composeWorkflowModule).returns.resolves.toEqualTypeOf<WorkflowModule>();
     expectTypeOf<WorkflowModule>().toHaveProperty("service");
     expectTypeOf<WorkflowModule>().toHaveProperty("close");
+    // `runners` is part of the composition surface — every caller
+    // must supply both arms of `WorkflowRunners`.
+    expectTypeOf<WorkflowModuleOptions>().toHaveProperty("runners");
   });
 
   it("preserves the service class", () => {
-    expectTypeOf<WorkflowService>().toHaveProperty("registerKind");
-    expectTypeOf<WorkflowService>().toHaveProperty("recover");
     expectTypeOf<WorkflowService>().toHaveProperty("getWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("getDag");
     expectTypeOf<WorkflowService>().toHaveProperty("getNode");

@@ -54,7 +54,7 @@ describe("WorkflowService — read APIs", () => {
     // node kinds and one edge.
     const { nodeId: taskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -78,7 +78,7 @@ describe("WorkflowService — read APIs", () => {
     // parent (the coord is `running`).
     const { nodeId: taskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });

@@ -3,15 +3,17 @@ import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import {
+  COORDINATOR_KIND,
   computePhaseFromParents,
   nodeEntityFor,
   parentsOf,
   parentsReadyForKind,
   parseSpecJson,
+  WORKER_KIND,
   workflowEntityFor,
   wouldCreateCycle,
 } from "./_dag.js";
-import { assertCoordinatorSpecAgent, assertValidKindName } from "./_helpers.js";
+import { assertCoordinatorSpecAgent } from "./_helpers.js";
 import {
   EmptyParentsError,
   MultipleSuccessorCoordsError,
@@ -20,10 +22,7 @@ import {
   WorkflowAlreadyTerminalError,
   WorkflowEdgeCycleError,
   WorkflowError,
-  WorkflowKindRegistryFrozenError,
   WorkflowMutationUnauthorizedError,
-  WorkflowNodeKindAlreadyRegisteredError,
-  WorkflowNodeKindNotRegisteredError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
@@ -33,9 +32,11 @@ import { workflowNodeDir } from "./paths.js";
 import type * as schema from "./schema.js";
 import { workflows } from "./schema.js";
 import type {
-  WorkflowNodeKindHandler,
+  NodeKind,
+  WorkflowNodeRunner,
   WorkflowNodeStatus,
   WorkflowNodeValidateCtx,
+  WorkflowRunners,
 } from "./types.js";
 import { generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
 import type { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
@@ -43,15 +44,13 @@ import type { WorkflowRepository } from "./workflow-repository.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
-const COORDINATOR_KIND = "coordinator";
-const TASK_KIND = "task";
-
 const silentLogger: Logger = pino({ level: "silent" });
 
 export interface WorkflowServiceOpts {
   readonly repo: WorkflowRepository;
   readonly db: Db;
   readonly workspaceDir: string;
+  readonly runners: WorkflowRunners;
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
@@ -70,7 +69,7 @@ export interface CreateWorkflowResult {
 
 export interface AddNodeArgs {
   readonly callerCoordNodeId: string;
-  readonly kind: string;
+  readonly kind: NodeKind;
   readonly spec: unknown;
   readonly parents: ReadonlyArray<string>;
 }
@@ -115,26 +114,35 @@ export interface WorkflowDagSnapshot {
  *
  *   - reads + writes against `workflows` / `workflow_nodes` /
  *     `workflow_edges`
- *   - an OPEN registry of per-kind handlers
+ *   - the per-kind runner dispatch indirection (runners injected at
+ *     compose time, looked up via a closed `switch (kind)`)
  *   - the cross-cut auth gate: every mutation primitive except
  *     `cancelWorkflow` re-checks atomically that the caller is a
  *     running coordinator-kind node in a running workflow
  *   - the `dispatchAtomic` primitive that flips a node from
- *     `not_started|ready` → `running` and invokes the registered
- *     handler's `dispatch` outside the DB tx
+ *     `not_started|ready` → `running` and invokes the per-kind
+ *     runner's `dispatch` outside the DB tx
  *
- * ## Open registry (matches `@emploke/schedule`)
+ * ## Compose-time wiring
+ *
+ * Runners are supplied through {@link composeWorkflowModule}, one per
+ * value of `NodeKind`:
  *
  * ```ts
- * const wf = await composeWorkflowModule({ dbFile, workspaceDir });
- * wf.service.registerKind("task", makeTaskKindHandler({ tasks }));
- * wf.service.registerKind("coordinator", makeCoordinatorKindHandler({ sessions }));
- * await wf.service.recover();   // freezes registry; MUST come AFTER all registerKind
+ * const wf = await composeWorkflowModule({
+ *   dbFile,
+ *   workspaceDir,
+ *   runners: {
+ *     coordinator: makeCoordinatorRunner({ sessions }),
+ *     worker:      makeWorkerRunner({ tasks }),
+ *   },
+ * });
  * ```
  *
- * `recover()` freezes the registry on first call and preflights
- * every persisted node row's `kind` against the registry; any
- * unregistered kind throws {@link WorkflowNodeKindNotRegisteredError}.
+ * Adding a new kind is a substrate change: extend `NodeKind` and add
+ * the matching `WorkflowRunners` field. TypeScript's exhaustiveness
+ * catches any unhandled case at compile time, so a forgotten runner
+ * cannot ship.
  *
  * ## Auth gate
  *
@@ -161,67 +169,34 @@ export class WorkflowService {
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomUUID: () => string;
-  private readonly handlers = new Map<string, WorkflowNodeKindHandler>();
-  private registryFrozen = false;
+  private readonly runners: WorkflowRunners;
 
   constructor(opts: WorkflowServiceOpts) {
     this.repo = opts.repo;
     this.db = opts.db;
     this.workspaceDir = opts.workspaceDir;
+    this.runners = opts.runners;
     this.logger = opts.logger ?? silentLogger;
     this.now = opts.now ?? (() => new Date());
     this.randomUUID = opts.randomUUID ?? (() => nodeRandomUUID());
   }
 
-  // ─── Registry ─────────────────────────────────────────────
-
   /**
-   * Register a per-kind handler. Throws if:
-   *   - `kind` is not a non-empty `^[a-z][a-z0-9_-]*$` string
-   *   - the registry was already frozen by a prior `recover()`
-   *   - the same `kind` was already registered on this service
-   *
-   * MUST be called BEFORE `recover()`.
+   * Resolve the runner for a `NodeKind`. Caller-supplied `kind`
+   * values are TypeScript-checked against the closed enum, so the
+   * `default` branch only fires for persisted-row corruption (an
+   * older binary's removed kind value, a hand-edited DB row); it
+   * throws {@link WorkflowNodeKindUnknownError} for diagnosis.
    */
-  registerKind(kind: string, handler: WorkflowNodeKindHandler): void {
-    assertValidKindName(kind);
-    if (this.registryFrozen) throw new WorkflowKindRegistryFrozenError(kind);
-    if (this.handlers.has(kind)) throw new WorkflowNodeKindAlreadyRegisteredError(kind);
-    this.handlers.set(kind, handler);
-  }
-
-  /**
-   * Boot-time recovery. Freezes the registry on first call and
-   * preflights every persisted node row's `kind` against the
-   * registry. Any kind with no registered handler throws
-   * {@link WorkflowNodeKindNotRegisteredError} naming the kind +
-   * the register-before-recover requirement.
-   *
-   * Subsequent calls after the first return immediately (no double
-   * preflight, no re-freeze).
-   *
-   * **On preflight failure, the registry remains frozen.** The only
-   * correct recovery path is to dispose this service via
-   * `composeWorkflowModule().close()` and rebuild.
-   */
-  async recover(): Promise<void> {
-    if (this.registryFrozen) return;
-    this.registryFrozen = true;
-    const preflightRows = await this.repo.allRowsForPreflight();
-    for (const row of preflightRows) {
-      if (!this.handlers.has(row.kind)) {
-        throw new WorkflowNodeKindNotRegisteredError(
-          row.kind,
-          `Workflow node row "${row.id}" has kind="${row.kind}" but no handler is registered. Call service.registerKind("${row.kind}", handler) at compose time before service.recover().`,
-        );
-      }
+  private runnerFor(kind: string): WorkflowNodeRunner {
+    switch (kind) {
+      case COORDINATOR_KIND:
+        return this.runners.coordinator;
+      case WORKER_KIND:
+        return this.runners.worker;
+      default:
+        throw new WorkflowNodeKindUnknownError(kind);
     }
-  }
-
-  private handlerFor(kind: string): WorkflowNodeKindHandler {
-    const h = this.handlers.get(kind);
-    if (h === undefined) throw new WorkflowNodeKindUnknownError(kind);
-    return h;
   }
 
   // ─── Reads ────────────────────────────────────────────────
@@ -256,7 +231,7 @@ export class WorkflowService {
    * the directory is materialized at dispatch time, so callers (UI,
    * audit) would otherwise observe a path that doesn't exist on disk.
    * A vanishingly short window inside `dispatchAtomic` — after the
-   * status has flipped to `running` but before `handler.dispatch`
+   * status has flipped to `running` but before `runner.dispatch`
    * actually creates the directory — may return the path before the
    * directory exists; callers must tolerate that.
    *
@@ -277,12 +252,12 @@ export class WorkflowService {
    * Create a new workflow with its initial coordinator node attached.
    * The workflow row + the initial coord node row + the
    * `coordinator_agent` denorm are all inserted in one transaction;
-   * the dispatch reaction fires AFTER the tx commits so the handler
+   * the dispatch reaction fires AFTER the tx commits so the runner
    * never runs while a write lock is held.
    *
    * `coordinatorAgent` shape is validated as a non-empty string
    * (cross-package catalog validation is wired by the compose-layer
-   * coordinator handler; the substrate stays shape-only here).
+   * coordinator runner; the substrate stays shape-only here).
    */
   async createWorkflow(args: CreateWorkflowArgs): Promise<CreateWorkflowResult> {
     if (typeof args.brief !== "string" || args.brief.trim().length === 0) {
@@ -292,7 +267,7 @@ export class WorkflowService {
       throw new WorkflowError("createWorkflow: coordinatorAgent must be a non-empty string");
     }
 
-    const handler = this.handlerFor(COORDINATOR_KIND);
+    const runner = this.runnerFor(COORDINATOR_KIND);
     const workflowId = generateWorkflowId(this.randomUUID);
     const initialCoordNodeId = generateWorkflowNodeId(this.randomUUID);
     const nowIso = this.now().toISOString();
@@ -308,7 +283,7 @@ export class WorkflowService {
       callerCoordSpec: coordSpec,
       workflowStatus: "running",
     };
-    const validatedSpec = await handler.validate(coordSpec, validateCtx);
+    const validatedSpec = await runner.validate(coordSpec, validateCtx);
     assertCoordinatorSpecAgent(validatedSpec);
 
     this.db.transaction((tx) => {
@@ -336,19 +311,16 @@ export class WorkflowService {
   // ─── addNode ─────────────────────────────────────────────
 
   async addNode(args: AddNodeArgs): Promise<AddNodeResult> {
-    if (typeof args.kind !== "string" || args.kind.length === 0) {
-      throw new WorkflowError("addNode: kind must be a non-empty string");
-    }
     // Structural precondition: every primitive insert must root in
     // the existing DAG. The initial coord (created via
     // `createWorkflow`) is the unique phase-0 entry point; every
     // subsequent node MUST list ≥1 parent. Fires BEFORE the auth
     // gate so the rejection is order-independent of caller state.
     if (args.parents.length === 0) {
-      throw new EmptyParentsError("<unknown>");
+      throw new EmptyParentsError();
     }
 
-    const handler = this.handlerFor(args.kind);
+    const runner = this.runnerFor(args.kind);
     const nodeId = generateWorkflowNodeId(this.randomUUID);
     const nowIso = this.now().toISOString();
 
@@ -359,7 +331,7 @@ export class WorkflowService {
     let workflowId: string;
 
     // Phase A: a tx-less read just to construct the validate ctx so
-    // handler.validate (which may do async catalog lookups) runs
+    // runner.validate (which may do async catalog lookups) runs
     // outside the write tx.
     {
       const ctx = this.db.transaction((tx) =>
@@ -374,11 +346,11 @@ export class WorkflowService {
       workflowId = ctx.workflowId;
     }
 
-    const validatedSpec = await handler.validate(args.spec, validateCtx);
+    const validatedSpec = await runner.validate(args.spec, validateCtx);
 
     // For coord-kind, the substrate needs `spec.agent` to maintain
     // `workflows.coordinator_agent`. Surface a clear error if the
-    // handler returned a shape without it (mirrors invariant that
+    // runner returned a shape without it (mirrors invariant that
     // every coord spec carries an agent FQN).
     if (args.kind === COORDINATOR_KIND) {
       assertCoordinatorSpecAgent(validatedSpec);
@@ -411,7 +383,7 @@ export class WorkflowService {
       }
 
       // Kind-aware parent-state restriction.
-      if (args.kind === TASK_KIND) {
+      if (args.kind === WORKER_KIND) {
         for (const p of parentEntities) {
           if (p.status === "failed" || p.status === "cancelled") {
             throw new ParentStateError(workflowId, args.kind, p.id, p.status);
@@ -514,10 +486,10 @@ export class WorkflowService {
         throw new WorkflowNodeNotMutableError(workflowId, args.toNodeId, toNode.status, "addEdge");
       }
 
-      // Kind-aware from-state by the to-node's kind. Task-kind
+      // Kind-aware from-state by the to-node's kind. Worker-kind
       // dispatch needs every parent succeeded; coordinator-kind
       // dispatch accepts any terminal parent (wakes on failure).
-      if (toNode.kind === TASK_KIND) {
+      if (toNode.kind === WORKER_KIND) {
         if (fromNode.status === "failed" || fromNode.status === "cancelled") {
           throw new ParentStateError(workflowId, toNode.kind, fromNode.id, fromNode.status);
         }
@@ -585,11 +557,11 @@ export class WorkflowService {
   // ─── cancelNode ──────────────────────────────────────────
 
   /**
-   * Cancel a task-kind node. Coord-kind cancellation is deferred —
+   * Cancel a worker-kind node. Coord-kind cancellation is deferred —
    * cancel the workflow instead via `cancelWorkflow`.
    *
    * Allowed source statuses: `not_started`, `ready`, `running`. When
-   * the node was running, `handler.cancel(nodeId)` is invoked AFTER
+   * the node was running, `runner.cancel(nodeId)` is invoked AFTER
    * the tx commits (best-effort; the unit-of-work may still complete
    * after the cancel returns and its result is discarded).
    */
@@ -607,7 +579,7 @@ export class WorkflowService {
           `target node "${args.nodeId}" is in a different workflow`,
         );
       }
-      if (node.kind !== TASK_KIND) {
+      if (node.kind !== WORKER_KIND) {
         throw new WorkflowNodeNotMutableError(
           ctx.workflowId,
           args.nodeId,
@@ -635,13 +607,13 @@ export class WorkflowService {
     });
 
     if (wasRunning) {
-      const handler = this.handlerFor(nodeKind);
+      const runner = this.runnerFor(nodeKind);
       try {
-        await handler.cancel(args.nodeId);
+        await runner.cancel(args.nodeId);
       } catch (err) {
         this.logger.warn(
           { nodeId: args.nodeId, err },
-          "cancelNode: handler.cancel failed (substrate state remains cancelled)",
+          "cancelNode: runner.cancel failed (substrate state remains cancelled)",
         );
       }
     }
@@ -656,7 +628,7 @@ export class WorkflowService {
    *
    * Post-tx reconciliation: every non-terminal node in the workflow
    * EXCEPT the calling coord itself is cancelled via
-   * `handler.cancel(node.id)` followed by `status='cancelled'`. The
+   * `runner.cancel(node.id)` followed by `status='cancelled'`. The
    * caller is excluded so the substrate never cancels the task
    * currently inside `finishWorkflow`; the caller continues to its
    * natural exit and the eventual coord-termination handler (future
@@ -728,7 +700,7 @@ export class WorkflowService {
 
   /**
    * Substrate primitive: flip a node from `not_started|ready` →
-   * `running` and invoke its registered handler's `dispatch` AFTER
+   * `running` and invoke its per-kind runner's `dispatch` AFTER
    * the tx commits. On dispatch throw, a separate tx writes
    * `status='failed'`.
    *
@@ -743,13 +715,13 @@ export class WorkflowService {
    * silently — the substrate's invariant is "calling dispatchAtomic
    * is always safe; it does nothing when the node is not eligible".
    *
-   * The handler invocation is OUTSIDE the tx because holding a
+   * The runner invocation is OUTSIDE the tx because holding a
    * write lock across an async network call would serialize the
    * entire workflow engine on a slow dispatch.
    */
   async dispatchAtomic(nodeId: string): Promise<void> {
     let dispatchPayload: {
-      readonly handler: WorkflowNodeKindHandler;
+      readonly runner: WorkflowNodeRunner;
       readonly workflowId: string;
       readonly nodeId: string;
       readonly spec: unknown;
@@ -763,7 +735,7 @@ export class WorkflowService {
       const wf = this.repo.readWorkflowTx(tx, node.workflowId);
       if (wf === null || wf.status !== "running") return;
 
-      const handler = this.handlerFor(node.kind);
+      const runner = this.runnerFor(node.kind);
 
       // Per-kind parent readiness re-check inside the tx.
       const allEdges = this.repo.listEdgesByWorkflowTx(tx, node.workflowId);
@@ -780,7 +752,7 @@ export class WorkflowService {
       });
 
       dispatchPayload = {
-        handler,
+        runner,
         workflowId: node.workflowId,
         nodeId,
         spec: node.spec,
@@ -790,14 +762,14 @@ export class WorkflowService {
 
     if (dispatchPayload === null) return;
     const payload = dispatchPayload as {
-      readonly handler: WorkflowNodeKindHandler;
+      readonly runner: WorkflowNodeRunner;
       readonly workflowId: string;
       readonly nodeId: string;
       readonly spec: unknown;
       readonly nodeDir: string;
     };
     try {
-      await payload.handler.dispatch({
+      await payload.runner.dispatch({
         workflowId: payload.workflowId,
         nodeId: payload.nodeId,
         spec: payload.spec,
@@ -806,7 +778,7 @@ export class WorkflowService {
     } catch (err) {
       this.logger.warn(
         { nodeId, err },
-        "dispatchAtomic: handler.dispatch threw; marking node failed",
+        "dispatchAtomic: runner.dispatch threw; marking node failed",
       );
       const failedAtIso = this.now().toISOString();
       try {
@@ -835,7 +807,7 @@ export class WorkflowService {
    *
    * Returns the workflow id and the caller's coord spec for callers
    * that need them (e.g. `addNode` threads the spec into the
-   * handler's validate context). Throws
+   * runner's validate context). Throws
    * {@link WorkflowMutationUnauthorizedError} on any failure.
    *
    * `expectedWorkflowId` is checked when present so a caller passing
@@ -1017,7 +989,7 @@ export class WorkflowService {
   /**
    * Shared cancel-reconciliation path used by `finishWorkflow` and
    * `cancelWorkflow`. Loads the live non-terminal node set OUTSIDE
-   * a write tx, calls `handler.cancel` for each, then writes
+   * a write tx, calls `runner.cancel` for each, then writes
    * `status='cancelled'` in a per-node tx.
    *
    * `excludeNodeId` excludes the calling coord in the `finishWorkflow`
@@ -1036,13 +1008,13 @@ export class WorkflowService {
     );
     for (const node of targets) {
       if (node.status === "running") {
-        const handler = this.handlerFor(node.kind);
+        const runner = this.runnerFor(node.kind);
         try {
-          await handler.cancel(node.id);
+          await runner.cancel(node.id);
         } catch (err) {
           this.logger.warn(
             { nodeId: node.id, err },
-            "reconcile: handler.cancel failed (substrate marks cancelled regardless)",
+            "reconcile: runner.cancel failed (substrate marks cancelled regardless)",
           );
         }
       }

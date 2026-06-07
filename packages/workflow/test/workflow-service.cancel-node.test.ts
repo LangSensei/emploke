@@ -27,7 +27,7 @@ describe("WorkflowService.cancelNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -38,7 +38,7 @@ describe("WorkflowService.cancelNode", () => {
     expect(n.endedAt).toBeDefined();
     // No handler.cancel call for a not_started node — there's no
     // in-flight unit to abort.
-    expect(h.taskHandler.cancelCalls).toEqual([]);
+    expect(h.workerRunner.cancelCalls).toEqual([]);
   });
 
   it("cancels a task-kind node in `running` and routes through handler.cancel post-commit", async () => {
@@ -47,7 +47,7 @@ describe("WorkflowService.cancelNode", () => {
     // task lands in `running` via eager dispatch on insert.
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -60,7 +60,7 @@ describe("WorkflowService.cancelNode", () => {
     });
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [parentTaskId],
     });
@@ -68,7 +68,7 @@ describe("WorkflowService.cancelNode", () => {
     await h.service.cancelNode({ callerCoordNodeId: initialCoordNodeId, nodeId });
     const n = await h.service.getNode(nodeId);
     expect(n.status).toBe("cancelled");
-    expect(h.taskHandler.cancelCalls).toEqual([nodeId]);
+    expect(h.workerRunner.cancelCalls).toEqual([nodeId]);
   });
 
   it("REJECTS coordinator-kind nodes (task-kind only)", async () => {
@@ -89,7 +89,7 @@ describe("WorkflowService.cancelNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -109,7 +109,7 @@ describe("WorkflowService.cancelNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -122,22 +122,22 @@ describe("WorkflowService.cancelNode", () => {
     });
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [parentTaskId],
     });
-    h.taskHandler.cancelShouldThrow = true;
+    h.workerRunner.cancelShouldThrow = true;
     await h.service.cancelNode({ callerCoordNodeId: initialCoordNodeId, nodeId });
     const n = await h.service.getNode(nodeId);
     expect(n.status).toBe("cancelled");
-    expect(h.taskHandler.cancelCalls).toEqual([nodeId]);
+    expect(h.workerRunner.cancelCalls).toEqual([nodeId]);
   });
 
   it("REJECTS when caller node belongs to a different workflow than the target node", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: localTask } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });

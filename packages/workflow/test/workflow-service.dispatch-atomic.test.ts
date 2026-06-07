@@ -22,7 +22,7 @@ describe("WorkflowService.dispatchAtomic", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
@@ -36,32 +36,32 @@ describe("WorkflowService.dispatchAtomic", () => {
         endedAt: "2026-06-07T01:00:00.000Z",
       });
     });
-    const before = h.taskHandler.dispatchCalls.length;
+    const before = h.workerRunner.dispatchCalls.length;
     await h.service.dispatchAtomic(a);
     expect((await h.service.getNode(a)).status).toBe("running");
-    expect(h.taskHandler.dispatchCalls.length).toBe(before + 1);
+    expect(h.workerRunner.dispatchCalls.length).toBe(before + 1);
   });
 
   it("task: does NOT dispatch when a parent is not yet succeeded", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     // Coord parent is still 'running' — predicate fails.
-    const before = h.taskHandler.dispatchCalls.length;
+    const before = h.workerRunner.dispatchCalls.length;
     await h.service.dispatchAtomic(a);
     expect((await h.service.getNode(a)).status).toBe("not_started");
-    expect(h.taskHandler.dispatchCalls.length).toBe(before);
+    expect(h.workerRunner.dispatchCalls.length).toBe(before);
   });
 
   it("coordinator: dispatches when ALL parents are terminal (succeeded OR failed OR cancelled)", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTask } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -87,35 +87,35 @@ describe("WorkflowService.dispatchAtomic", () => {
         endedAt: "2026-06-07T01:00:00.000Z",
       });
     });
-    const before = h.coordHandler.dispatchCalls.length;
+    const before = h.coordRunner.dispatchCalls.length;
     await h.service.dispatchAtomic(childCoord);
     expect((await h.service.getNode(childCoord)).status).toBe("running");
-    expect(h.coordHandler.dispatchCalls.length).toBe(before + 1);
+    expect(h.coordRunner.dispatchCalls.length).toBe(before + 1);
   });
 
   it("silently no-ops when the node is already running", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
-    const before = h.coordHandler.dispatchCalls.length;
+    const before = h.coordRunner.dispatchCalls.length;
     await h.service.dispatchAtomic(initialCoordNodeId);
     expect((await h.service.getNode(initialCoordNodeId)).status).toBe("running");
-    expect(h.coordHandler.dispatchCalls.length).toBe(before);
+    expect(h.coordRunner.dispatchCalls.length).toBe(before);
   });
 
   it("silently no-ops when the workflow is already cancelled", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
     await h.service.cancelWorkflow({ workflowId });
     // Cancel reconciliation already flipped the task. dispatchAtomic
     // is a no-op for terminal nodes.
-    const before = h.taskHandler.dispatchCalls.length;
+    const before = h.workerRunner.dispatchCalls.length;
     await h.service.dispatchAtomic(nodeId);
     expect((await h.service.getNode(nodeId)).status).toBe("cancelled");
-    expect(h.taskHandler.dispatchCalls.length).toBe(before);
+    expect(h.workerRunner.dispatchCalls.length).toBe(before);
   });
 
   it("on handler.dispatch throw, marks the node failed via a separate tx", async () => {
@@ -124,7 +124,7 @@ describe("WorkflowService.dispatchAtomic", () => {
     // task's parent-readiness predicate fires eager dispatch on insert.
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -135,10 +135,10 @@ describe("WorkflowService.dispatchAtomic", () => {
         endedAt: "2026-06-07T01:00:00.000Z",
       });
     });
-    h.taskHandler.dispatchShouldThrow = true;
+    h.workerRunner.dispatchShouldThrow = true;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [parentTaskId],
     });
@@ -151,7 +151,7 @@ describe("WorkflowService.dispatchAtomic", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -162,14 +162,14 @@ describe("WorkflowService.dispatchAtomic", () => {
         endedAt: "2026-06-07T01:00:00.000Z",
       });
     });
-    const before = h.taskHandler.dispatchCalls.length;
+    const before = h.workerRunner.dispatchCalls.length;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "y" },
       parents: [parentTaskId],
     });
     expect((await h.service.getNode(nodeId)).status).toBe("running");
-    expect(h.taskHandler.dispatchCalls.length).toBe(before + 1);
+    expect(h.workerRunner.dispatchCalls.length).toBe(before + 1);
   });
 });

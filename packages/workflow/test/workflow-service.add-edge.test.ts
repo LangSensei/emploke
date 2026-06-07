@@ -29,13 +29,13 @@ describe("WorkflowService.addEdge", () => {
     // Two parallel root-ish tasks; then connect them with an edge.
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId],
     });
@@ -56,13 +56,13 @@ describe("WorkflowService.addEdge", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId],
     });
@@ -87,13 +87,13 @@ describe("WorkflowService.addEdge", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [a],
     });
@@ -111,13 +111,13 @@ describe("WorkflowService.addEdge", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId],
     });
@@ -142,19 +142,19 @@ describe("WorkflowService.addEdge", () => {
     // Build A (phase 1), B (phase 2 child of A), C (phase 1, root).
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [a],
     });
     const { nodeId: c } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "c" },
       parents: [initialCoordNodeId],
     });
@@ -185,19 +185,19 @@ describe("WorkflowService.addEdge", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [a],
     });
     const { nodeId: c } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "c" },
       parents: [initialCoordNodeId],
     });
@@ -217,7 +217,7 @@ describe("WorkflowService.addEdge", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: localTask } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -250,7 +250,7 @@ describe("WorkflowService.addEdge", () => {
     // Two parallel tasks; mark one already-succeeded.
     const { nodeId: parentA } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
@@ -266,7 +266,7 @@ describe("WorkflowService.addEdge", () => {
     // isolate the addEdge eager-dispatch reaction.
     const { nodeId: child } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "c" },
       parents: [parentA],
     });

@@ -92,7 +92,7 @@ export class WorkflowMutationUnauthorizedError extends WorkflowError {
  * `removeNode` reject anything not `not_started`; `addEdge` /
  * `removeEdge` reject if the to-node isn't `not_started`;
  * `cancelNode` is the only mutation legal on `running` (and only
- * for task-kind nodes). Maps to 409.
+ * for worker-kind nodes). Maps to 409.
  */
 export class WorkflowNodeNotMutableError extends WorkflowError {
   override readonly name = "WorkflowNodeNotMutableError";
@@ -128,24 +128,31 @@ export class WorkflowEdgeCycleError extends WorkflowError {
 // ─── Per-kind insert structural rules ───────────────────────────────
 
 /**
- * Thrown when `addNode(kind, …)` or `addSubgraph` references a
- * `kind` that has no registered handler. Operator-config bug; the
- * server's error-policy table maps to 500.
+ * Defensive runtime guard against schema corruption — thrown when a
+ * persisted `workflow_nodes.kind` value falls outside the substrate's
+ * closed kind enum (`'coordinator' | 'worker'`). Cannot fire from
+ * caller-supplied input: the mutation primitives type `kind` as
+ * `NodeKind`, so TypeScript rejects unknown literals at compile time.
+ *
+ * Real-world trigger paths: a hand-edited DB row, or a row written by
+ * an older binary that supported a kind value since removed from the
+ * enum. Operator/data-corruption class; the server's error-policy
+ * table maps to 500.
  */
 export class WorkflowNodeKindUnknownError extends WorkflowError {
   override readonly name = "WorkflowNodeKindUnknownError";
   constructor(public readonly kind: string) {
     super(
-      `Workflow node kind "${kind}" is not registered. Call workflowService.registerKind("${kind}", handler) at compose time.`,
+      `Workflow node kind "${kind}" is not a known kind (expected one of: "coordinator", "worker"). This indicates schema corruption or a row written by an older binary.`,
     );
   }
 }
 
 /**
- * Generic spec validation error thrown by `WorkflowNodeKindHandler.
+ * Generic spec validation error thrown by `WorkflowNodeRunner.
  * validate` implementations and re-thrown by the substrate's
- * mutation primitives. Per-kind handlers SHOULD throw a subclass
- * (e.g. `WorkflowTaskNodeSpecError`) for finer error mapping; this
+ * mutation primitives. Per-kind runners SHOULD throw a subclass
+ * (e.g. `WorkflowWorkerNodeSpecError`) for finer error mapping; this
  * base class catches the generic case and provides a coherent name
  * for the error-policy table to map to 400.
  */
@@ -205,12 +212,13 @@ export class OrphanCoordInsertError extends WorkflowError {
 }
 
 /**
- * Thrown when a `kind='task'` node insert references a parent in
- * `{failed, cancelled}` — the task would be permanently
- * un-dispatchable because the task-kind dispatch-readiness rule
+ * Thrown when a `kind='worker'` node insert references a parent in
+ * `{failed, cancelled}` — the worker would be permanently
+ * un-dispatchable because the worker-kind dispatch-readiness rule
  * requires every parent to be `succeeded`. Coordinator-kind nodes
  * accept any terminal parent (they're specifically supposed to wake
- * to handle failure), so this error fires only for task-kind inserts.
+ * to handle failure), so this error fires only for worker-kind
+ * inserts.
  */
 export class ParentStateError extends WorkflowError {
   override readonly name = "ParentStateError";
@@ -236,8 +244,8 @@ export class ParentStateError extends WorkflowError {
  */
 export class EmptyParentsError extends WorkflowError {
   override readonly name = "EmptyParentsError";
-  constructor(public readonly workflowId: string) {
-    super(`addNode: parents must be non-empty (workflow "${workflowId}")`);
+  constructor() {
+    super("node parents must contain at least one parent node");
   }
 }
 
@@ -263,60 +271,14 @@ export class WorkflowEnumValueError extends WorkflowError {
 /**
  * Thrown by `assertValidWorkflowNodeKind` when the value is not a
  * non-empty string. Distinct from {@link WorkflowEnumValueError}:
- * `kind` membership is open (the substrate accepts any non-empty
- * string and defers "is this kind registered?" to the service-layer
- * handler registry), so the shape guard reports a different failure
- * mode than the closed-enum guard.
+ * the entity-layer kind guard checks shape only (`assertValidXxx`
+ * pattern); membership against the closed `NodeKind` enum is
+ * enforced separately by {@link WorkflowNodeKindUnknownError} when
+ * the substrate routes per-kind logic against a persisted row.
  */
 export class WorkflowNodeKindShapeError extends WorkflowError {
   override readonly name = "WorkflowNodeKindShapeError";
   constructor(public readonly value: string) {
     super(`Invalid workflow node kind: "${value}" (must be a non-empty string)`);
-  }
-}
-
-// ─── Open kind-handler registry ─────────────────────────────────────
-
-/**
- * Thrown by `WorkflowService.registerKind` when a duplicate kind is
- * registered on the same service instance. Each `kind` resolves to a
- * single handler; double-registration is always operator-config error.
- */
-export class WorkflowNodeKindAlreadyRegisteredError extends WorkflowError {
-  override readonly name = "WorkflowNodeKindAlreadyRegisteredError";
-  constructor(public readonly kind: string) {
-    super(`Workflow node kind "${kind}" is already registered on this service`);
-  }
-}
-
-/**
- * Thrown by `WorkflowService.registerKind` when invoked after
- * `recover()` has frozen the registry. Late-bound handlers would
- * change the preflight outcome silently — the registry must be
- * fully populated BEFORE recovery so persisted rows are checked
- * against the final set.
- */
-export class WorkflowKindRegistryFrozenError extends WorkflowError {
-  override readonly name = "WorkflowKindRegistryFrozenError";
-  constructor(public readonly kind: string) {
-    super(
-      `Cannot register kind "${kind}": the workflow kind registry is frozen (recover() was already called). All registerKind calls must precede recover().`,
-    );
-  }
-}
-
-/**
- * Thrown by `WorkflowService.recover` when a persisted
- * `workflow_nodes.kind` value has no registered handler. Catches
- * the orphan-disabled-row failure mode where a kind drops out of
- * compose code but its rows linger.
- */
-export class WorkflowNodeKindNotRegisteredError extends WorkflowError {
-  override readonly name = "WorkflowNodeKindNotRegisteredError";
-  constructor(
-    public readonly kind: string,
-    detail: string,
-  ) {
-    super(`Workflow node kind "${kind}" is not registered: ${detail}`);
   }
 }

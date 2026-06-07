@@ -23,7 +23,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pending } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -32,7 +32,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     // so the cancel reconciliation invokes handler.cancel for it.
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -45,7 +45,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     });
     const { nodeId: running } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "y" },
       parents: [parentTaskId],
     });
@@ -57,7 +57,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     expect(coord.status).toBe("cancelled");
     expect((await h.service.getNode(pending)).status).toBe("cancelled");
     expect((await h.service.getNode(running)).status).toBe("cancelled");
-    expect(h.taskHandler.cancelCalls).toContain(running);
+    expect(h.workerRunner.cancelCalls).toContain(running);
   });
 
   it("CAS once-only: a second call throws WorkflowAlreadyTerminalError", async () => {
@@ -78,7 +78,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pending } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -86,7 +86,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     await h.service.cancelWorkflow({ workflowId });
     // The pending task was cancelled by reconciliation but its
     // handler was never running — no abort call is needed.
-    expect(h.taskHandler.cancelCalls).not.toContain(pending);
+    expect(h.workerRunner.cancelCalls).not.toContain(pending);
   });
 
   it("idempotent: succeeded → cancelWorkflow is rejected (workflow already terminal)", async () => {

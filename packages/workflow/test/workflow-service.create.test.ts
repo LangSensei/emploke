@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WorkflowError, WorkflowNodeKindUnknownError } from "../src/errors.js";
+import { WorkflowError } from "../src/errors.js";
 import {
   fixedRandomUUID,
-  makeStubHandler,
   makeWorkflowTestHandle,
   VALID_UUIDS,
   type WorkflowTestHandle,
@@ -58,8 +57,8 @@ describe("WorkflowService.createWorkflow", () => {
       brief: "x",
       coordinatorAgent: "coord-a",
     });
-    expect(h.coordHandler.dispatchCalls).toHaveLength(1);
-    const call = h.coordHandler.dispatchCalls[0]!;
+    expect(h.coordRunner.dispatchCalls).toHaveLength(1);
+    const call = h.coordRunner.dispatchCalls[0]!;
     expect(call.workflowId).toBe(workflowId);
     expect(call.nodeId).toBe(initialCoordNodeId);
     expect(call.spec).toEqual({ agent: "coord-a" });
@@ -70,13 +69,13 @@ describe("WorkflowService.createWorkflow", () => {
   });
 
   it("validate ctx: routes the initial coord through handler.validate with self-bootstrap identity", async () => {
-    h.coordHandler.validateReturnValue = { agent: "coord-a", validated: true };
+    h.coordRunner.validateReturnValue = { agent: "coord-a", validated: true };
     const { initialCoordNodeId, workflowId } = await h.service.createWorkflow({
       brief: "x",
       coordinatorAgent: "coord-a",
     });
-    expect(h.coordHandler.validateCalls).toHaveLength(1);
-    const v = h.coordHandler.validateCalls[0]!;
+    expect(h.coordRunner.validateCalls).toHaveLength(1);
+    const v = h.coordRunner.validateCalls[0]!;
     expect(v.spec).toEqual({ agent: "coord-a" });
     expect(v.ctx.callerCoordNodeId).toBe(initialCoordNodeId);
     expect(v.ctx.workflowId).toBe(workflowId);
@@ -99,23 +98,8 @@ describe("WorkflowService.createWorkflow", () => {
     ).rejects.toBeInstanceOf(WorkflowError);
   });
 
-  it("throws WorkflowNodeKindUnknownError when the coordinator kind has no handler", async () => {
-    const h2 = makeWorkflowTestHandle({
-      randomUUID: fixedRandomUUID(VALID_UUIDS),
-      skipAutoRegister: true,
-    });
-    try {
-      h2.service.registerKind("task", makeStubHandler());
-      await expect(
-        h2.service.createWorkflow({ brief: "x", coordinatorAgent: "coord-a" }),
-      ).rejects.toBeInstanceOf(WorkflowNodeKindUnknownError);
-    } finally {
-      h2.close();
-    }
-  });
-
   it("dispatch-failure inside createWorkflow flips initial coord to failed", async () => {
-    h.coordHandler.dispatchShouldThrow = true;
+    h.coordRunner.dispatchShouldThrow = true;
     const { initialCoordNodeId } = await h.service.createWorkflow({
       brief: "x",
       coordinatorAgent: "coord-a",

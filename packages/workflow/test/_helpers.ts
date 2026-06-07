@@ -3,8 +3,8 @@
  * repository tests. Mirrors the structure of
  * `packages/schedule/test/_helpers.ts`.
  *
- * The fake kind handlers are stub implementations of
- * `WorkflowNodeKindHandler`:
+ * The fake kind runners are stub implementations of
+ * `WorkflowNodeRunner`:
  *
  *   - `validate` is identity-by-default; tests can swap the fn to
  *     assert call args or simulate validate-failure flows.
@@ -15,13 +15,11 @@
  *     `false`.
  *   - `cancel` records calls; throws when `cancelShouldThrow` is set
  *     (lets tests prove the substrate still marks the node cancelled
- *     even if the handler fails).
+ *     even if the runner fails).
  *
- * The harness wires a `WorkflowService` over an in-memory SQLite +
- * a stub handler for kind `"coordinator"` (auto-registered because
- * every service flow needs SOME coord handler) and one for kind
- * `"task"` (auto-registered because all the read-only / mutation
- * tests use both).
+ * The harness wires a `WorkflowService` over an in-memory SQLite with
+ * a stub runner for `coordinator` and one for `worker`, injected at
+ * compose time via the `runners: WorkflowRunners` field.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -30,7 +28,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 import pino from "pino";
 import { openTestWorkflowDb } from "../src/testing.js";
-import type { WorkflowNodeKindHandler, WorkflowNodeValidateCtx } from "../src/types.js";
+import type { WorkflowNodeRunner, WorkflowNodeValidateCtx, WorkflowRunners } from "../src/types.js";
 import { WorkflowRepository } from "../src/workflow-repository.js";
 import { WorkflowService } from "../src/workflow-service.js";
 
@@ -46,7 +44,7 @@ export interface DispatchCall {
   readonly nodeDir: string;
 }
 
-export interface StubHandler extends WorkflowNodeKindHandler {
+export interface StubRunner extends WorkflowNodeRunner {
   readonly validateCalls: ValidateCall[];
   readonly dispatchCalls: DispatchCall[];
   readonly cancelCalls: string[];
@@ -62,13 +60,13 @@ export interface StubHandler extends WorkflowNodeKindHandler {
   validateShouldThrow: Error | null;
 }
 
-export function makeStubHandler(): StubHandler {
+export function makeStubRunner(): StubRunner {
   const validateCalls: ValidateCall[] = [];
   const dispatchCalls: DispatchCall[] = [];
   const cancelCalls: string[] = [];
   const inFlightSet = new Set<string>();
   let seq = 0;
-  const stub: StubHandler = {
+  const stub: StubRunner = {
     validateCalls,
     dispatchCalls,
     cancelCalls,
@@ -108,8 +106,8 @@ export function makeStubHandler(): StubHandler {
 export interface WorkflowTestHandle {
   readonly service: WorkflowService;
   readonly repo: WorkflowRepository;
-  readonly coordHandler: StubHandler;
-  readonly taskHandler: StubHandler;
+  readonly coordRunner: StubRunner;
+  readonly workerRunner: StubRunner;
   readonly db: ReturnType<typeof openTestWorkflowDb>;
   readonly workspaceDir: string;
   readonly nowRef: { value: Date };
@@ -122,36 +120,33 @@ export function makeWorkflowTestHandle(
     readonly initialNow?: Date;
     readonly randomUUID?: () => string;
     readonly logger?: Logger;
-    readonly coordHandler?: StubHandler;
-    readonly taskHandler?: StubHandler;
-    readonly skipAutoRegister?: boolean;
+    readonly coordRunner?: StubRunner;
+    readonly workerRunner?: StubRunner;
   } = {},
 ): WorkflowTestHandle {
   const db = openTestWorkflowDb();
   const workspaceDir = mkdtempSync(path.join(tmpdir(), "wf-test-"));
-  const coordHandler = opts.coordHandler ?? makeStubHandler();
-  const taskHandler = opts.taskHandler ?? makeStubHandler();
+  const coordRunner = opts.coordRunner ?? makeStubRunner();
+  const workerRunner = opts.workerRunner ?? makeStubRunner();
+  const runners: WorkflowRunners = { coordinator: coordRunner, worker: workerRunner };
   const nowRef = { value: opts.initialNow ?? new Date("2026-06-07T00:00:00.000Z") };
   const repo = new WorkflowRepository({ db: db.db });
   const service = new WorkflowService({
     repo,
     db: db.db,
     workspaceDir,
+    runners,
     now: () => nowRef.value,
     ...(opts.randomUUID !== undefined ? { randomUUID: opts.randomUUID } : {}),
     ...(opts.logger !== undefined
       ? { logger: opts.logger }
       : { logger: pino({ level: "silent" }) }),
   });
-  if (opts.skipAutoRegister !== true) {
-    service.registerKind("coordinator", coordHandler);
-    service.registerKind("task", taskHandler);
-  }
   return {
     service,
     repo,
-    coordHandler,
-    taskHandler,
+    coordRunner,
+    workerRunner,
     db,
     workspaceDir,
     nowRef,

@@ -5,16 +5,16 @@
  *
  * Every function in this file is stateless and side-effect free —
  * no `this`, no I/O, no DB handle. They depend only on entity types,
- * the substrate's two known kinds (`task` / `coordinator`), and the
- * error catalog.
+ * the substrate's closed kind enum (`'coordinator' | 'worker'`),
+ * and the error catalog.
  */
 
-import { WorkflowError, WorkflowNodeKindUnknownError } from "./errors.js";
-import type { WorkflowNodeStatus } from "./types.js";
+import { WorkflowError } from "./errors.js";
+import type { NodeKind, WorkflowNodeStatus } from "./types.js";
 import { WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
 
-const COORDINATOR_KIND = "coordinator";
-const TASK_KIND = "task";
+export const COORDINATOR_KIND: NodeKind = "coordinator";
+export const WORKER_KIND: NodeKind = "worker";
 
 const TERMINAL_NODE_STATUSES: ReadonlySet<WorkflowNodeStatus> = new Set([
   "succeeded",
@@ -45,7 +45,7 @@ export function workflowEntityFor(args: {
 export function nodeEntityFor(args: {
   readonly id: string;
   readonly workflowId: string;
-  readonly kind: string;
+  readonly kind: NodeKind;
   readonly spec: unknown;
   readonly phase: number;
   readonly status: WorkflowNodeStatus;
@@ -80,27 +80,35 @@ export function parentsOf(
 }
 
 /**
- * Per-kind parent-readiness predicate. The substrate's two known
- * kinds:
- *   - `task`: every parent must be `succeeded` (a failed parent
- *     would block forever; the task-kind contract demands all
+ * Per-kind parent-readiness predicate. Closed over the substrate's
+ * two known kinds:
+ *
+ *   - `worker`: every parent must be `succeeded` (a failed parent
+ *     would block forever; the worker-kind contract demands all
  *     prerequisites complete cleanly).
  *   - `coordinator`: every parent must be in any terminal status
  *     (coord wakes on failures specifically to drive recovery).
  *
- * Any other kind throws — kind-handler registration covers the
- * substrate's storage / dispatch concerns, but the parent-readiness
- * rule is one of the two strings hard-coded in the substrate.
+ * Exhaustive over `NodeKind`; the `never` branch is a
+ * compile-time guarantee that any future enum extension surfaces
+ * here.
  */
-export function parentsReadyForKind(kind: string, parents: readonly WorkflowNodeEntity[]): boolean {
+export function parentsReadyForKind(
+  kind: NodeKind,
+  parents: readonly WorkflowNodeEntity[],
+): boolean {
   if (parents.length === 0) return true;
-  if (kind === TASK_KIND) {
-    return parents.every((p) => p.status === "succeeded");
+  switch (kind) {
+    case "worker":
+      return parents.every((p) => p.status === "succeeded");
+    case "coordinator":
+      return parents.every((p) => TERMINAL_NODE_STATUSES.has(p.status));
+    default: {
+      const _exhaustive: never = kind;
+      void _exhaustive;
+      return false;
+    }
   }
-  if (kind === COORDINATOR_KIND) {
-    return parents.every((p) => TERMINAL_NODE_STATUSES.has(p.status));
-  }
-  throw new WorkflowNodeKindUnknownError(kind);
 }
 
 export function wouldCreateCycle(

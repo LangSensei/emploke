@@ -54,7 +54,7 @@ export function workflowDir(workspaceDir: string, workflowId: string): string {
 /**
  * Resolve `<workspaceDir>/workflows/<workflowId>/nodes/<nodeId>/`.
  * Every node owns a sibling sub-directory under the workflow's
- * shared scratch dir, so a `kind='task'` node can hand the resulting
+ * shared scratch dir, so a `kind='worker'` node can hand the resulting
  * path straight to the task manager as the task's `workdir`.
  */
 export function workflowNodeDir(workspaceDir: string, workflowId: string, nodeId: string): string {

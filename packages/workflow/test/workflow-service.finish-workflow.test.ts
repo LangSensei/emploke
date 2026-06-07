@@ -46,7 +46,7 @@ describe("WorkflowService.finishWorkflow", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pendingTask } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -70,7 +70,7 @@ describe("WorkflowService.finishWorkflow", () => {
     // running task lands in `running` via eager dispatch.
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -83,7 +83,7 @@ describe("WorkflowService.finishWorkflow", () => {
     });
     const { nodeId: runningTask } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [parentTaskId],
     });
@@ -91,7 +91,7 @@ describe("WorkflowService.finishWorkflow", () => {
 
     await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "failed" });
 
-    expect(h.taskHandler.cancelCalls).toContain(runningTask);
+    expect(h.workerRunner.cancelCalls).toContain(runningTask);
     expect((await h.service.getNode(runningTask)).status).toBe("cancelled");
   });
 

@@ -5,7 +5,6 @@ import {
   OrphanCoordInsertError,
   ParentStateError,
   WorkflowMutationUnauthorizedError,
-  WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
 } from "../src/errors.js";
 import {
@@ -33,14 +32,14 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId, phase } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
     // initialCoord phase = 0, so child phase = 1.
     expect(phase).toBe(1);
     const node = await h.service.getNode(nodeId);
-    expect(node.kind).toBe("task");
+    expect(node.kind).toBe("worker");
     expect(node.phase).toBe(1);
   });
 
@@ -48,16 +47,16 @@ describe("WorkflowService.addNode", () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Drain createWorkflow's validate call so we can assert on the
     // next one.
-    h.coordHandler.validateCalls.length = 0;
-    h.taskHandler.validateCalls.length = 0;
+    h.coordRunner.validateCalls.length = 0;
+    h.workerRunner.validateCalls.length = 0;
     await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
-    expect(h.taskHandler.validateCalls).toHaveLength(1);
-    const v = h.taskHandler.validateCalls[0]!;
+    expect(h.workerRunner.validateCalls).toHaveLength(1);
+    const v = h.workerRunner.validateCalls[0]!;
     expect(v.ctx.workflowId).toBe(workflowId);
     expect(v.ctx.callerCoordNodeId).toBe(initialCoordNodeId);
     expect(v.ctx.callerCoordSpec).toEqual({ agent: "coord-agent" });
@@ -70,7 +69,7 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -85,7 +84,7 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: initialCoordNodeId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "y" },
         parents: [parentId],
       }),
@@ -96,7 +95,7 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -110,7 +109,7 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: initialCoordNodeId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "y" },
         parents: [parentId],
       }),
@@ -121,7 +120,7 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -150,7 +149,7 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: peerTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
@@ -201,7 +200,7 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: VALID_UUIDS[15]!,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "x", brief: "y" },
         parents: [initialCoordNodeId],
       }),
@@ -212,14 +211,14 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: taskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
     });
     await expect(
       h.service.addNode({
         callerCoordNodeId: taskId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "y" },
         parents: [initialCoordNodeId],
       }),
@@ -238,7 +237,7 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: initialCoordNodeId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "x" },
         parents: [initialCoordNodeId],
       }),
@@ -251,7 +250,7 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: initialCoordNodeId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "x" },
         parents: [initialCoordNodeId],
       }),
@@ -268,33 +267,28 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: otherCoord,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "x" },
         parents: [initialCoordNodeId],
       }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
 
-  // ─── Missing-kind handler ─────────────────────────────────
-
-  it("throws WorkflowNodeKindUnknownError when the inserted kind has no handler", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
-    await expect(
-      h.service.addNode({
-        callerCoordNodeId: initialCoordNodeId,
-        kind: "evaluator",
-        spec: {},
-        parents: [initialCoordNodeId],
-      }),
-    ).rejects.toBeInstanceOf(WorkflowNodeKindUnknownError);
-  });
+  // ─── Closed-kind enum ─────────────────────────────────────
+  //
+  // The substrate's `AddNodeArgs.kind` field is typed `NodeKind`
+  // (`'coordinator' | 'worker'`). Inserting an unknown kind is a
+  // TypeScript compile error rather than a runtime throw — see
+  // `public-api-guard.test.ts` for the type-level assertion. No
+  // runtime test is needed because the bad path is unreachable
+  // through the typed surface.
 
   it("throws WorkflowNodeNotFoundError when a parent id does not exist", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     await expect(
       h.service.addNode({
         callerCoordNodeId: initialCoordNodeId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "x" },
         parents: [VALID_UUIDS[15]!],
       }),
@@ -307,7 +301,7 @@ describe("WorkflowService.addNode", () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -318,10 +312,10 @@ describe("WorkflowService.addNode", () => {
         endedAt: "2026-06-07T01:00:00.000Z",
       });
     });
-    h.taskHandler.dispatchCalls.length = 0;
+    h.workerRunner.dispatchCalls.length = 0;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "child" },
       parents: [parentTaskId],
     });
@@ -330,29 +324,29 @@ describe("WorkflowService.addNode", () => {
     // event will arrive in this PR's substrate).
     const child = await h.service.getNode(nodeId);
     expect(child.status).toBe("running");
-    expect(h.taskHandler.dispatchCalls.map((c) => c.nodeId)).toContain(nodeId);
+    expect(h.workerRunner.dispatchCalls.map((c) => c.nodeId)).toContain(nodeId);
   });
 
   it("eager dispatch: does NOT fire when parents are still running", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const parent = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "p" },
       parents: [initialCoordNodeId],
     });
     // Leave parent in not_started (because its parent coord is still
     // running, parent task never satisfied the readiness predicate).
     expect((await h.service.getNode(parent.nodeId)).status).toBe("not_started");
-    h.taskHandler.dispatchCalls.length = 0;
+    h.workerRunner.dispatchCalls.length = 0;
     const child = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "c" },
       parents: [parent.nodeId],
     });
     expect((await h.service.getNode(child.nodeId)).status).toBe("not_started");
-    expect(h.taskHandler.dispatchCalls.map((c) => c.nodeId)).not.toContain(child.nodeId);
+    expect(h.workerRunner.dispatchCalls.map((c) => c.nodeId)).not.toContain(child.nodeId);
   });
 
   it("eager dispatch: when all parents are already terminal, dispatches immediately", async () => {
@@ -361,7 +355,7 @@ describe("WorkflowService.addNode", () => {
     // task's parent-readiness predicate is satisfied at insert time.
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "p" },
       parents: [initialCoordNodeId],
     });
@@ -372,16 +366,16 @@ describe("WorkflowService.addNode", () => {
         endedAt: "2026-06-07T01:00:00.000Z",
       });
     });
-    h.taskHandler.dispatchCalls.length = 0;
+    h.workerRunner.dispatchCalls.length = 0;
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
-      kind: "task",
+      kind: "worker",
       spec: { agent: "writer", brief: "child" },
       parents: [parentTaskId],
     });
     const n = await h.service.getNode(nodeId);
     expect(n.status).toBe("running");
-    expect(h.taskHandler.dispatchCalls.map((c) => c.nodeId)).toContain(nodeId);
+    expect(h.workerRunner.dispatchCalls.map((c) => c.nodeId)).toContain(nodeId);
   });
 
   it("REJECTS when parents is empty", async () => {
@@ -389,7 +383,7 @@ describe("WorkflowService.addNode", () => {
     await expect(
       h.service.addNode({
         callerCoordNodeId: initialCoordNodeId,
-        kind: "task",
+        kind: "worker",
         spec: { agent: "writer", brief: "x" },
         parents: [],
       }),

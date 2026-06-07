@@ -5,8 +5,8 @@
  * legacy `<date>-<8hex>` shape for workflow ids) and enum-set
  * membership for the entity layer's round-trip checks.
  *
- * Cross-kind contracts (e.g. "a task's `agent` must appear in caller
- * coord's `dependencies.agents`") live in the kind handlers, not
+ * Cross-kind contracts (e.g. "a worker's `agent` must appear in caller
+ * coord's `dependencies.agents`") live in the kind runners, not
  * here, because they need access to the catalog and the caller-coord
  * spec.
  *
@@ -24,7 +24,7 @@ import {
   WorkflowEnumValueError,
   WorkflowNodeKindShapeError,
 } from "./errors.js";
-import type { WorkflowNodeStatus, WorkflowStatus } from "./types.js";
+import type { NodeKind, WorkflowNodeStatus, WorkflowStatus } from "./types.js";
 
 // ─── Id grammars ────────────────────────────────────────────────────
 
@@ -121,15 +121,15 @@ export function assertValidWorkflowNodeStatusEnum(
 }
 
 /**
- * Shape check for `workflow_nodes.kind`. The kind-set is open: the
- * substrate ships `'task'` + `'coordinator'` as baseline kinds, but
- * new kinds register at compose time against the service layer's
- * handler registry. This guard only enforces the shape contract
- * (non-empty string); "is this kind actually registered?" is the
- * service layer's job, since only the registry knows what's wired in.
+ * Closed-set check for `workflow_nodes.kind`. The substrate ships
+ * the two `NodeKind` values `'coordinator'` and `'worker'`; any
+ * other value is rejected as a schema-shape violation (signals a
+ * corrupted row or one written by an older binary). Used by
+ * `WorkflowNodeEntity.fromRow` so the typed entity field can carry
+ * the closed-enum type directly.
  */
-export function assertValidWorkflowNodeKind(kind: unknown): asserts kind is string {
-  if (typeof kind !== "string" || kind.length === 0) {
+export function assertValidWorkflowNodeKind(kind: unknown): asserts kind is NodeKind {
+  if (kind !== "coordinator" && kind !== "worker") {
     throw new WorkflowNodeKindShapeError(String(kind));
   }
 }
