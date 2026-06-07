@@ -22,6 +22,26 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
     folderMillis: 1,
     hash: "6e95eb00c1e13b2671a7c78313ab0c1a816dab78bb9c4e436c3cae23d9606c2a",
   },
+  {
+    sql: [
+      "DROP TABLE IF EXISTS `workflow_edges`;\n",
+      "\nDROP TABLE IF EXISTS `workflow_nodes`;\n",
+      "\nDROP TABLE IF EXISTS `workflows`;\n",
+      "\nCREATE TABLE `workflows` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`details` text,\n\t`coordinator_agent` text NOT NULL,\n\t`status` text NOT NULL,\n\t`metadata` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`started_at` text,\n\t`ended_at` text\n);\n",
+      "\nCREATE INDEX `workflows_status_idx` ON `workflows` (`status`);",
+      "\nCREATE INDEX `workflows_coordinator_agent_idx` ON `workflows` (`coordinator_agent`);",
+      "\nCREATE TABLE `workflow_nodes` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workflow_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`spec_json` text NOT NULL,\n\t`phase` integer NOT NULL,\n\t`status` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`ready_at` text,\n\t`running_at` text,\n\t`ended_at` text\n);\n",
+      "\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
+      "\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
+      "\nCREATE INDEX `workflow_nodes_phase_idx` ON `workflow_nodes` (`workflow_id`,`phase`);",
+      "\nCREATE TABLE `workflow_edges` (\n\t`workflow_id` text NOT NULL,\n\t`from_node_id` text NOT NULL,\n\t`to_node_id` text NOT NULL,\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\n);\n",
+      "\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
+      "\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\n"
+    ],
+    bps: true,
+    folderMillis: 2,
+    hash: "b04ef66661c80db01ebf25556a772781b67352307144033a98f620f79106832d",
+  },
 ];
 
 /**

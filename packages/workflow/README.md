@@ -1,19 +1,53 @@
 # @emploke/workflow
 
-Append-only DAG substrate for emploke. Owns three tables —
+Open substrate for workflow DAGs in emploke. Owns three tables —
 `workflows` / `workflow_nodes` / `workflow_edges` — plus the entity
-invariants (DAG, forward-only FSM, append-only nodes/edges) and the
-8-tool orchestrator surface (`createWorkflow`, `createNode`,
-`addEdge`, `launchNode`, `markDone`, `markFailed`, `cancelNode`,
-`finishWorkflow`).
+layer that round-trips them, the error catalog, and the
+`WorkflowNodeKindHandler` interface that callers register concrete
+kinds against at compose time.
 
-v1 locks node `type` to `'task'`; `launchNode` dispatches the
-backing task via an injected `TaskDispatcher` (`@emploke/task`'s
-`TaskService.dispatch` is the production binding) with
-`origin: 'workflow'`.
+> **Status: rewrite in progress.** This branch is a ground-up rewrite
+> of the v0.6.0 append-only-DAG substrate. The data layer (schema,
+> migrations, entities, errors, validate, types, paths) is final and
+> exported. The service / repository / engine wiring is stubbed and
+> throws on call. Active dev tracker: [PR #320]. Design discussion:
+> [issue #321].
+>
+> [PR #320]: https://github.com/LangSensei/emploke/pull/320
+> [issue #321]: https://github.com/LangSensei/emploke/issues/321
 
-No HTTP / CLI / dashboard surface — those land in follow-up missions
-M4 (HTTP+CLI) and M6 (dashboard).
+## Substrate model
+
+The substrate is a **smart DAG database with FSM**. A coordinator
+agent composes whatever DAG shape it wants by calling **mutation
+primitives**; the substrate enforces structural invariants (no dup
+id, terminal/running sealed, acyclic, exactly-one-non-terminal-
+coord) and nothing else. The "shape" of a coord turn is the coord's
+prerogative.
+
+- **WorkflowStatus** is 4 values: `running | succeeded | failed |
+  cancelled`. `running` is the only non-terminal value; "is the
+  coord awake right now" is derived from `workflow_nodes`
+  (`hasLiveCoord(nodes)` helper).
+- **Coordinator** is first-class: every coord run is a
+  `kind='coordinator'` node, not a row in a separate table. The
+  current coord agent FQN is denormalized into
+  `workflows.coordinator_agent` for cheap "who's running this
+  workflow" queries.
+- **Kind-agnostic**: the substrate ships zero hard-coded kinds.
+  Each baseline kind (`task`, `coordinator`) is registered at
+  compose time via `workflowService.registerKind(kind, handler)`.
+
+## API surface
+
+Two tiers on the service:
+
+- **8 mutation primitives** (coord-only auth): `addNode`, `addEdge`,
+  `addSubgraph`, `removeNode`, `removeEdge`, `replaceNodeSpec`,
+  `cancelNode`, `finishWorkflow`. Each is independently atomic; the
+  substrate has no monolithic-batch API.
+- **4 read APIs** (unauthed, in-DAG eval workers can call):
+  `getWorkflow`, `getDag`, `getNode`, `getNodeDir`.
 
 ## Layout
 
@@ -22,34 +56,27 @@ Standard `packages/_template` shape:
 ```
 src/
   schema.ts             Drizzle table definitions (private)
-  entity.ts             Workflow / WorkflowNodeValue value objects + invariants
-  repository.ts         Drizzle-backed CRUD (private)
-  service.ts            WorkflowService — 8 tools + reads
-  compose.ts            composeWorkflowModule({ dbFile, taskDispatcher })
+  workflow-entity.ts    Row ↔ entity round-trip (header / node / edge)
+  workflow-repository.ts Drizzle-backed CRUD (private)
+  workflow-service.ts   Mutation primitives + read APIs
+  compose.ts            composeWorkflowModule({ dbFile, ... })
   testing.ts            openTestWorkflowDb() in-memory test helper
+  errors.ts             WorkflowError + concrete subclasses
+  validate.ts           Id-grammar + enum-membership guards (pure)
   paths.ts              workflowDir / workflowNodeDir helpers
+  types.ts              FSM enums + handler interface + ctx
   index.ts              public barrel
 drizzle/                generated SQL migrations (committed)
+README.md               this file
 ```
-
-## Invariants (TASK.md §4)
-
-1. DAG — `addEdge` runs a DFS reach check and throws
-   `WorkflowCycleError` on cycle.
-2. Append-only nodes — no `removeNode` API.
-3. Node FSM is strictly forward:
-   `not_started → ready → running → succeeded|failed`. `cancelled` is
-   reachable **only** from `not_started` (CEO O5).
-4. Edges immutable once added; an upstream edge into a non-`not_started`
-   node throws.
-5. `launchNode` requires every upstream node to be `succeeded`.
-
-Encoded in `entity.ts`; `repository.save` re-runs every invariant
-before write.
 
 ## Wiring
 
-`composeWorkflowModule({ dbFile, taskDispatcher })` is the only
-production composition path. `taskDispatcher` is any object satisfying
-the `TaskDispatcher` interface — in practice `@emploke/task`'s
-`TaskService` (the `dispatch(opts)` method matches structurally).
+```ts
+const workflowModule = await composeWorkflowModule({ dbFile });
+workflowModule.service.registerKind("task",        makeTaskNodeHandler({ ... }));
+workflowModule.service.registerKind("coordinator", makeCoordinatorNodeHandler({ ... }));
+```
+
+Both handlers live in `packages/api/src/wiring/` because they bridge
+`@emploke/workflow`, `@emploke/task`, and `@emploke/catalog`.

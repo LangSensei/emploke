@@ -1,36 +1,52 @@
 /**
  * Public API of `@emploke/workflow`.
  *
- * Substrate for an append-only DAG of workflow nodes (CEO O5):
- * `WorkflowService` exposes the 8 orchestrator-facing tools
- * (createWorkflow / createNode / addEdge / launchNode / markDone /
- * markFailed / cancelNode / finishWorkflow) plus read methods
- * (`get`, `getState`, `list`).
+ * An open substrate for a workflow DAG with mutation primitives. The
+ * pkg owns three tables (`workflows` / `workflow_nodes` /
+ * `workflow_edges`), the entity layer that round-trips them, the
+ * error catalog, and the kind-handler interface that callers register
+ * concrete kinds against at compose time.
  *
- * Construction: `composeWorkflowModule({ dbFile, taskDispatcher })`.
+ * Construction goes through `composeWorkflowModule({ dbFile, … })`.
  * Tests use `openTestWorkflowDb()` from `./testing`.
  *
- * Path helpers are exported because downstream packages (server,
- * future workflow CLI) need to compute the per-workflow / per-node
- * workdirs the same way the substrate does.
+ * Per-kind wire DTOs (`WorkflowTaskNodeSpec`,
+ * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`, …) are owned
+ * by and imported directly from `@emploke/contracts`; the substrate
+ * stays kind-agnostic and takes no workspace dep on the wire pkg.
  */
 
+// ─── Composition ────────────────────────────────────────────────────
 export {
   composeWorkflowModule,
   type WorkflowModule,
   type WorkflowModuleOptions,
 } from "./compose.js";
+// ─── Errors ─────────────────────────────────────────────────────────
 export {
-  CorruptedWorkflowError,
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
-  InvalidWorkflowTransitionError,
-  WorkflowCycleError,
+  MultipleSuccessorCoordsError,
+  OrphanCoordInsertError,
+  ParentlessTempError,
+  ParentStateError,
+  UnknownTempIdError,
+  WorkflowAlreadyTerminalError,
+  WorkflowEdgeAlreadyExistsError,
+  WorkflowEdgeCycleError,
+  WorkflowEdgeNotFoundError,
+  WorkflowEnumValueError,
   WorkflowError,
+  WorkflowMutationUnauthorizedError,
+  WorkflowNodeKindShapeError,
+  WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
-  WorkflowNodeNotReadyError,
+  WorkflowNodeNotMutableError,
+  WorkflowNodeSpecError,
   WorkflowNotFoundError,
+  WouldOrphanChildError,
 } from "./errors.js";
+// ─── Path helpers ───────────────────────────────────────────────────
 export {
   WORKFLOW_NODES_SUBDIR,
   WORKFLOW_SUBDIR,
@@ -38,19 +54,28 @@ export {
   workflowNodeDir,
   workflowRoot,
 } from "./paths.js";
+// ─── Substrate types ────────────────────────────────────────────────
 export type {
-  CreateNodeArgs,
-  CreateWorkflowArgs,
-  NodeResultPatch,
-  TaskDispatcher,
-  TaskNodeSpec,
-  Workflow,
-  WorkflowEdge,
-  WorkflowNode,
+  WorkflowNodeKindHandler,
+  WorkflowNodeSpecEnvelope,
   WorkflowNodeStatus,
-  WorkflowNodeType,
-  WorkflowOutcome,
-  WorkflowState,
+  WorkflowNodeValidateCtx,
   WorkflowStatus,
 } from "./types.js";
-export { WorkflowService } from "./workflow-service.js";
+export { deriveIterationCount, hasLiveCoord } from "./types.js";
+// ─── Validators ─────────────────────────────────────────────────────
+export {
+  assertValidWorkflowId,
+  assertValidWorkflowNodeId,
+  assertValidWorkflowNodeKind,
+  assertValidWorkflowNodeStatusEnum,
+  assertValidWorkflowStatusEnum,
+  generateWorkflowId,
+  generateWorkflowNodeId,
+} from "./validate.js";
+// ─── Entity classes ─────────────────────────────────────────────────
+export {
+  WorkflowEdgeEntity,
+  WorkflowEntity,
+  WorkflowNodeEntity,
+} from "./workflow-entity.js";

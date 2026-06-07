@@ -1,7 +1,7 @@
 {
   "name": "@emploke/workflow",
   "version": "0.0.1",
-  "description": "Workflows — append-only DAG substrate for emploke (workflows / workflow_nodes / workflow_edges)",
+  "description": "Workflow DAG substrate for emploke (workflows / workflow_nodes / workflow_edges)",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -33,7 +33,6 @@
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts && node ../../scripts/inline-migrations.mjs"
   },
   "dependencies": {
-    "@emploke/task": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
     "pino": "^9.5.0"
