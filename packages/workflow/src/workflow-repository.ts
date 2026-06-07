@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { WorkflowNodeNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
@@ -140,6 +140,69 @@ export class WorkflowRepository {
   }
 
   /**
+   * Replace a node's `spec_json` column with the JSON-encoded
+   * `newSpec`. Used exclusively by `replaceNodeSpec` — the substrate
+   * never overwrites `spec_json` from any other path. Throws
+   * `WorkflowNodeNotFoundError` if the row is gone (concurrent
+   * delete).
+   */
+  updateNodeSpecTx(tx: Db, id: string, newSpec: unknown): void {
+    assertValidWorkflowNodeId(id);
+    const result = tx
+      .update(workflowNodes)
+      .set({ specJson: JSON.stringify(newSpec) })
+      .where(eq(workflowNodes.id, id))
+      .run();
+    if (result.changes === 0) throw new WorkflowNodeNotFoundError("<unknown>", id);
+  }
+
+  /**
+   * Delete a single node row by id. Adjacent edges are NOT cascaded
+   * by this helper — the caller must invoke
+   * {@link deleteEdgesAdjacentToNodeTx} in the same tx so the edge
+   * cleanup and the node delete are atomic.
+   */
+  deleteNodeTx(tx: Db, id: string): void {
+    assertValidWorkflowNodeId(id);
+    tx.delete(workflowNodes).where(eq(workflowNodes.id, id)).run();
+  }
+
+  /**
+   * Update the denormalized `workflows.coordinator_agent` cache.
+   * Used by `replaceNodeSpec` when the latest coord's spec is
+   * mutated; the `insertCoordNodeInTx` path performs the same write
+   * inline, but `replaceNodeSpec` cannot reuse that helper because
+   * it doesn't INSERT the row.
+   */
+  updateWorkflowCoordinatorAgentTx(tx: Db, workflowId: string, agent: string): void {
+    assertValidWorkflowId(workflowId);
+    tx.update(workflows).set({ coordinatorAgent: agent }).where(eq(workflows.id, workflowId)).run();
+  }
+
+  /**
+   * Return the id of the latest coordinator-kind node in a workflow,
+   * ordered by `(created_at DESC, id DESC)`. The id tiebreaker
+   * matters in fast test loops where two inserts can share a
+   * millisecond timestamp; without it the "latest" choice would be
+   * non-deterministic.
+   *
+   * Returns `null` if no coord-kind node exists (the bootstrap
+   * window of `createWorkflow` between row inserts; not normally
+   * reachable from `replaceNodeSpec`'s caller).
+   */
+  findLatestCoordIdTx(tx: Db, workflowId: string): string | null {
+    assertValidWorkflowId(workflowId);
+    const row = tx
+      .select({ id: workflowNodes.id })
+      .from(workflowNodes)
+      .where(and(eq(workflowNodes.workflowId, workflowId), eq(workflowNodes.kind, "coordinator")))
+      .orderBy(desc(workflowNodes.createdAt), desc(workflowNodes.id))
+      .limit(1)
+      .get();
+    return row === undefined ? null : row.id;
+  }
+
+  /**
    * Bulk phase update for the not_started subtree rooted at a node.
    * Each entry of `diff` is a `(nodeId, newPhase)` pair. Issued as a
    * sequence of single-row updates inside the caller's transaction.
@@ -176,6 +239,50 @@ export class WorkflowRepository {
         fromNodeId: opts.from,
         toNodeId: opts.to,
       })
+      .run();
+  }
+
+  /**
+   * Delete a single edge row. Returns true iff a row was actually
+   * deleted (false on a (workflowId, from, to) that didn't exist —
+   * the caller decides whether to surface as `WorkflowEdgeNotFoundError`
+   * or treat as a no-op).
+   */
+  deleteEdgeTx(
+    tx: Db,
+    opts: { readonly workflowId: string; readonly from: string; readonly to: string },
+  ): boolean {
+    assertValidWorkflowId(opts.workflowId);
+    assertValidWorkflowNodeId(opts.from);
+    assertValidWorkflowNodeId(opts.to);
+    const result = tx
+      .delete(workflowEdges)
+      .where(
+        and(
+          eq(workflowEdges.workflowId, opts.workflowId),
+          eq(workflowEdges.fromNodeId, opts.from),
+          eq(workflowEdges.toNodeId, opts.to),
+        ),
+      )
+      .run();
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete every edge with `nodeId` as either endpoint. Used by
+   * `removeNode` to cascade-clean the adjacency before the node row
+   * delete (same tx — the substrate never persists dangling edges).
+   */
+  deleteEdgesAdjacentToNodeTx(tx: Db, workflowId: string, nodeId: string): void {
+    assertValidWorkflowId(workflowId);
+    assertValidWorkflowNodeId(nodeId);
+    tx.delete(workflowEdges)
+      .where(
+        and(
+          eq(workflowEdges.workflowId, workflowId),
+          or(eq(workflowEdges.fromNodeId, nodeId), eq(workflowEdges.toNodeId, nodeId)),
+        ),
+      )
       .run();
   }
 

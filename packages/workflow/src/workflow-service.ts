@@ -5,10 +5,16 @@ import pino, { type Logger } from "pino";
 import {
   COORDINATOR_KIND,
   computePhaseFromParents,
+  type NodeRef,
   nodeEntityFor,
+  normalizeSubgraphInput,
   parentsOf,
   parentsReadyForKind,
   parseSpecJson,
+  resolveSubgraphTopology,
+  type SubgraphEdgeShape,
+  type SubgraphTempNodeShape,
+  validateSubgraphShape,
   WORKER_KIND,
   workflowEntityFor,
   wouldCreateCycle,
@@ -21,12 +27,18 @@ import {
   ParentStateError,
   WorkflowAlreadyTerminalError,
   WorkflowEdgeCycleError,
+  WorkflowEdgeNotFoundError,
   WorkflowError,
   WorkflowMutationUnauthorizedError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   WorkflowNotFoundError,
+  WorkflowRemoveEdgeOrphansChildError,
+  WorkflowRemoveNodeOrphansChildError,
+  WorkflowSubgraphCyclicError,
+  WorkflowSubgraphEmptyError,
+  WorkflowSubgraphNodeRefUnresolvedError,
 } from "./errors.js";
 import { workflowNodeDir } from "./paths.js";
 import type * as schema from "./schema.js";
@@ -101,6 +113,51 @@ export interface FinishWorkflowArgs {
 
 export interface CancelWorkflowArgs {
   readonly workflowId: string;
+}
+
+export interface RemoveNodeArgs {
+  readonly workflowId: string;
+  readonly nodeId: string;
+}
+
+export interface RemoveEdgeArgs {
+  readonly workflowId: string;
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+}
+
+export interface ReplaceNodeSpecArgs {
+  readonly workflowId: string;
+  readonly nodeId: string;
+  readonly newSpec: unknown;
+}
+
+export interface AddSubgraphNodeInput {
+  readonly tempId: string;
+  readonly kind: NodeKind;
+  readonly spec: unknown;
+  readonly existingParents?: ReadonlyArray<string>;
+}
+
+export interface AddSubgraphEdgeInput {
+  readonly from: NodeRef;
+  readonly to: NodeRef;
+}
+
+export interface AddSubgraphArgs {
+  readonly workflowId: string;
+  readonly nodes: ReadonlyArray<AddSubgraphNodeInput>;
+  readonly edges: ReadonlyArray<AddSubgraphEdgeInput>;
+}
+
+export interface AddSubgraphInsertedNode {
+  readonly tempId: string;
+  readonly nodeId: string;
+  readonly phase: number;
+}
+
+export interface AddSubgraphResult {
+  readonly insertedNodes: ReadonlyArray<AddSubgraphInsertedNode>;
 }
 
 export interface WorkflowDagSnapshot {
@@ -523,7 +580,7 @@ export class WorkflowService {
       // the to-node. Running / terminal descendants are sealed; the
       // recompute skips them so phase changes never touch a node
       // whose phase is already engaged by the dispatch loop.
-      const phaseDiff = this.recomputePhasesInTx(tx, workflowId, args.toNodeId);
+      const phaseDiff = this.recomputePhasesInTx(tx, workflowId, [args.toNodeId]);
       this.repo.updateNodePhases(tx, phaseDiff);
       resultToPhase = phaseDiff.get(args.toNodeId) ?? toNode.phase;
       toKind = toNode.kind;
@@ -702,6 +759,679 @@ export class WorkflowService {
     if (!casOk) throw new WorkflowAlreadyTerminalError(args.workflowId);
 
     await this.reconcileCancelExceptCaller(args.workflowId, null);
+  }
+
+  // ─── removeNode ──────────────────────────────────────────
+
+  /**
+   * Delete a node from the workflow. Allowed only when:
+   *
+   *   - the workflow is `running` and the caller is the unique
+   *     running coord (cross-cut auth gate);
+   *   - the target node belongs to this workflow;
+   *   - the target node's status is `not_started` (sealing rule —
+   *     once dispatch engages, the row is immutable);
+   *   - no child of the node would be left with zero parents after
+   *     the delete (orphan rule —
+   *     {@link WorkflowRemoveNodeOrphansChildError}).
+   *
+   * All adjacent edges (both incoming and outgoing) are deleted in
+   * the same write tx. After the row + edge deletes commit, the
+   * not_started descendant phases are recomputed (the removed node
+   * may have been the longest-path predecessor of one or more
+   * descendants).
+   *
+   * No D28 dispatch reaction is fired (removal cannot make a node
+   * eligible for dispatch).
+   */
+  async removeNode(args: RemoveNodeArgs): Promise<void> {
+    const C = await this.deriveCallerCoord(args.workflowId);
+    const workflowId = args.workflowId;
+
+    this.db.transaction((tx) => {
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
+
+      const node = this.repo.readNodeTx(tx, args.nodeId);
+      if (node === null) throw new WorkflowNodeNotFoundError(workflowId, args.nodeId);
+      if (node.workflowId !== workflowId) {
+        throw new WorkflowMutationUnauthorizedError(
+          workflowId,
+          C.id,
+          `target node "${args.nodeId}" is in a different workflow`,
+        );
+      }
+      if (node.status !== "not_started") {
+        throw new WorkflowNodeNotMutableError(workflowId, args.nodeId, node.status, "removeNode");
+      }
+
+      // Orphan-child check uses the PRE-delete edge set. Performed
+      // BEFORE the row + edge deletes so a rejected call leaves no
+      // state behind (the tx would still roll back on throw, but
+      // surfacing the rejection earlier keeps the code self-evident
+      // and avoids the rare case of a write-then-throw partial
+      // application in a future refactor).
+      const liveEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+      const childIds = liveEdges.filter((e) => e.from === args.nodeId).map((e) => e.to);
+      const parentsByChild = new Map<string, string[]>();
+      for (const e of liveEdges) {
+        if (!parentsByChild.has(e.to)) parentsByChild.set(e.to, []);
+        parentsByChild.get(e.to)!.push(e.from);
+      }
+      for (const child of childIds) {
+        const others = (parentsByChild.get(child) ?? []).filter((p) => p !== args.nodeId);
+        if (others.length === 0) {
+          throw new WorkflowRemoveNodeOrphansChildError(workflowId, args.nodeId, child);
+        }
+      }
+
+      this.repo.deleteEdgesAdjacentToNodeTx(tx, workflowId, args.nodeId);
+      this.repo.deleteNodeTx(tx, args.nodeId);
+
+      // Seed the recompute on every former child — each just lost
+      // a parent, so its longest-path phase may have decreased; the
+      // not_started descendants of those children may then shift in
+      // turn (the helper handles the cascade).
+      const phaseDiff = this.recomputePhasesInTx(tx, workflowId, childIds);
+      this.repo.updateNodePhases(tx, phaseDiff);
+    });
+
+    // TODO(phase-3-dispatch): no nodes become dispatchable from a
+    // pure removal; left as a comment for symmetry with the other
+    // structural primitives.
+  }
+
+  // ─── removeEdge ──────────────────────────────────────────
+
+  /**
+   * Delete a single edge `(fromNodeId, toNodeId)`. Allowed only when:
+   *
+   *   - the workflow is `running` and the caller is the unique
+   *     running coord (cross-cut auth gate);
+   *   - both endpoints belong to this workflow;
+   *   - the edge exists ({@link WorkflowEdgeNotFoundError} otherwise);
+   *   - the to-node's status is `not_started` (sealing rule);
+   *   - the to-node would retain ≥1 parent after the delete
+   *     ({@link WorkflowRemoveEdgeOrphansChildError} otherwise).
+   *
+   * After the delete, the to-node's phase + its not_started
+   * descendants' phases are recomputed (the deleted edge may have
+   * been the longest-path predecessor).
+   *
+   * No D28 dispatch reaction is fired (removal cannot make a node
+   * eligible for dispatch).
+   */
+  async removeEdge(args: RemoveEdgeArgs): Promise<void> {
+    const C = await this.deriveCallerCoord(args.workflowId);
+    const workflowId = args.workflowId;
+
+    this.db.transaction((tx) => {
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
+
+      const endpoints = this.repo.readNodesByIds(tx, [args.fromNodeId, args.toNodeId]);
+      const fromNode = endpoints.find((n) => n.id === args.fromNodeId);
+      const toNode = endpoints.find((n) => n.id === args.toNodeId);
+      if (fromNode === undefined) throw new WorkflowNodeNotFoundError(workflowId, args.fromNodeId);
+      if (toNode === undefined) throw new WorkflowNodeNotFoundError(workflowId, args.toNodeId);
+
+      if (fromNode.workflowId !== workflowId || toNode.workflowId !== workflowId) {
+        throw new WorkflowMutationUnauthorizedError(
+          workflowId,
+          C.id,
+          "edge endpoint(s) are in a different workflow",
+        );
+      }
+
+      if (toNode.status !== "not_started") {
+        throw new WorkflowNodeNotMutableError(
+          workflowId,
+          args.toNodeId,
+          toNode.status,
+          "removeEdge",
+        );
+      }
+
+      const liveEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+      const exists = liveEdges.some((e) => e.from === args.fromNodeId && e.to === args.toNodeId);
+      if (!exists) {
+        throw new WorkflowEdgeNotFoundError(workflowId, args.fromNodeId, args.toNodeId);
+      }
+
+      const parentsOfTo = liveEdges.filter((e) => e.to === args.toNodeId).map((e) => e.from);
+      if (parentsOfTo.length <= 1) {
+        throw new WorkflowRemoveEdgeOrphansChildError(workflowId, args.fromNodeId, args.toNodeId);
+      }
+
+      const deleted = this.repo.deleteEdgeTx(tx, {
+        workflowId,
+        from: args.fromNodeId,
+        to: args.toNodeId,
+      });
+      // Defensive: the row was present per the `exists` check above;
+      // a 0-rows delete here would indicate a concurrent mutation,
+      // which the auth gate + tx isolation already preclude.
+      void deleted;
+
+      const phaseDiff = this.recomputePhasesInTx(tx, workflowId, [args.toNodeId]);
+      this.repo.updateNodePhases(tx, phaseDiff);
+    });
+
+    // TODO(phase-3-dispatch): no nodes become dispatchable from a
+    // pure edge removal; left as a comment for symmetry with the
+    // other structural primitives.
+  }
+
+  // ─── replaceNodeSpec ─────────────────────────────────────
+
+  /**
+   * Replace a node's opaque `spec` payload. Kind cannot change —
+   * there is no `newKind` arg, and the substrate routes the
+   * re-validation through the existing-kind's runner.
+   *
+   * Allowed only when:
+   *
+   *   - the workflow is `running` and the caller is the unique
+   *     running coord (cross-cut auth gate);
+   *   - the target node belongs to this workflow;
+   *   - the target node's status is `not_started`;
+   *   - `runner.validate(newSpec, ctx)` accepts the payload.
+   *
+   * Spec doesn't affect topology, so no phase recompute fires.
+   *
+   * Denorm sync: if the target node is the latest coord-kind node
+   * in this workflow (`ORDER BY created_at DESC, id DESC LIMIT 1`),
+   * `workflows.coordinator_agent` is refreshed from the new spec's
+   * `agent` field. Otherwise the denorm is left untouched — older
+   * coord nodes don't drive the denorm because the substrate already
+   * stamped the denorm from the latest coord at its insert time.
+   */
+  async replaceNodeSpec(args: ReplaceNodeSpecArgs): Promise<void> {
+    const C = await this.deriveCallerCoord(args.workflowId);
+    const workflowId = args.workflowId;
+
+    // Phase A: pre-validate outside the tx so the runner's potentially
+    // async validate runs without holding a write lock. Errors that
+    // depend on persisted state (status, workflow-membership) are
+    // re-checked inside the tx below — the Phase A read is best-effort
+    // ergonomics, the inside-tx check is the source of truth.
+    const phaseANode = await this.repo.readNode(args.nodeId);
+    if (phaseANode === null) throw new WorkflowNodeNotFoundError(workflowId, args.nodeId);
+    if (phaseANode.workflowId !== workflowId) {
+      throw new WorkflowMutationUnauthorizedError(
+        workflowId,
+        C.id,
+        `target node "${args.nodeId}" is in a different workflow`,
+      );
+    }
+    if (phaseANode.status !== "not_started") {
+      throw new WorkflowNodeNotMutableError(
+        workflowId,
+        args.nodeId,
+        phaseANode.status,
+        "replaceNodeSpec",
+      );
+    }
+
+    const nodeKind = phaseANode.kind;
+    const runner = this.runnerFor(nodeKind);
+    const validateCtx: WorkflowNodeValidateCtx = {
+      workflowId,
+      callerCoordNodeId: C.id,
+      callerCoordSpec: C.spec,
+      workflowStatus: "running",
+    };
+    const validatedSpec = await runner.validate(args.newSpec, validateCtx);
+
+    if (nodeKind === COORDINATOR_KIND) {
+      // The substrate needs `spec.agent` to maintain the
+      // `workflows.coordinator_agent` denorm. Surface a clear error
+      // if the runner returned a shape without it (mirrors the same
+      // assertion in `createWorkflow` and `addNode`).
+      assertCoordinatorSpecAgent(validatedSpec);
+    }
+
+    this.db.transaction((tx) => {
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
+
+      // Re-read inside the tx so a concurrent dispatch / cancel that
+      // moved the node out of `not_started` rejects this write
+      // instead of silently overwriting a sealed row.
+      const node = this.repo.readNodeTx(tx, args.nodeId);
+      if (node === null) throw new WorkflowNodeNotFoundError(workflowId, args.nodeId);
+      if (node.workflowId !== workflowId) {
+        throw new WorkflowMutationUnauthorizedError(
+          workflowId,
+          C.id,
+          `target node "${args.nodeId}" is in a different workflow`,
+        );
+      }
+      if (node.status !== "not_started") {
+        throw new WorkflowNodeNotMutableError(
+          workflowId,
+          args.nodeId,
+          node.status,
+          "replaceNodeSpec",
+        );
+      }
+      // The substrate's view of `kind` comes from the `kind` column,
+      // not from spec_json. Even if a future runner returned a spec
+      // with a `kind` field, the substrate ignores it on read — the
+      // immutable-kind contract is enforced by the absence of a
+      // `newKind` arg AND by `kind` being persisted in its own
+      // column.
+      if (node.kind !== nodeKind) {
+        throw new WorkflowError(
+          `replaceNodeSpec: kind changed between Phase A read and tx (${nodeKind} → ${node.kind}); concurrent schema mutation?`,
+        );
+      }
+
+      this.repo.updateNodeSpecTx(tx, args.nodeId, validatedSpec);
+
+      if (nodeKind === COORDINATOR_KIND) {
+        const latestCoordId = this.repo.findLatestCoordIdTx(tx, workflowId);
+        if (latestCoordId === args.nodeId) {
+          const agent = (validatedSpec as { agent: string }).agent;
+          this.repo.updateWorkflowCoordinatorAgentTx(tx, workflowId, agent);
+        }
+      }
+    });
+  }
+
+  // ─── addSubgraph ─────────────────────────────────────────
+
+  /**
+   * Batch insert of N nodes + M edges in one write tx.
+   *
+   * Each declared `node` carries a `tempId` (batch-local primary
+   * key) and an optional `existingParents` array (real node ids
+   * already persisted in this workflow). Each `edge` references its
+   * endpoints via a {@link NodeRef} discriminated union (either an
+   * `existing` real id or a `temp` tempId). The substrate resolves
+   * all tempIds to real UUIDv4 node ids, computes phases by
+   * topological walk, and inserts everything inside one tx.
+   *
+   * Per-temp acceptance gates (all enforced before the write tx
+   * opens; see implementation for the layered ordering):
+   *
+   *   1. Auth: derived caller coord (workflow `running`).
+   *   2. nodes.length ≥ 1.
+   *   3. tempId uniqueness + non-empty.
+   *   4. Every temp has ≥1 parent (existing + intra-batch).
+   *   5. Every NodeRef resolves (temp → declared tempId;
+   *      existing → real node in this workflow).
+   *   6. Existing targets of new edges are `not_started`.
+   *   7. Intra-batch + joined-DAG acyclic.
+   *   8. Worker temps reject failed/cancelled parents (D29).
+   *   9. ≤1 coord-kind temp in batch.
+   *  10. If any coord temp present: D23 (caller has no other
+   *      coord-kind child) AND D27 (coord temp's existingParents
+   *      includes the caller).
+   *  11. Per-temp `runner.validate(spec, ctx)`.
+   *
+   * The joined-DAG cycle check (#7) re-uses the per-edge
+   * {@link wouldCreateCycle} helper applied to the accumulating
+   * edge set; this is the simpler-to-audit alternative to a
+   * full-graph SCC scan and is correct because the substrate's pre-
+   * batch edge set is already acyclic (invariant of every prior
+   * mutation).
+   *
+   * Returns the mapping `tempId → { nodeId, phase }` for every
+   * inserted node. Phases match the persisted row exactly (the
+   * helper reads back from the diff that was just written).
+   *
+   * D28 eager-dispatch reaction is NOT fired in Phase 2b; the
+   * runtime substrate will pick it up in a later phase.
+   */
+  async addSubgraph(args: AddSubgraphArgs): Promise<AddSubgraphResult> {
+    if (args.nodes.length === 0) throw new WorkflowSubgraphEmptyError();
+
+    const workflowId = args.workflowId;
+
+    // Normalize the raw input into the pure-helper shape, then dedupe
+    // (P15-a). Callers may pass the same `existingParents` ref twice
+    // or declare an `edges[]` entry twice; the substrate silently
+    // collapses both because they're semantically idempotent (and
+    // would otherwise trip the composite-PK constraint at insert
+    // time as a generic SQLite error rather than a domain rejection).
+    // Downstream topology + insert logic always sees the deduplicated
+    // form. Mirrors `addNode`'s `Array.from(new Set(args.parents))`
+    // convention.
+    const rawTempNodes: SubgraphTempNodeShape[] = args.nodes.map((n) => ({
+      tempId: n.tempId,
+      kind: n.kind,
+      existingParents: n.existingParents ?? [],
+    }));
+    const rawTempEdges: SubgraphEdgeShape[] = args.edges.map((e) => ({ from: e.from, to: e.to }));
+    const { nodes: tempNodes, edges: tempEdges } = normalizeSubgraphInput({
+      nodes: rawTempNodes,
+      edges: rawTempEdges,
+    });
+
+    // Pure-helper validation (steps 2, 3, 4, 9 + intra-batch ref
+    // resolution part of 5). Throws on first violation.
+    validateSubgraphShape(workflowId, tempNodes, tempEdges);
+
+    // Topological order over the temps (intra-batch acyclicity part
+    // of #7). Deterministic across runs — lexicographic tiebreaker
+    // on tempId so the inserted-nodes return order is stable.
+    const topoOrder = resolveSubgraphTopology(workflowId, tempNodes, tempEdges);
+
+    const C = await this.deriveCallerCoord(workflowId);
+
+    // Pass A (P15-c): cheap existing-ref existence + workflow-membership
+    // pre-check. Runs BEFORE the per-temp `runner.validate` calls so
+    // a malformed batch with a typo'd ref short-circuits without
+    // paying N validate calls. Mirrors the inside-tx recheck below
+    // exactly (same error types, same predicates) so a caller cannot
+    // observe a different rejection depending on which pass caught
+    // the issue. The joined-DAG cycle check stays inside the write
+    // tx — it needs snapshot consistency that a pre-tx read cannot
+    // provide.
+    const existingRefIds = new Set<string>();
+    for (const t of tempNodes) {
+      for (const p of t.existingParents) existingRefIds.add(p);
+    }
+    for (const e of tempEdges) {
+      if (e.from.kind === "existing") existingRefIds.add(e.from.id);
+      if (e.to.kind === "existing") existingRefIds.add(e.to.id);
+    }
+    if (existingRefIds.size > 0) {
+      const refIdList = Array.from(existingRefIds);
+      const preReadNodes = this.repo.readNodesByIds(this.db, refIdList);
+      const preReadById = new Map(preReadNodes.map((n) => [n.id, n]));
+      for (const refId of refIdList) {
+        const node = preReadById.get(refId);
+        if (node === undefined) {
+          throw new WorkflowSubgraphNodeRefUnresolvedError(workflowId, "existing", refId);
+        }
+        if (node.workflowId !== workflowId) {
+          throw new WorkflowMutationUnauthorizedError(
+            workflowId,
+            C.id,
+            `referenced existing node "${refId}" is in a different workflow`,
+          );
+        }
+      }
+    }
+
+    // Substrate-internal index lookups built once per batch.
+    const tempByTempId = new Map<string, SubgraphTempNodeShape>();
+    for (const t of tempNodes) tempByTempId.set(t.tempId, t);
+    const fullNodeByTempId = new Map<string, AddSubgraphNodeInput>();
+    for (const n of args.nodes) fullNodeByTempId.set(n.tempId, n);
+
+    // Allocate real node ids before per-temp validate so the
+    // validate ctx (which carries the caller) is constant across
+    // the batch (validate args themselves DO NOT carry the
+    // tempId-to-realId mapping — that's a substrate concern). Stable
+    // order = topological order.
+    const tempIdToNodeId = new Map<string, string>();
+    for (const t of topoOrder) {
+      tempIdToNodeId.set(t.tempId, generateWorkflowNodeId(this.randomUUID));
+    }
+
+    // Per-temp spec validation. Runs OUTSIDE the write tx (runner
+    // validate may do catalog lookups). Validate order matches the
+    // topological order so a runner that builds incremental context
+    // sees parents before children.
+    const validatedSpecByTempId = new Map<string, unknown>();
+    for (const t of topoOrder) {
+      const full = fullNodeByTempId.get(t.tempId);
+      if (full === undefined) {
+        throw new WorkflowError(`addSubgraph: lost full node entry for tempId "${t.tempId}"`);
+      }
+      const runner = this.runnerFor(t.kind);
+      const validateCtx: WorkflowNodeValidateCtx = {
+        workflowId,
+        callerCoordNodeId: C.id,
+        callerCoordSpec: C.spec,
+        workflowStatus: "running",
+      };
+      const validatedSpec = await runner.validate(full.spec, validateCtx);
+      if (t.kind === COORDINATOR_KIND) assertCoordinatorSpecAgent(validatedSpec);
+      validatedSpecByTempId.set(t.tempId, validatedSpec);
+    }
+
+    const nowIso = this.now().toISOString();
+    const insertedNodes: AddSubgraphInsertedNode[] = [];
+
+    this.db.transaction((tx) => {
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
+
+      // Resolve every existing-ref against the live DB state. One
+      // pass collects all referenced existing ids, then a single
+      // batch read populates the index.
+      const existingRefIds = new Set<string>();
+      for (const t of tempNodes) {
+        for (const p of t.existingParents) existingRefIds.add(p);
+      }
+      for (const e of tempEdges) {
+        if (e.from.kind === "existing") existingRefIds.add(e.from.id);
+        if (e.to.kind === "existing") existingRefIds.add(e.to.id);
+      }
+      const existingNodes = this.repo.readNodesByIds(tx, Array.from(existingRefIds));
+      const existingById = new Map(existingNodes.map((n) => [n.id, n]));
+      for (const refId of existingRefIds) {
+        const node = existingById.get(refId);
+        if (node === undefined) {
+          throw new WorkflowSubgraphNodeRefUnresolvedError(workflowId, "existing", refId);
+        }
+        if (node.workflowId !== workflowId) {
+          throw new WorkflowMutationUnauthorizedError(
+            workflowId,
+            C.id,
+            `referenced existing node "${refId}" is in a different workflow`,
+          );
+        }
+      }
+
+      // Existing targets of new edges must be `not_started` (D24 — a
+      // node that's already dispatched cannot accept new incoming
+      // edges without violating the sealing rule).
+      for (const e of tempEdges) {
+        if (e.to.kind === "existing") {
+          const target = existingById.get(e.to.id);
+          if (target !== undefined && target.status !== "not_started") {
+            throw new WorkflowNodeNotMutableError(
+              workflowId,
+              e.to.id,
+              target.status,
+              "addSubgraph",
+            );
+          }
+        }
+      }
+
+      // Per-temp parent state + kind-specific gates.
+      // D29: worker temps reject failed/cancelled parents. D27:
+      // coord temps require the caller in their existingParents.
+      // D23: caller has no coord child outside the batch (the
+      // intra-batch ≤1 rule already enforces the inside-batch
+      // count via validateSubgraphShape).
+      const coordTemp = tempNodes.find((t) => t.kind === COORDINATOR_KIND);
+      for (const t of tempNodes) {
+        if (t.kind === WORKER_KIND) {
+          for (const pid of t.existingParents) {
+            const parent = existingById.get(pid);
+            if (parent !== undefined) {
+              if (parent.status === "failed" || parent.status === "cancelled") {
+                throw new ParentStateError(workflowId, t.kind, parent.id, parent.status);
+              }
+            }
+          }
+        }
+      }
+      if (coordTemp !== undefined) {
+        if (!coordTemp.existingParents.includes(C.id)) {
+          throw new OrphanCoordInsertError(workflowId, C.id);
+        }
+        const liveEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+        const callerChildIds = liveEdges.filter((e) => e.from === C.id).map((e) => e.to);
+        if (callerChildIds.length > 0) {
+          const callerChildren = this.repo.readNodesByIds(tx, callerChildIds);
+          if (callerChildren.some((c) => c.kind === COORDINATOR_KIND)) {
+            throw new MultipleSuccessorCoordsError(workflowId, C.id);
+          }
+        }
+      }
+
+      // Joined-DAG acyclicity (#7 — joined part). Accumulate edges
+      // onto the live edge set; reject the first new edge that would
+      // close a cycle. Equivalent to a full graph re-check at lower
+      // cost; correct because the pre-batch DAG is acyclic by
+      // invariant.
+      const accumulatedEdges: { from: string; to: string }[] = this.repo
+        .listEdgesByWorkflowTx(tx, workflowId)
+        .map((e) => ({ from: e.from, to: e.to }));
+      // Project tempEdges into real-id pairs using the tempId→nodeId
+      // mapping (we resolve real ids here BEFORE inserting rows so
+      // the cycle check sees the final id space; insertion order is
+      // governed by the topo sort below).
+      type ResolvedEdge = {
+        readonly from: string;
+        readonly to: string;
+        readonly origFrom: string;
+        readonly origTo: string;
+      };
+      const projectedEdges: ResolvedEdge[] = tempEdges.map((e) => {
+        const from = e.from.kind === "existing" ? e.from.id : tempIdToNodeId.get(e.from.tempId)!;
+        const to = e.to.kind === "existing" ? e.to.id : tempIdToNodeId.get(e.to.tempId)!;
+        return {
+          from,
+          to,
+          origFrom: e.from.kind === "existing" ? e.from.id : `temp:${e.from.tempId}`,
+          origTo: e.to.kind === "existing" ? e.to.id : `temp:${e.to.tempId}`,
+        };
+      });
+      // Also include synthetic parent→temp edges (existingParents),
+      // since they participate in the joined DAG as well.
+      const allNewEdges: ResolvedEdge[] = [];
+      for (const t of tempNodes) {
+        const realChild = tempIdToNodeId.get(t.tempId)!;
+        for (const parentId of t.existingParents) {
+          allNewEdges.push({
+            from: parentId,
+            to: realChild,
+            origFrom: parentId,
+            origTo: `temp:${t.tempId}`,
+          });
+        }
+      }
+      for (const e of projectedEdges) allNewEdges.push(e);
+      for (const ne of allNewEdges) {
+        if (wouldCreateCycle(accumulatedEdges, ne)) {
+          throw new WorkflowSubgraphCyclicError(workflowId, ne.origFrom, ne.origTo);
+        }
+        accumulatedEdges.push({ from: ne.from, to: ne.to });
+      }
+
+      // Compute per-temp phase. Existing parents contribute their
+      // persisted phase; intra-batch temp parents contribute their
+      // freshly-assigned phase from earlier in the topo pass.
+      const tempPhaseByTempId = new Map<string, number>();
+      for (const t of topoOrder) {
+        let maxParent = -1;
+        for (const pid of t.existingParents) {
+          const p = existingById.get(pid);
+          if (p !== undefined && p.phase > maxParent) maxParent = p.phase;
+        }
+        for (const e of tempEdges) {
+          if (e.to.kind === "temp" && e.to.tempId === t.tempId) {
+            if (e.from.kind === "existing") {
+              const p = existingById.get(e.from.id);
+              if (p !== undefined && p.phase > maxParent) maxParent = p.phase;
+            } else {
+              const ph = tempPhaseByTempId.get(e.from.tempId);
+              if (ph !== undefined && ph > maxParent) maxParent = ph;
+            }
+          }
+        }
+        tempPhaseByTempId.set(t.tempId, maxParent + 1);
+      }
+
+      // Insert rows in topological order. Coord-kind temps go through
+      // the same denorm-update path as `addNode(kind='coordinator')`
+      // via inline writes — we re-build the same shape inline rather
+      // than reuse `insertCoordNodeInTx` so the explicit per-temp
+      // phase from the topo pass is honored (the helper would
+      // recompute from parents-on-disk, which doesn't yet include
+      // sibling temps).
+      const latestCoordTempId: string | null = coordTemp?.tempId ?? null;
+      for (const t of topoOrder) {
+        const nodeId = tempIdToNodeId.get(t.tempId)!;
+        const phase = tempPhaseByTempId.get(t.tempId)!;
+        const validatedSpec = validatedSpecByTempId.get(t.tempId);
+        const node = nodeEntityFor({
+          id: nodeId,
+          workflowId,
+          kind: t.kind,
+          spec: validatedSpec,
+          phase,
+          status: "not_started",
+          nowIso,
+        });
+        this.repo.insertNode(tx, node);
+        insertedNodes.push({ tempId: t.tempId, nodeId, phase });
+      }
+      // Insert edges: existingParent → temp, then explicit batch edges.
+      for (const t of topoOrder) {
+        const realChild = tempIdToNodeId.get(t.tempId)!;
+        for (const parentId of t.existingParents) {
+          this.repo.insertEdge(tx, { workflowId, from: parentId, to: realChild });
+        }
+      }
+      for (const e of tempEdges) {
+        const from = e.from.kind === "existing" ? e.from.id : tempIdToNodeId.get(e.from.tempId)!;
+        const to = e.to.kind === "existing" ? e.to.id : tempIdToNodeId.get(e.to.tempId)!;
+        this.repo.insertEdge(tx, { workflowId, from, to });
+      }
+
+      // Denorm sync if the batch carries a coord temp — by the
+      // batch's own ordering, that coord is the latest coord in this
+      // workflow at commit time. The `findLatestCoordIdTx`-guarded
+      // write (P15-f) unifies the addSubgraph denorm sync with the
+      // sibling pattern in `replaceNodeSpec`: both consult the same
+      // helper for "is this row the latest coord?" so the substrate
+      // has a single source of truth for the (created_at DESC, id
+      // DESC) ordering. The equality holds in normal operation
+      // (freshly-inserted coord wins on createdAt), but the explicit
+      // check defends against any future schema-corruption case the
+      // helper is hardened against.
+      if (latestCoordTempId !== null) {
+        const validatedSpec = validatedSpecByTempId.get(latestCoordTempId) as { agent: string };
+        const newCoordNodeId = tempIdToNodeId.get(latestCoordTempId) as string;
+        const latestCoordId = this.repo.findLatestCoordIdTx(tx, workflowId);
+        if (latestCoordId === newCoordNodeId) {
+          this.repo.updateWorkflowCoordinatorAgentTx(tx, workflowId, validatedSpec.agent);
+        }
+      }
+
+      // Phase recompute on every existing not_started to-node that
+      // gained a parent from this batch. A new temp parent can
+      // increase the to-node's longest-path depth (subtle correctness
+      // trap callout in the spec).
+      const existingTargetIds = new Set<string>();
+      for (const e of tempEdges) {
+        if (e.to.kind === "existing") {
+          const target = existingById.get(e.to.id);
+          if (target !== undefined && target.status === "not_started") {
+            existingTargetIds.add(e.to.id);
+          }
+        }
+      }
+      if (existingTargetIds.size > 0) {
+        const phaseDiff = this.recomputePhasesInTx(tx, workflowId, Array.from(existingTargetIds));
+        this.repo.updateNodePhases(tx, phaseDiff);
+      }
+    });
+
+    // TODO(phase-3-dispatch): dispatch reaction over inserted nodes
+    // + existing nodes that gained edges. Phase 2b deliberately
+    // leaves the eager-dispatch loop unwired here — the existing
+    // engine path (addNode / addEdge) handles single-shot inserts
+    // already; the batch primitive's reaction belongs in the Phase
+    // 3+4 wiring.
+
+    return { insertedNodes };
   }
 
   // ─── dispatchAtomic ──────────────────────────────────────
@@ -1004,10 +1734,19 @@ export class WorkflowService {
   }
 
   /**
-   * Recompute phase across the `not_started` subtree rooted at
-   * `startNodeId`. Skips running / terminal descendants — their
-   * phase is sealed for the lifetime of the workflow because the
-   * dispatch loop has already engaged.
+   * Recompute phase across the `not_started` subtree rooted at one
+   * or more seed nodes. Skips running / terminal descendants —
+   * their phase is sealed for the lifetime of the workflow because
+   * the dispatch loop has already engaged.
+   *
+   * Multi-seed because the structural mutations differ in their
+   * seed cardinality:
+   *   - `addEdge`: 1 seed (the to-node).
+   *   - `removeEdge`: 1 seed (the to-node, which just lost a parent).
+   *   - `removeNode`: N seeds (every child of the removed node,
+   *     since each lost a parent).
+   *   - `addSubgraph`: M seeds (each existing not_started to-node
+   *     that gained a temp parent).
    *
    * Returns the diff (id → new phase) so the caller can issue the
    * bulk UPDATE inside the same tx.
@@ -1015,8 +1754,9 @@ export class WorkflowService {
   private recomputePhasesInTx(
     tx: Db,
     workflowId: string,
-    startNodeId: string,
+    startNodeIds: readonly string[],
   ): Map<string, number> {
+    if (startNodeIds.length === 0) return new Map();
     const allNodes = this.repo.listNodesByWorkflowTx(tx, workflowId);
     const allEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
     const byId = new Map(allNodes.map((n) => [n.id, n]));
@@ -1029,20 +1769,25 @@ export class WorkflowService {
       parentsOfMap.get(e.to)!.push(e.from);
     }
 
-    const start = byId.get(startNodeId);
+    // Seed the in-scope set from each not_started start node, then
+    // BFS down through not_started descendants.
     const inScope = new Set<string>();
-    if (start !== undefined && start.status === "not_started") {
-      inScope.add(startNodeId);
-      const queue: string[] = [startNodeId];
-      while (queue.length > 0) {
-        const cur = queue.shift() as string;
-        for (const c of childrenOf.get(cur) ?? []) {
-          if (inScope.has(c)) continue;
-          const node = byId.get(c);
-          if (node?.status === "not_started") {
-            inScope.add(c);
-            queue.push(c);
-          }
+    const queue: string[] = [];
+    for (const seedId of startNodeIds) {
+      const seed = byId.get(seedId);
+      if (seed === undefined || seed.status !== "not_started") continue;
+      if (inScope.has(seedId)) continue;
+      inScope.add(seedId);
+      queue.push(seedId);
+    }
+    while (queue.length > 0) {
+      const cur = queue.shift() as string;
+      for (const c of childrenOf.get(cur) ?? []) {
+        if (inScope.has(c)) continue;
+        const node = byId.get(c);
+        if (node?.status === "not_started") {
+          inScope.add(c);
+          queue.push(c);
         }
       }
     }
