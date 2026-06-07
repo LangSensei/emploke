@@ -68,7 +68,7 @@ export interface CreateWorkflowResult {
 }
 
 export interface AddNodeArgs {
-  readonly callerCoordNodeId: string;
+  readonly workflowId: string;
   readonly kind: NodeKind;
   readonly spec: unknown;
   readonly parents: ReadonlyArray<string>;
@@ -80,7 +80,7 @@ export interface AddNodeResult {
 }
 
 export interface AddEdgeArgs {
-  readonly callerCoordNodeId: string;
+  readonly workflowId: string;
   readonly fromNodeId: string;
   readonly toNodeId: string;
 }
@@ -90,12 +90,12 @@ export interface AddEdgeResult {
 }
 
 export interface CancelNodeArgs {
-  readonly callerCoordNodeId: string;
+  readonly workflowId: string;
   readonly nodeId: string;
 }
 
 export interface FinishWorkflowArgs {
-  readonly callerCoordNodeId: string;
+  readonly workflowId: string;
   readonly outcome: "succeeded" | "failed";
 }
 
@@ -146,21 +146,31 @@ export interface WorkflowDagSnapshot {
  *
  * ## Auth gate
  *
- * Every mutation method (except `cancelWorkflow`) requires the caller
- * to pass an explicit `callerCoordNodeId`. The service evaluates the
- * cross-cut predicate
+ * Every mutation method (except `cancelWorkflow`) takes an explicit
+ * `workflowId` and the substrate **derives** the caller coordinator
+ * (`C`) at the top of the mutation tx as the unique
+ * `kind='coordinator' AND status='running'` row in that workflow
+ * (per invariant #2). The cross-cut predicate
  *
  * ```text
- *   caller.kind   = 'coordinator'
- * AND caller.status = 'running'
+ *   C.kind        = 'coordinator'
+ * AND C.status      = 'running'
  * AND workflow.status = 'running'
  * ```
  *
- * via a single JOIN inside the mutation transaction. Failure throws
- * {@link WorkflowMutationUnauthorizedError}. Workflow-level
- * `cancelWorkflow` is an external operator API and bypasses the
- * caller-coord gate; HTTP / IPC surface enforces the operator's
- * authority.
+ * is established by the derivation succeeding (1 row) plus a
+ * workflow-status check; the inside-tx recheck against the derived
+ * `C.id` (a JOIN read inside the write tx) defends against the race
+ * window between derivation and write. Failure throws
+ * {@link WorkflowMutationUnauthorizedError}. The legitimate handover
+ * window (0 running coords between a coord's `finishWorkflow` and
+ * the next coord spawning) cleanly rejects mutations with reason
+ * `"no active caller coord ..."`; a defensive 2+-coord case
+ * indicates schema corruption (invariant #2 violation).
+ *
+ * Workflow-level `cancelWorkflow` is an external operator API and
+ * bypasses the derivation + auth gate; HTTP / IPC surface enforces
+ * the operator's authority.
  */
 export class WorkflowService {
   private readonly repo: WorkflowRepository;
@@ -314,8 +324,9 @@ export class WorkflowService {
     // Structural precondition: every primitive insert must root in
     // the existing DAG. The initial coord (created via
     // `createWorkflow`) is the unique phase-0 entry point; every
-    // subsequent node MUST list ≥1 parent. Fires BEFORE the auth
-    // gate so the rejection is order-independent of caller state.
+    // subsequent node MUST list ≥1 parent. Fires BEFORE the
+    // derivation so the rejection is order-independent of caller
+    // state.
     if (args.parents.length === 0) {
       throw new EmptyParentsError();
     }
@@ -324,27 +335,18 @@ export class WorkflowService {
     const nodeId = generateWorkflowNodeId(this.randomUUID);
     const nowIso = this.now().toISOString();
 
-    // The validate ctx needs the caller coord's spec; pull it from
-    // the same JOIN read used by the auth gate to avoid a second
-    // round-trip outside the tx.
-    let validateCtx: WorkflowNodeValidateCtx | null = null;
-    let workflowId: string;
-
-    // Phase A: a tx-less read just to construct the validate ctx so
-    // runner.validate (which may do async catalog lookups) runs
-    // outside the write tx.
-    {
-      const ctx = this.db.transaction((tx) =>
-        this.assertAuthCallerCoord(tx, args.callerCoordNodeId),
-      );
-      validateCtx = {
-        workflowId: ctx.workflowId,
-        callerCoordNodeId: args.callerCoordNodeId,
-        callerCoordSpec: ctx.callerSpec,
-        workflowStatus: "running",
-      };
-      workflowId = ctx.workflowId;
-    }
+    // Phase A: derive the caller coord (`C`) from `args.workflowId`
+    // and construct the validate ctx. `runner.validate` may do async
+    // catalog lookups; it runs OUTSIDE the write tx so a network
+    // round-trip never holds a write lock.
+    const C = await this.deriveCallerCoord(args.workflowId);
+    const validateCtx: WorkflowNodeValidateCtx = {
+      workflowId: args.workflowId,
+      callerCoordNodeId: C.id,
+      callerCoordSpec: C.spec,
+      workflowStatus: "running",
+    };
+    const workflowId = args.workflowId;
 
     const validatedSpec = await runner.validate(args.spec, validateCtx);
 
@@ -359,10 +361,10 @@ export class WorkflowService {
     let resultPhase = 0;
     let uniqueParents: readonly string[] = [];
     this.db.transaction((tx) => {
-      // Re-check auth inside the write tx so a concurrent caller-coord
-      // termination between the validate phase and the insert is
-      // caught atomically.
-      this.assertAuthCallerCoord(tx, args.callerCoordNodeId, workflowId);
+      // Defense-in-depth recheck: re-assert that C is still a
+      // running coord in a running workflow. Catches a concurrent
+      // caller-coord termination between Phase A and the write tx.
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
 
       // Read the parent set inside the tx.
       uniqueParents = Array.from(new Set(args.parents));
@@ -376,7 +378,7 @@ export class WorkflowService {
         if (p.workflowId !== workflowId) {
           throw new WorkflowMutationUnauthorizedError(
             workflowId,
-            args.callerCoordNodeId,
+            C.id,
             `parent node "${p.id}" is in a different workflow`,
           );
         }
@@ -392,20 +394,18 @@ export class WorkflowService {
       }
 
       if (args.kind === COORDINATOR_KIND) {
-        if (!uniqueParents.includes(args.callerCoordNodeId)) {
-          throw new OrphanCoordInsertError(workflowId, args.callerCoordNodeId);
+        if (!uniqueParents.includes(C.id)) {
+          throw new OrphanCoordInsertError(workflowId, C.id);
         }
         // Caller MUST NOT already have a coord-kind child. Inspect
         // the live edge set + node kinds for any (caller → coord)
         // edge already present.
         const allEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
-        const callerChildren = allEdges
-          .filter((e) => e.from === args.callerCoordNodeId)
-          .map((e) => e.to);
+        const callerChildren = allEdges.filter((e) => e.from === C.id).map((e) => e.to);
         if (callerChildren.length > 0) {
           const childNodes = this.repo.readNodesByIds(tx, callerChildren);
           if (childNodes.some((c) => c.kind === COORDINATOR_KIND)) {
-            throw new MultipleSuccessorCoordsError(workflowId, args.callerCoordNodeId);
+            throw new MultipleSuccessorCoordsError(workflowId, C.id);
           }
         }
       }
@@ -464,9 +464,14 @@ export class WorkflowService {
     let toNodeStatusAfter: WorkflowNodeStatus = "not_started";
     let dispatchCandidates: string[] = [];
 
+    // Derive `C` (and validate that `args.workflowId` is running)
+    // outside the write tx; the inside-tx recheck below catches a
+    // concurrent caller termination.
+    const C = await this.deriveCallerCoord(args.workflowId);
+    const workflowId = args.workflowId;
+
     this.db.transaction((tx) => {
-      const ctx = this.assertAuthCallerCoord(tx, args.callerCoordNodeId);
-      const workflowId = ctx.workflowId;
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
 
       const endpoints = this.repo.readNodesByIds(tx, [args.fromNodeId, args.toNodeId]);
       const fromNode = endpoints.find((n) => n.id === args.fromNodeId);
@@ -477,7 +482,7 @@ export class WorkflowService {
       if (fromNode.workflowId !== workflowId || toNode.workflowId !== workflowId) {
         throw new WorkflowMutationUnauthorizedError(
           workflowId,
-          args.callerCoordNodeId,
+          C.id,
           "edge endpoint(s) are in a different workflow",
         );
       }
@@ -568,33 +573,29 @@ export class WorkflowService {
   async cancelNode(args: CancelNodeArgs): Promise<void> {
     let wasRunning = false;
     let nodeKind = "";
+
+    // Derive `C` outside the write tx; the inside-tx recheck below
+    // catches a concurrent caller termination.
+    const C = await this.deriveCallerCoord(args.workflowId);
+    const workflowId = args.workflowId;
+
     this.db.transaction((tx) => {
-      const ctx = this.assertAuthCallerCoord(tx, args.callerCoordNodeId);
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
       const node = this.repo.readNodeTx(tx, args.nodeId);
-      if (node === null) throw new WorkflowNodeNotFoundError(ctx.workflowId, args.nodeId);
-      if (node.workflowId !== ctx.workflowId) {
+      if (node === null) throw new WorkflowNodeNotFoundError(workflowId, args.nodeId);
+      if (node.workflowId !== workflowId) {
         throw new WorkflowMutationUnauthorizedError(
-          ctx.workflowId,
-          args.callerCoordNodeId,
+          workflowId,
+          C.id,
           `target node "${args.nodeId}" is in a different workflow`,
         );
       }
       if (node.kind !== WORKER_KIND) {
-        throw new WorkflowNodeNotMutableError(
-          ctx.workflowId,
-          args.nodeId,
-          node.status,
-          "cancelNode",
-        );
+        throw new WorkflowNodeNotMutableError(workflowId, args.nodeId, node.status, "cancelNode");
       }
       const allowedSources: WorkflowNodeStatus[] = ["not_started", "ready", "running"];
       if (!allowedSources.includes(node.status)) {
-        throw new WorkflowNodeNotMutableError(
-          ctx.workflowId,
-          args.nodeId,
-          node.status,
-          "cancelNode",
-        );
+        throw new WorkflowNodeNotMutableError(workflowId, args.nodeId, node.status, "cancelNode");
       }
       wasRunning = node.status === "running";
       nodeKind = node.kind;
@@ -626,6 +627,15 @@ export class WorkflowService {
    * cannot double-terminate; a 0-row result throws
    * {@link WorkflowAlreadyTerminalError}.
    *
+   * The substrate **derives** the calling coordinator `C` from
+   * `args.workflowId` at the top of the tx (while `C` is still
+   * `running`); the local `C.id` is held across the CAS that flips
+   * the workflow to terminal, so the subsequent cancel
+   * reconciliation can correctly exclude the caller. Re-deriving
+   * after the CAS would observe 0 running coords (or a stale C if
+   * a future handover had already begun), defeating the
+   * cancel-exclusion guarantee.
+   *
    * Post-tx reconciliation: every non-terminal node in the workflow
    * EXCEPT the calling coord itself is cancelled via
    * `runner.cancel(node.id)` followed by `status='cancelled'`. The
@@ -641,20 +651,15 @@ export class WorkflowService {
       );
     }
 
-    let workflowId: string;
-    {
-      const ctx = this.db.transaction((tx) =>
-        this.assertAuthCallerCoord(tx, args.callerCoordNodeId),
-      );
-      workflowId = ctx.workflowId;
-    }
+    const workflowId = args.workflowId;
+    const C = await this.deriveCallerCoord(workflowId);
 
     let casOk = false;
     const nowIso = this.now().toISOString();
     this.db.transaction((tx) => {
       // Re-check auth atomically with the CAS so a concurrent
       // caller-coord termination is caught here too.
-      this.assertAuthCallerCoord(tx, args.callerCoordNodeId, workflowId);
+      this.assertAuthCallerCoord(tx, C.id, workflowId);
       casOk = this.repo.casUpdateWorkflowStatus(tx, {
         id: workflowId,
         fromStatus: "running",
@@ -664,7 +669,10 @@ export class WorkflowService {
     });
     if (!casOk) throw new WorkflowAlreadyTerminalError(workflowId);
 
-    await this.reconcileCancelExceptCaller(workflowId, args.callerCoordNodeId);
+    // The locally-held C.id is used here — re-deriving after the
+    // CAS would observe a terminal workflow and find 0 running
+    // coords, so the exclusion would degrade to "exclude nothing".
+    await this.reconcileCancelExceptCaller(workflowId, C.id);
   }
 
   // ─── cancelWorkflow ──────────────────────────────────────
@@ -801,13 +809,101 @@ export class WorkflowService {
   // ─── Internals ───────────────────────────────────────────
 
   /**
+   * R4 caller-coord derivation: resolve the unique running
+   * coordinator-kind node in `workflowId` (invariant #2 — at any
+   * moment, at most 1 `kind='coordinator'` row in `status='running'`
+   * per workflow). Wraps the substrate's SELECT in a read tx for
+   * atomicity of the workflow-status check + the coord-list read.
+   *
+   * Branches:
+   *   - **0 rows** → `WorkflowMutationUnauthorizedError` with reason
+   *     `"no active caller coord (workflow terminal or handover
+   *     window)"`. Covers the legitimate handover window between
+   *     one coord's `finishWorkflow` and the next coord spawning,
+   *     plus the "workflow is already terminal" case.
+   *   - **1 row** → returns `{ id, spec }` where `spec` is the
+   *     parsed coord spec (asserted to carry a non-empty `agent`
+   *     FQN — invariant #11).
+   *   - **2+ rows** → invariant #2 has been violated (schema
+   *     corruption or substrate bug). Logs the violation and throws
+   *     `WorkflowMutationUnauthorizedError` with reason `"multiple
+   *     active coords — invariant #2 violated (schema corruption)"`.
+   *     This is a defensive path; normal substrate operation cannot
+   *     produce it.
+   *
+   * Workflow lifecycle errors:
+   *   - Throws `WorkflowNotFoundError` when `workflowId` does not
+   *     exist (caller-side typo or stale id).
+   *
+   * Used by every mutation primitive except `createWorkflow` (which
+   * self-bootstraps with `C = self` for the just-allocated initial
+   * coord) and `cancelWorkflow` (operator API; no caller
+   * derivation, no auth gate).
+   */
+  private async deriveCallerCoord(workflowId: string): Promise<{
+    readonly id: string;
+    readonly spec: { readonly agent: string };
+  }> {
+    const result = this.db.transaction((tx) => {
+      const wf = this.repo.readWorkflowTx(tx, workflowId);
+      if (wf === null) {
+        return { kind: "not-found" as const };
+      }
+      if (wf.status !== "running") {
+        return { kind: "wf-terminal" as const, wfStatus: wf.status };
+      }
+      const coords = this.repo.readRunningCoordsForWorkflow(tx, workflowId);
+      return { kind: "coords" as const, coords };
+    });
+
+    if (result.kind === "not-found") {
+      throw new WorkflowNotFoundError(workflowId);
+    }
+    if (result.kind === "wf-terminal") {
+      throw new WorkflowMutationUnauthorizedError(
+        workflowId,
+        "<derived>",
+        `no active caller coord (workflow status is "${result.wfStatus}", expected "running")`,
+      );
+    }
+    const coords = result.coords;
+    if (coords.length === 0) {
+      throw new WorkflowMutationUnauthorizedError(
+        workflowId,
+        "<derived>",
+        "no active caller coord (workflow terminal or handover window)",
+      );
+    }
+    if (coords.length > 1) {
+      this.logger.error(
+        { workflowId, coordIds: coords.map((c) => c.id) },
+        "deriveCallerCoord: invariant #2 violated — multiple coord-kind rows are status='running' in this workflow",
+      );
+      throw new WorkflowMutationUnauthorizedError(
+        workflowId,
+        "<derived>",
+        "multiple active coords — invariant #2 violated (schema corruption)",
+      );
+    }
+    const only = coords[0] as { readonly id: string; readonly specJson: string };
+    const parsed = parseSpecJson(only.specJson);
+    assertCoordinatorSpecAgent(parsed);
+    return { id: only.id, spec: parsed };
+  }
+
+  /**
    * Cross-cut auth predicate. JOIN-backed read inside the caller's
    * tx so the (caller coord status, workflow status) pair is
    * evaluated atomically.
    *
+   * After R4 this serves as the inside-tx defense-in-depth recheck
+   * against the *derived* caller coord id ({@link deriveCallerCoord}
+   * runs OUTSIDE the write tx; this recheck runs INSIDE), catching
+   * the narrow race where the derived coord terminated between
+   * derivation and the write tx.
+   *
    * Returns the workflow id and the caller's coord spec for callers
-   * that need them (e.g. `addNode` threads the spec into the
-   * runner's validate context). Throws
+   * that need them. Throws
    * {@link WorkflowMutationUnauthorizedError} on any failure.
    *
    * `expectedWorkflowId` is checked when present so a caller passing

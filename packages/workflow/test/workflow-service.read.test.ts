@@ -53,7 +53,7 @@ describe("WorkflowService — read APIs", () => {
     // Add one task node child of the coord so the DAG has both
     // node kinds and one edge.
     const { nodeId: taskId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],
@@ -77,7 +77,7 @@ describe("WorkflowService — read APIs", () => {
     // returns identity; then add a task with a not-yet-terminal coord
     // parent (the coord is `running`).
     const { nodeId: taskId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "writer", brief: "x" },
       parents: [initialCoordNodeId],

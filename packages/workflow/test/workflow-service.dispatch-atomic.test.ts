@@ -19,9 +19,9 @@ describe("WorkflowService.dispatchAtomic", () => {
   });
 
   it("task: dispatches when ALL parents are succeeded", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
@@ -43,9 +43,9 @@ describe("WorkflowService.dispatchAtomic", () => {
   });
 
   it("task: does NOT dispatch when a parent is not yet succeeded", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
@@ -58,16 +58,16 @@ describe("WorkflowService.dispatchAtomic", () => {
   });
 
   it("coordinator: dispatches when ALL parents are terminal (succeeded OR failed OR cancelled)", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTask } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
     // childCoord must list its caller (initialCoord) as a parent.
     const { nodeId: childCoord } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "coordinator",
       spec: { agent: "coord-b" },
       parents: [initialCoordNodeId, parentTask],
@@ -104,7 +104,7 @@ describe("WorkflowService.dispatchAtomic", () => {
   it("silently no-ops when the workflow is already cancelled", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
@@ -119,11 +119,11 @@ describe("WorkflowService.dispatchAtomic", () => {
   });
 
   it("on runner.dispatch throw, marks the node failed via a separate tx", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Materialise a parent task and force it terminal so the new
     // task's parent-readiness predicate fires eager dispatch on insert.
     const { nodeId: parentTaskId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
@@ -137,7 +137,7 @@ describe("WorkflowService.dispatchAtomic", () => {
     });
     h.workerRunner.dispatchShouldThrow = true;
     const { nodeId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [parentTaskId],
@@ -148,9 +148,9 @@ describe("WorkflowService.dispatchAtomic", () => {
   });
 
   it("eager dispatch reaction from addNode commits then dispatches once", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTaskId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
@@ -164,7 +164,7 @@ describe("WorkflowService.dispatchAtomic", () => {
     });
     const before = h.workerRunner.dispatchCalls.length;
     const { nodeId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "y" },
       parents: [parentTaskId],

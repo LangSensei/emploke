@@ -25,16 +25,16 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("inserts the edge and reports the to-node's new phase", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Two parallel root-ish tasks; then connect them with an edge.
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId],
@@ -43,7 +43,7 @@ describe("WorkflowService.addEdge", () => {
     const before = await h.service.getNode(b);
     expect(before.phase).toBe(1);
     const { toPhase } = await h.service.addEdge({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       fromNodeId: a,
       toNodeId: b,
     });
@@ -53,15 +53,15 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("REJECTS when the to-node is not `not_started`", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId],
@@ -76,7 +76,7 @@ describe("WorkflowService.addEdge", () => {
     });
     await expect(
       h.service.addEdge({
-        callerCoordNodeId: initialCoordNodeId,
+        workflowId,
         fromNodeId: a,
         toNodeId: b,
       }),
@@ -84,15 +84,15 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("REJECTS when adding the edge would close a cycle", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [a],
@@ -100,7 +100,7 @@ describe("WorkflowService.addEdge", () => {
     // The edge b → a would close coord→a→b→a.
     await expect(
       h.service.addEdge({
-        callerCoordNodeId: initialCoordNodeId,
+        workflowId,
         fromNodeId: b,
         toNodeId: a,
       }),
@@ -108,15 +108,15 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("REJECTS worker-kind to-node when the from-node is failed/cancelled", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId],
@@ -130,7 +130,7 @@ describe("WorkflowService.addEdge", () => {
     });
     await expect(
       h.service.addEdge({
-        callerCoordNodeId: initialCoordNodeId,
+        workflowId,
         fromNodeId: a,
         toNodeId: b,
       }),
@@ -138,22 +138,22 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("phase recompute does NOT touch running / terminal descendants", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Build A (phase 1), B (phase 2 child of A), C (phase 1, root).
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [a],
     });
     const { nodeId: c } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "c" },
       parents: [initialCoordNodeId],
@@ -169,7 +169,7 @@ describe("WorkflowService.addEdge", () => {
       });
     });
     await h.service.addEdge({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       fromNodeId: c,
       toNodeId: a,
     });
@@ -182,28 +182,28 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("phase recompute cascades through the not_started subtree", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
     });
     const { nodeId: b } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "b" },
       parents: [a],
     });
     const { nodeId: c } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "c" },
       parents: [initialCoordNodeId],
     });
     // Add edge c → a, recomputing a (and cascading to b).
     await h.service.addEdge({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       fromNodeId: c,
       toNodeId: a,
     });
@@ -214,9 +214,9 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("REJECTS when endpoints are in different workflows", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: localTask } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
@@ -227,7 +227,7 @@ describe("WorkflowService.addEdge", () => {
     });
     await expect(
       h.service.addEdge({
-        callerCoordNodeId: initialCoordNodeId,
+        workflowId,
         fromNodeId: localTask,
         toNodeId: otherCoord,
       }),
@@ -235,10 +235,10 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("REJECTS when from-node or to-node is missing", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId } = await bootstrap(h);
     await expect(
       h.service.addEdge({
-        callerCoordNodeId: initialCoordNodeId,
+        workflowId,
         fromNodeId: VALID_UUIDS[14]!,
         toNodeId: VALID_UUIDS[15]!,
       }),
@@ -246,10 +246,10 @@ describe("WorkflowService.addEdge", () => {
   });
 
   it("eager dispatch reaction: fires `dispatchAtomic` on the to-node when its parents are now ready", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Two parallel tasks; mark one already-succeeded.
     const { nodeId: parentA } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "a" },
       parents: [initialCoordNodeId],
@@ -265,7 +265,7 @@ describe("WorkflowService.addEdge", () => {
     // immediately (root rule). Reset dispatch calls so we can
     // isolate the addEdge eager-dispatch reaction.
     const { nodeId: child } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "c" },
       parents: [parentA],

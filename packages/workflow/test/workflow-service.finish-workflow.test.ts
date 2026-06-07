@@ -24,38 +24,41 @@ describe("WorkflowService.finishWorkflow", () => {
   });
 
   it("flips the workflow to the requested terminal status", async () => {
-    const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" });
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
     const wf = await h.service.getWorkflow(workflowId);
     expect(wf.status).toBe("succeeded");
     expect(wf.endedAt).toBeDefined();
   });
 
-  it("CAS once-only: a second call throws WorkflowAlreadyTerminalError", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
-    await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" });
-    // The caller coord is still running per `finishWorkflow` semantics,
-    // but the workflow is now terminal — the auth gate's
-    // workflow.status='running' check fails first.
+  it("CAS once-only: a second call throws WorkflowMutationUnauthorizedError", async () => {
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
+    // After the first call, the workflow is terminal. R4: deriving
+    // the caller from `workflowId` reads no running coords and the
+    // derivation rejects with WorkflowMutationUnauthorizedError
+    // before the CAS would run.
     await expect(
-      h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" }),
+      h.service.finishWorkflow({ workflowId, outcome: "succeeded" }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
 
   it("EXCLUDES the calling coord from the cancel reconciliation", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pendingTask } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
     expect((await h.service.getNode(pendingTask)).status).toBe("not_started");
 
-    await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" });
+    await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
 
     // Caller coord remains running (substrate must NOT cancel the
-    // very task that just called finishWorkflow).
+    // very task that just called finishWorkflow). R4: this exercises
+    // the C.id-held-across-CAS path — if we re-derived after the CAS
+    // flip, we'd see 0 running coords and exclusion would degrade.
     const caller = await h.service.getNode(initialCoordNodeId);
     expect(caller.status).toBe("running");
 
@@ -65,11 +68,11 @@ describe("WorkflowService.finishWorkflow", () => {
   });
 
   it("invokes runner.cancel on running non-caller nodes during reconciliation", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Materialise a parent task and force it terminal so the
     // running task lands in `running` via eager dispatch.
     const { nodeId: parentTaskId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
@@ -82,21 +85,24 @@ describe("WorkflowService.finishWorkflow", () => {
       });
     });
     const { nodeId: runningTask } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [parentTaskId],
     });
     expect((await h.service.getNode(runningTask)).status).toBe("running");
 
-    await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "failed" });
+    await h.service.finishWorkflow({ workflowId, outcome: "failed" });
 
     expect(h.workerRunner.cancelCalls).toContain(runningTask);
     expect((await h.service.getNode(runningTask)).status).toBe("cancelled");
   });
 
-  it("REJECTS when caller is not in `running` status", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+  it("REJECTS when there is no running coord (handover window)", async () => {
+    // R4: the only coord is the initial one. Terminating it
+    // simulates a handover window with no running coord; derivation
+    // returns 0 rows and rejects with WorkflowMutationUnauthorizedError.
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
     h.db.db.transaction((tx) => {
       h.repo.updateNodeLifecycle(tx, {
         id: initialCoordNodeId,
@@ -105,28 +111,28 @@ describe("WorkflowService.finishWorkflow", () => {
       });
     });
     await expect(
-      h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" }),
+      h.service.finishWorkflow({ workflowId, outcome: "succeeded" }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
 
   it("REJECTS an invalid outcome value", async () => {
-    const { initialCoordNodeId } = await bootstrap(h);
+    const { workflowId } = await bootstrap(h);
     await expect(
       h.service.finishWorkflow({
-        callerCoordNodeId: initialCoordNodeId,
+        workflowId,
         outcome: "cancelled" as unknown as "succeeded",
       }),
     ).rejects.toBeInstanceOf(WorkflowError);
   });
 
-  it("a second finishWorkflow attempt after a successful one is blocked by the auth gate (workflow not running)", async () => {
-    // This double-checks the CAS-or-auth ordering. The first call
-    // wins; the second sees workflow.status='succeeded' and the auth
-    // gate (workflow.status='running') rejects before the CAS runs.
-    const { initialCoordNodeId } = await bootstrap(h);
-    await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" });
+  it("a second finishWorkflow attempt after a successful one is blocked by the derivation gate (workflow terminal)", async () => {
+    // This double-checks the derive-before-CAS ordering. The first
+    // call wins; the second sees workflow.status='succeeded' inside
+    // `deriveCallerCoord` and rejects before the CAS runs.
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
     await expect(
-      h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "failed" }),
+      h.service.finishWorkflow({ workflowId, outcome: "failed" }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
     // Coverage note: `WorkflowAlreadyTerminalError` is reachable
     // when a future caller bypasses the auth gate, e.g. via

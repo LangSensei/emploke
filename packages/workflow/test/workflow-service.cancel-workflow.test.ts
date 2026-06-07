@@ -22,7 +22,7 @@ describe("WorkflowService.cancelWorkflow", () => {
   it("flips the workflow to cancelled and ends every non-terminal node", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pending } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
@@ -31,7 +31,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     // `running` task lands in `running` via eager dispatch — needed
     // so the cancel reconciliation invokes runner.cancel for it.
     const { nodeId: parentTaskId } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "p" },
       parents: [initialCoordNodeId],
@@ -44,7 +44,7 @@ describe("WorkflowService.cancelWorkflow", () => {
       });
     });
     const { nodeId: running } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "y" },
       parents: [parentTaskId],
@@ -77,7 +77,7 @@ describe("WorkflowService.cancelWorkflow", () => {
   it("does NOT call runner.cancel for not_started / not-yet-running nodes", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pending } = await h.service.addNode({
-      callerCoordNodeId: initialCoordNodeId,
+      workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
@@ -90,8 +90,8 @@ describe("WorkflowService.cancelWorkflow", () => {
   });
 
   it("idempotent: succeeded → cancelWorkflow is rejected (workflow already terminal)", async () => {
-    const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    await h.service.finishWorkflow({ callerCoordNodeId: initialCoordNodeId, outcome: "succeeded" });
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
     await expect(h.service.cancelWorkflow({ workflowId })).rejects.toBeInstanceOf(
       WorkflowAlreadyTerminalError,
     );

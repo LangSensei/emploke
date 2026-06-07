@@ -25,14 +25,18 @@
 
 import { describe, expectTypeOf, it } from "vitest";
 import {
+  type AddEdgeArgs,
+  type AddNodeArgs,
   assertValidWorkflowId,
   assertValidWorkflowNodeId,
   assertValidWorkflowNodeKind,
   assertValidWorkflowNodeStatusEnum,
   assertValidWorkflowStatusEnum,
+  type CancelNodeArgs,
   composeWorkflowModule,
   deriveIterationCount,
   EmptyParentsError,
+  type FinishWorkflowArgs,
   generateWorkflowId,
   generateWorkflowNodeId,
   hasLiveCoord,
@@ -219,5 +223,30 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("workflow");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("nodes");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("edges");
+  });
+
+  it("R4: the four mutation Args carry `workflowId` (NOT `callerCoordNodeId`)", () => {
+    // R4 derivation: the substrate determines the calling coord from
+    // `workflowId` (the unique running coord per workflow, invariant
+    // #2). The leaked-id field `callerCoordNodeId` is removed from
+    // these Args; only the structural `workflowId` remains. Adding
+    // it back here is a compile-time error — this guard ensures it
+    // never silently re-appears.
+    expectTypeOf<AddNodeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<AddEdgeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<CancelNodeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<FinishWorkflowArgs>().toHaveProperty("workflowId");
+    expectTypeOf<AddNodeArgs["workflowId"]>().toBeString();
+    expectTypeOf<AddEdgeArgs["workflowId"]>().toBeString();
+    expectTypeOf<CancelNodeArgs["workflowId"]>().toBeString();
+    expectTypeOf<FinishWorkflowArgs["workflowId"]>().toBeString();
+    // Defence-in-depth: `callerCoordNodeId` must NOT be exposed on
+    // any of the four mutation Args. `not.toHaveProperty` is the
+    // type-level assertion that fails if a future refactor leaks
+    // the derived id back into the public surface.
+    expectTypeOf<AddNodeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<AddEdgeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<CancelNodeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<FinishWorkflowArgs>().not.toHaveProperty("callerCoordNodeId");
   });
 });

@@ -135,19 +135,30 @@ export interface WorkflowNodeSpecEnvelope {
  * check (losing the static guarantee that a coord can only dispatch
  * agents it's declared a dependency on).
  *
+ * For ordinary mutation paths, the substrate **derives** the caller
+ * coord at the top of the mutation tx (the unique
+ * `kind='coordinator'` row with `status='running'` in this workflow
+ * — per invariant #2) and populates `callerCoordNodeId` +
+ * `callerCoordSpec` from that derived row. Callers do NOT supply
+ * caller identity in mutation args; the public mutation surface
+ * takes only `workflowId`.
+ *
  * Bootstrap cases (the initial coord insert by `createWorkflow`, and
- * the silent-retry coord insert) populate ctx with the just-inserted
- * coord's identity (callerCoordNodeId = self id; callerCoordSpec =
- * self spec). This keeps the validate API uniform: there is always a
- * caller, even when the caller IS the node being validated.
+ * the silent-retry coord insert) bypass the derivation and populate
+ * ctx with the just-inserted coord's identity (callerCoordNodeId =
+ * self id; callerCoordSpec = self spec). This keeps the validate
+ * API uniform: there is always a caller, even when the caller IS
+ * the node being validated.
  */
 export interface WorkflowNodeValidateCtx {
   readonly workflowId: string;
   /**
    * The coord node calling the mutation primitive — i.e. the parent
-   * in the auth/causality sense. For the initial coord insert and
-   * the silent-retry insert, this is the just-inserted node's own
-   * id (self).
+   * in the auth/causality sense. For ordinary mutations the
+   * substrate derives this from `workflowId` (the unique
+   * `kind='coordinator'`, `status='running'` row). For the initial
+   * coord insert and the silent-retry insert, this is the
+   * just-inserted node's own id (self).
    */
   readonly callerCoordNodeId: string;
   /**
