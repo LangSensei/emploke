@@ -141,6 +141,78 @@ export class TaskRepository {
   }
 
   /**
+   * True if any task with `origin='workflow'` and
+   * `metadata.workflowNodeId === nodeId` is non-terminal (i.e. status
+   * is not in {@link TERMINAL_TASK_STATUSES}). Used by the workflow
+   * engine's `hasInFlightForNode` reverse-lookup for worker nodes
+   * (see `packages/api/src/wiring/workflow-task-runner.ts`).
+   *
+   * Unlike {@link hasInFlightForSchedule} there is no functional
+   * index on `metadata.workflowNodeId` in M1 (the brief explicitly
+   * forbids new migrations); the planner falls back to filtering by
+   * `origin='workflow'` first (still index-eligible via the same
+   * row's `origin` column path) and applying the `json_extract`
+   * predicate on the matched rows only. Workflow worker volume is
+   * small in M1, so a functional index is a Phase 3+ concern.
+   *
+   * `workflowNodeId` is the canonical metadata key per
+   * `packages/workflow/src/types.ts:222` (substrate-side denorm of
+   * unit-of-work ids is explicitly forbidden; reverse lookup goes
+   * through this metadata key).
+   */
+  async hasInFlightForWorkflowNode(nodeId: string): Promise<boolean> {
+    const row = this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.origin, "workflow"),
+          notInArray(tasks.status, [...TERMINAL_TASK_STATUSES]),
+          sql`json_extract(${tasks.metadata}, '$.workflowNodeId') = ${nodeId}`,
+        ),
+      )
+      .limit(1)
+      .get();
+    return row !== undefined;
+  }
+
+  /**
+   * List non-terminal tasks with `origin='workflow'` and
+   * `metadata.workflowNodeId === nodeId`. Used by the worker
+   * runner's `cancel(nodeId)` reverse-lookup to find which task(s)
+   * to cancel.
+   *
+   * Returns full entities (not just ids) because the caller needs
+   * `task.id` for `tasks.cancel(...)` and the per-row error in
+   * `rowToTask` is already handled with warn-and-skip.
+   */
+  async listInFlightForWorkflowNode(nodeId: string): Promise<TaskEntity[]> {
+    const rows = this.db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.origin, "workflow"),
+          notInArray(tasks.status, [...TERMINAL_TASK_STATUSES]),
+          sql`json_extract(${tasks.metadata}, '$.workflowNodeId') = ${nodeId}`,
+        ),
+      )
+      .all();
+    const out: TaskEntity[] = [];
+    for (const row of rows) {
+      try {
+        out.push(rowToTask(row));
+      } catch (err) {
+        this.logger.warn(
+          { taskId: row.id ?? null, err },
+          "tasks: skipping corrupted task row in listInFlightForWorkflowNode",
+        );
+      }
+    }
+    return out;
+  }
+
+  /**
    * Bulk-delete every TERMINAL task with `origin='schedule'` and
    * `metadata.scheduleId === scheduleId`. Returns the deleted entities
    * so the caller can enqueue per-task background work (e.g.

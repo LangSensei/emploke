@@ -176,6 +176,28 @@ export interface WorkflowNodeValidateCtx {
 }
 
 /**
+ * Outcome reported by a runner once the unit-of-work backing a
+ * dispatched node has reached a terminal state. The runner observes
+ * the outcome (e.g. by polling its task store, or by being driven by
+ * an in-process event) and calls the `onTerminal` callback supplied
+ * to {@link WorkflowNodeRunner.dispatch}, which lets the engine mark
+ * the substrate's node terminal and re-evaluate downstream readiness.
+ *
+ * The discriminated union is intentionally narrow: the substrate only
+ * cares about *which terminal state* the node should land in, plus a
+ * human-readable `reason` for the `failed` arm. `output` is a
+ * runner-supplied opaque blob (e.g. exit code, runtime metadata)
+ * that the substrate currently logs at debug — it does NOT
+ * denormalize it into the `workflow_nodes` row, because that would
+ * couple the substrate to per-runner payload shapes. (Result data
+ * proper lives on the unit-of-work side, e.g. `tasks.result_json`.)
+ */
+export type WorkflowNodeTerminalResult =
+  | { readonly status: "succeeded"; readonly output?: unknown }
+  | { readonly status: "failed"; readonly reason: string; readonly output?: unknown }
+  | { readonly status: "cancelled" };
+
+/**
  * Per-kind runner injected at compose time via the `runners`
  * parameter to `composeWorkflowModule`. The substrate has built-in
  * knowledge of the closed kind enum (`'coordinator' | 'worker'`) and
@@ -217,6 +239,23 @@ export interface WorkflowNodeRunner {
    * `{ workflowId, workflowNodeId }` into the unit's metadata so the
    * reverse-lookup partial indexes engage.
    *
+   * The runner MUST invoke `opts.onTerminal` exactly once per dispatch
+   * when (and only when) it has observed a terminal outcome
+   * (`succeeded` / `failed` / `cancelled`) for the unit of work
+   * backing this dispatch call. The engine threads this callback
+   * through so the substrate can mark the node terminal and
+   * re-evaluate downstream readiness without the runner having to
+   * know about service plumbing. `onTerminal` is idempotent on the
+   * service side — re-invoking it is a no-op once the node is
+   * terminal — but runners SHOULD avoid double-calling because it
+   * costs a redundant tx.
+   *
+   * `onTerminal` MAY be invoked synchronously inside `dispatch`
+   * (zero-latency runners) or asynchronously after `dispatch` has
+   * already returned. The engine commits the `ready → running`
+   * transition BEFORE calling `dispatch`, so the substrate's row is
+   * always in the right state when `onTerminal` fires.
+   *
    * Returns a substrate-side identifier (e.g. task id) for audit;
    * the substrate does NOT persist this id — reverse lookup goes
    * through the unit's metadata, not through a `workflow_nodes`
@@ -228,6 +267,7 @@ export interface WorkflowNodeRunner {
     readonly nodeId: string;
     readonly spec: unknown;
     readonly nodeDir: string;
+    readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
   }): Promise<{ readonly unitId: string }>;
 
   /**
