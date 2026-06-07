@@ -282,3 +282,177 @@ export class WorkflowNodeKindShapeError extends WorkflowError {
     super(`Invalid workflow node kind: "${value}" (must be a non-empty string)`);
   }
 }
+
+// ─── Edge lookup ────────────────────────────────────────────────────
+
+/**
+ * Thrown by `removeEdge` when the `(fromNodeId, toNodeId)` pair does
+ * not correspond to a live edge in the workflow. Distinct from
+ * {@link WorkflowNodeNotFoundError} so callers can disambiguate
+ * "endpoints exist, but the edge between them does not" from
+ * "endpoints missing entirely".
+ */
+export class WorkflowEdgeNotFoundError extends WorkflowError {
+  override readonly name = "WorkflowEdgeNotFoundError";
+  constructor(
+    public readonly workflowId: string,
+    public readonly fromNodeId: string,
+    public readonly toNodeId: string,
+  ) {
+    super(`Edge ${fromNodeId}→${toNodeId} not found in workflow "${workflowId}"`);
+  }
+}
+
+// ─── Structural removal rules (removeNode / removeEdge) ─────────────
+
+/**
+ * Thrown by `removeNode` when deleting the node would leave one of
+ * its children with zero parents. The substrate's structural rule:
+ * every non-root node must retain ≥1 parent so phase / dispatch-
+ * readiness semantics remain well-defined. The orphan check fires
+ * BEFORE the row delete so the rejection uses the pre-delete edge
+ * set; if the check rejected, no rows have been touched.
+ */
+export class WorkflowRemoveNodeOrphansChildError extends WorkflowError {
+  override readonly name = "WorkflowRemoveNodeOrphansChildError";
+  constructor(
+    public readonly workflowId: string,
+    public readonly nodeId: string,
+    public readonly orphanedChildId: string,
+  ) {
+    super(
+      `Removing node "${nodeId}" in workflow "${workflowId}" would orphan child "${orphanedChildId}" (zero remaining parents)`,
+    );
+  }
+}
+
+/**
+ * Thrown by `removeEdge` when deleting the edge would leave the
+ * to-node with zero parents. Same invariant as
+ * {@link WorkflowRemoveNodeOrphansChildError} but scoped to a single
+ * edge: only the to-node could lose its last parent, never any other
+ * descendant.
+ */
+export class WorkflowRemoveEdgeOrphansChildError extends WorkflowError {
+  override readonly name = "WorkflowRemoveEdgeOrphansChildError";
+  constructor(
+    public readonly workflowId: string,
+    public readonly fromNodeId: string,
+    public readonly toNodeId: string,
+  ) {
+    super(
+      `Removing edge ${fromNodeId}→${toNodeId} in workflow "${workflowId}" would orphan to-node "${toNodeId}" (zero remaining parents)`,
+    );
+  }
+}
+
+// ─── Subgraph batch structural rules (addSubgraph) ──────────────────
+
+/**
+ * Thrown by `addSubgraph` when the `nodes` array is empty. Batch
+ * inserts of zero nodes have no defensible interpretation — the
+ * primitive would be a no-op that still consumed a write tx and
+ * an auth gate. Rejecting at the boundary keeps callers honest.
+ */
+export class WorkflowSubgraphEmptyError extends WorkflowError {
+  override readonly name = "WorkflowSubgraphEmptyError";
+  constructor() {
+    super("addSubgraph: nodes array must contain at least one entry");
+  }
+}
+
+/**
+ * Thrown by `addSubgraph` when a `tempId` is empty, blank, or
+ * duplicated within the batch. The `reason` field carries the
+ * specific violation (`"empty"`, `"duplicate \"foo\""`) so debugging
+ * a rejected batch doesn't require re-running with extra logging.
+ * One error class for both the empty and duplicate cases — they're
+ * the same structural concern (`tempId` is the batch-local primary
+ * key) at slightly different angles.
+ */
+export class WorkflowSubgraphTempIdInvalidError extends WorkflowError {
+  override readonly name = "WorkflowSubgraphTempIdInvalidError";
+  constructor(public readonly reason: string) {
+    super(`addSubgraph: invalid tempId — ${reason}`);
+  }
+}
+
+/**
+ * Thrown by `addSubgraph` when a temp has zero parents (counting
+ * both `existingParents` and intra-batch incoming temp-edges).
+ * Mirrors {@link EmptyParentsError} for `addNode` — every node in
+ * the workflow except the initial coord (allocated by
+ * `createWorkflow`) must root in ≥1 parent so phase semantics and
+ * dispatch readiness stay well-defined.
+ */
+export class WorkflowSubgraphTempParentlessError extends WorkflowError {
+  override readonly name = "WorkflowSubgraphTempParentlessError";
+  constructor(public readonly tempId: string) {
+    super(`addSubgraph: temp "${tempId}" has zero parents (need ≥1 existing or intra-batch)`);
+  }
+}
+
+/**
+ * Thrown by `addSubgraph` when a `NodeRef` (in `edges[]` or
+ * `existingParents[]`) does not resolve to a known node:
+ *
+ *   - `kind: "existing"`: the referenced id is not a node in this
+ *     workflow.
+ *   - `kind: "temp"`: the referenced tempId is not present in the
+ *     batch's `nodes[*].tempId`.
+ *
+ * The `refKind` / `refValue` pair carries the specific reference
+ * that failed so the rejection diagnostic is unambiguous.
+ */
+export class WorkflowSubgraphNodeRefUnresolvedError extends WorkflowError {
+  override readonly name = "WorkflowSubgraphNodeRefUnresolvedError";
+  constructor(
+    public readonly workflowId: string,
+    public readonly refKind: "existing" | "temp",
+    public readonly refValue: string,
+  ) {
+    super(
+      `addSubgraph: ${refKind} ref "${refValue}" did not resolve to a known node in workflow "${workflowId}"`,
+    );
+  }
+}
+
+/**
+ * Thrown by `addSubgraph` when the proposed batch would create a
+ * cycle — either within the intra-batch temp subgraph alone, or
+ * across the joined DAG (existing nodes ∪ inserted temps). Distinct
+ * from {@link WorkflowEdgeCycleError} (which `addEdge` throws for
+ * a single new edge) because subgraph cycles can involve tempIds
+ * that are not yet real node ids; the error reports the offending
+ * (from, to) pair as the caller spelled it in the batch.
+ */
+export class WorkflowSubgraphCyclicError extends WorkflowError {
+  override readonly name = "WorkflowSubgraphCyclicError";
+  constructor(
+    public readonly workflowId: string,
+    public readonly from: string,
+    public readonly to: string,
+  ) {
+    super(`addSubgraph: edge ${from}→${to} would create a cycle in workflow "${workflowId}"`);
+  }
+}
+
+/**
+ * Thrown by `addSubgraph` when the batch declares more than one
+ * coordinator-kind temp. Per the substrate's coord-chain invariant,
+ * the caller coord may enqueue at most one successor coord per
+ * dispatch; a batch with 2 coord temps would violate that even if
+ * one of them isn't a structural successor (the caller has no
+ * partial-batch escape hatch). Stricter than the inter-batch
+ * single-successor rule (which {@link MultipleSuccessorCoordsError}
+ * covers) because the inter-batch rule looks at the caller's
+ * existing coord children only, not at the batch's own contents.
+ */
+export class WorkflowSubgraphMultipleCoordTempsError extends WorkflowError {
+  override readonly name = "WorkflowSubgraphMultipleCoordTempsError";
+  constructor(public readonly workflowId: string) {
+    super(
+      `addSubgraph: batch contains more than one coordinator-kind temp in workflow "${workflowId}"`,
+    );
+  }
+}

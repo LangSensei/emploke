@@ -17,6 +17,8 @@
  * stays kind-agnostic and takes no workspace dep on the wire pkg.
  */
 
+// ─── Substrate types ────────────────────────────────────────────────
+export type { NodeRef } from "./_dag.js";
 // ─── Composition ────────────────────────────────────────────────────
 export {
   composeWorkflowModule,
@@ -33,6 +35,7 @@ export {
   ParentStateError,
   WorkflowAlreadyTerminalError,
   WorkflowEdgeCycleError,
+  WorkflowEdgeNotFoundError,
   WorkflowEnumValueError,
   WorkflowError,
   WorkflowMutationUnauthorizedError,
@@ -42,6 +45,14 @@ export {
   WorkflowNodeNotMutableError,
   WorkflowNodeSpecError,
   WorkflowNotFoundError,
+  WorkflowRemoveEdgeOrphansChildError,
+  WorkflowRemoveNodeOrphansChildError,
+  WorkflowSubgraphCyclicError,
+  WorkflowSubgraphEmptyError,
+  WorkflowSubgraphMultipleCoordTempsError,
+  WorkflowSubgraphNodeRefUnresolvedError,
+  WorkflowSubgraphTempIdInvalidError,
+  WorkflowSubgraphTempParentlessError,
 } from "./errors.js";
 // ─── Path helpers ───────────────────────────────────────────────────
 export {
@@ -51,7 +62,6 @@ export {
   workflowNodeDir,
   workflowRoot,
 } from "./paths.js";
-// ─── Substrate types ────────────────────────────────────────────────
 export type {
   NodeKind,
   WorkflowNodeRunner,
@@ -84,11 +94,19 @@ export {
   type AddEdgeResult,
   type AddNodeArgs,
   type AddNodeResult,
+  type AddSubgraphArgs,
+  type AddSubgraphEdgeInput,
+  type AddSubgraphInsertedNode,
+  type AddSubgraphNodeInput,
+  type AddSubgraphResult,
   type CancelNodeArgs,
   type CancelWorkflowArgs,
   type CreateWorkflowArgs,
   type CreateWorkflowResult,
   type FinishWorkflowArgs,
+  type RemoveEdgeArgs,
+  type RemoveNodeArgs,
+  type ReplaceNodeSpecArgs,
   type WorkflowDagSnapshot,
   WorkflowService,
   type WorkflowServiceOpts,

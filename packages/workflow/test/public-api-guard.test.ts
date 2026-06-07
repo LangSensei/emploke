@@ -27,6 +27,11 @@ import { describe, expectTypeOf, it } from "vitest";
 import {
   type AddEdgeArgs,
   type AddNodeArgs,
+  type AddSubgraphArgs,
+  type AddSubgraphEdgeInput,
+  type AddSubgraphInsertedNode,
+  type AddSubgraphNodeInput,
+  type AddSubgraphResult,
   assertValidWorkflowId,
   assertValidWorkflowNodeId,
   assertValidWorkflowNodeKind,
@@ -44,14 +49,19 @@ import {
   InvalidWorkflowNodeIdError,
   MultipleSuccessorCoordsError,
   type NodeKind,
+  type NodeRef,
   OrphanCoordInsertError,
   ParentStateError,
+  type RemoveEdgeArgs,
+  type RemoveNodeArgs,
+  type ReplaceNodeSpecArgs,
   type WORKFLOW_NODES_SUBDIR,
   type WORKFLOW_SUBDIR,
   WorkflowAlreadyTerminalError,
   type WorkflowDagSnapshot,
   WorkflowEdgeCycleError,
   type WorkflowEdgeEntity,
+  WorkflowEdgeNotFoundError,
   type WorkflowEntity,
   WorkflowEnumValueError,
   WorkflowError,
@@ -69,9 +79,17 @@ import {
   type WorkflowNodeStatus,
   type WorkflowNodeValidateCtx,
   WorkflowNotFoundError,
+  WorkflowRemoveEdgeOrphansChildError,
+  WorkflowRemoveNodeOrphansChildError,
   type WorkflowRunners,
   type WorkflowService,
   type WorkflowStatus,
+  WorkflowSubgraphCyclicError,
+  WorkflowSubgraphEmptyError,
+  WorkflowSubgraphMultipleCoordTempsError,
+  WorkflowSubgraphNodeRefUnresolvedError,
+  WorkflowSubgraphTempIdInvalidError,
+  WorkflowSubgraphTempParentlessError,
   workflowDir,
   workflowNodeDir,
   workflowRoot,
@@ -220,6 +238,11 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("finishWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("cancelWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("dispatchAtomic");
+    // Phase 2b structural mutation primitives.
+    expectTypeOf<WorkflowService>().toHaveProperty("removeNode");
+    expectTypeOf<WorkflowService>().toHaveProperty("removeEdge");
+    expectTypeOf<WorkflowService>().toHaveProperty("replaceNodeSpec");
+    expectTypeOf<WorkflowService>().toHaveProperty("addSubgraph");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("workflow");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("nodes");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("edges");
@@ -248,5 +271,80 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<AddEdgeArgs>().not.toHaveProperty("callerCoordNodeId");
     expectTypeOf<CancelNodeArgs>().not.toHaveProperty("callerCoordNodeId");
     expectTypeOf<FinishWorkflowArgs>().not.toHaveProperty("callerCoordNodeId");
+  });
+
+  it("R4 (Phase 2b): the structural mutation Args carry `workflowId` only", () => {
+    // Same R4 contract for the four Phase 2b mutation Args. Repeats
+    // the assertion so the failure message points at the new
+    // primitives if a future refactor leaks `callerCoordNodeId`.
+    expectTypeOf<RemoveNodeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<RemoveEdgeArgs>().toHaveProperty("workflowId");
+    expectTypeOf<ReplaceNodeSpecArgs>().toHaveProperty("workflowId");
+    expectTypeOf<AddSubgraphArgs>().toHaveProperty("workflowId");
+    expectTypeOf<RemoveNodeArgs["workflowId"]>().toBeString();
+    expectTypeOf<RemoveEdgeArgs["workflowId"]>().toBeString();
+    expectTypeOf<ReplaceNodeSpecArgs["workflowId"]>().toBeString();
+    expectTypeOf<AddSubgraphArgs["workflowId"]>().toBeString();
+    expectTypeOf<RemoveNodeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<RemoveEdgeArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<ReplaceNodeSpecArgs>().not.toHaveProperty("callerCoordNodeId");
+    expectTypeOf<AddSubgraphArgs>().not.toHaveProperty("callerCoordNodeId");
+  });
+
+  it("Phase 2b Args carry the per-method structural fields", () => {
+    expectTypeOf<RemoveNodeArgs>().toHaveProperty("nodeId");
+    expectTypeOf<RemoveNodeArgs["nodeId"]>().toBeString();
+    expectTypeOf<RemoveEdgeArgs>().toHaveProperty("fromNodeId");
+    expectTypeOf<RemoveEdgeArgs>().toHaveProperty("toNodeId");
+    expectTypeOf<RemoveEdgeArgs["fromNodeId"]>().toBeString();
+    expectTypeOf<RemoveEdgeArgs["toNodeId"]>().toBeString();
+    expectTypeOf<ReplaceNodeSpecArgs>().toHaveProperty("nodeId");
+    expectTypeOf<ReplaceNodeSpecArgs>().toHaveProperty("newSpec");
+    expectTypeOf<AddSubgraphArgs>().toHaveProperty("nodes");
+    expectTypeOf<AddSubgraphArgs>().toHaveProperty("edges");
+  });
+
+  it("NodeRef is a discriminated union over the existing | temp tag", () => {
+    // The substrate accepts either a real persisted node id or a
+    // batch-local tempId; the discriminator `kind` MUST stay narrow
+    // so consumers can switch exhaustively.
+    expectTypeOf<NodeRef>().toEqualTypeOf<
+      | { readonly kind: "existing"; readonly id: string }
+      | { readonly kind: "temp"; readonly tempId: string }
+    >();
+  });
+
+  it("AddSubgraph node + edge + result shapes pin the public contract", () => {
+    expectTypeOf<AddSubgraphNodeInput>().toHaveProperty("tempId");
+    expectTypeOf<AddSubgraphNodeInput>().toHaveProperty("kind");
+    expectTypeOf<AddSubgraphNodeInput>().toHaveProperty("spec");
+    expectTypeOf<AddSubgraphNodeInput["tempId"]>().toBeString();
+    expectTypeOf<AddSubgraphNodeInput["kind"]>().toEqualTypeOf<NodeKind>();
+
+    expectTypeOf<AddSubgraphEdgeInput>().toHaveProperty("from");
+    expectTypeOf<AddSubgraphEdgeInput>().toHaveProperty("to");
+    expectTypeOf<AddSubgraphEdgeInput["from"]>().toEqualTypeOf<NodeRef>();
+    expectTypeOf<AddSubgraphEdgeInput["to"]>().toEqualTypeOf<NodeRef>();
+
+    expectTypeOf<AddSubgraphResult>().toHaveProperty("insertedNodes");
+    expectTypeOf<AddSubgraphInsertedNode>().toHaveProperty("tempId");
+    expectTypeOf<AddSubgraphInsertedNode>().toHaveProperty("nodeId");
+    expectTypeOf<AddSubgraphInsertedNode>().toHaveProperty("phase");
+    expectTypeOf<AddSubgraphInsertedNode["phase"]>().toBeNumber();
+  });
+
+  it("exports the Phase 2b error classes with their canonical constructor signatures", () => {
+    const errs: Error[] = [
+      new WorkflowEdgeNotFoundError("wf-id", "from-id", "to-id"),
+      new WorkflowRemoveNodeOrphansChildError("wf-id", "node-id", "child-id"),
+      new WorkflowRemoveEdgeOrphansChildError("wf-id", "from-id", "to-id"),
+      new WorkflowSubgraphEmptyError(),
+      new WorkflowSubgraphTempIdInvalidError("duplicate tempId"),
+      new WorkflowSubgraphTempParentlessError("tempId-x"),
+      new WorkflowSubgraphNodeRefUnresolvedError("wf-id", "temp", "missing"),
+      new WorkflowSubgraphCyclicError("wf-id", "from", "to"),
+      new WorkflowSubgraphMultipleCoordTempsError("wf-id"),
+    ];
+    expectTypeOf(errs[0]!).toExtend<Error>();
   });
 });
