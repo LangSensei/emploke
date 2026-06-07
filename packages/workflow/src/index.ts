@@ -11,7 +11,7 @@
  * Construction goes through `composeWorkflowModule({ dbFile, …,
  * runners })`. Tests use `openTestWorkflowDb()` from `./testing`.
  *
- * Per-kind wire DTOs (`WorkflowTaskNodeSpec`,
+ * Per-kind wire DTOs (`WorkflowWorkerNodeSpec`,
  * `WorkflowCoordinatorNodeSpec`, `WorkflowNodeWireSpec`, …) are owned
  * by and imported directly from `@emploke/contracts`; the substrate
  * stays kind-agnostic and takes no workspace dep on the wire pkg.

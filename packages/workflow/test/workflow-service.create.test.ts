@@ -52,7 +52,7 @@ describe("WorkflowService.createWorkflow", () => {
     expect(wf.coordinatorAgent).toBe((coords[0]?.spec as { agent: string }).agent);
   });
 
-  it("dispatch trigger: invokes the coordinator handler.dispatch with the resolved nodeDir", async () => {
+  it("dispatch trigger: invokes the coordinator runner.dispatch with the resolved nodeDir", async () => {
     const { workflowId, initialCoordNodeId } = await h.service.createWorkflow({
       brief: "x",
       coordinatorAgent: "coord-a",
@@ -68,7 +68,7 @@ describe("WorkflowService.createWorkflow", () => {
     expect(coord.status).toBe("running");
   });
 
-  it("validate ctx: routes the initial coord through handler.validate with self-bootstrap identity", async () => {
+  it("validate ctx: routes the initial coord through runner.validate with self-bootstrap identity", async () => {
     h.coordRunner.validateReturnValue = { agent: "coord-a", validated: true };
     const { initialCoordNodeId, workflowId } = await h.service.createWorkflow({
       brief: "x",

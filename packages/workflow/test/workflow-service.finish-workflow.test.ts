@@ -64,7 +64,7 @@ describe("WorkflowService.finishWorkflow", () => {
     expect(pending.status).toBe("cancelled");
   });
 
-  it("invokes handler.cancel on running non-caller nodes during reconciliation", async () => {
+  it("invokes runner.cancel on running non-caller nodes during reconciliation", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     // Materialise a parent task and force it terminal so the
     // running task lands in `running` via eager dispatch.

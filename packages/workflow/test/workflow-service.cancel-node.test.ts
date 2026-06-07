@@ -23,7 +23,7 @@ describe("WorkflowService.cancelNode", () => {
     h.close();
   });
 
-  it("cancels a task-kind node in `not_started`", async () => {
+  it("cancels a worker-kind node in `not_started`", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
@@ -36,12 +36,12 @@ describe("WorkflowService.cancelNode", () => {
     const n = await h.service.getNode(nodeId);
     expect(n.status).toBe("cancelled");
     expect(n.endedAt).toBeDefined();
-    // No handler.cancel call for a not_started node — there's no
+    // No runner.cancel call for a not_started node — there's no
     // in-flight unit to abort.
     expect(h.workerRunner.cancelCalls).toEqual([]);
   });
 
-  it("cancels a task-kind node in `running` and routes through handler.cancel post-commit", async () => {
+  it("cancels a worker-kind node in `running` and routes through runner.cancel post-commit", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     // Materialise a parent task and force it terminal so the child
     // task lands in `running` via eager dispatch on insert.
@@ -71,7 +71,7 @@ describe("WorkflowService.cancelNode", () => {
     expect(h.workerRunner.cancelCalls).toEqual([nodeId]);
   });
 
-  it("REJECTS coordinator-kind nodes (task-kind only)", async () => {
+  it("REJECTS coordinator-kind nodes (worker-kind only)", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     // The coord is the caller; we try to cancel ANOTHER coord.
     const { nodeId: otherCoord } = await h.service.addNode({
@@ -105,7 +105,7 @@ describe("WorkflowService.cancelNode", () => {
     ).rejects.toBeInstanceOf(WorkflowNodeNotMutableError);
   });
 
-  it("handler.cancel failure is logged but the substrate still marks the node cancelled", async () => {
+  it("runner.cancel failure is logged but the substrate still marks the node cancelled", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,

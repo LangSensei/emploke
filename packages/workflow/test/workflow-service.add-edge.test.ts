@@ -107,7 +107,7 @@ describe("WorkflowService.addEdge", () => {
     ).rejects.toBeInstanceOf(WorkflowEdgeCycleError);
   });
 
-  it("REJECTS task-kind to-node when the from-node is failed/cancelled", async () => {
+  it("REJECTS worker-kind to-node when the from-node is failed/cancelled", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: a } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,

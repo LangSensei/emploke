@@ -28,7 +28,7 @@ describe("WorkflowService.addNode", () => {
 
   // ─── Happy path + phase ───────────────────────────────────
 
-  it("adds a task-kind node and assigns phase = MAX(parents.phase) + 1", async () => {
+  it("adds a worker-kind node and assigns phase = MAX(parents.phase) + 1", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId, phase } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
@@ -65,7 +65,7 @@ describe("WorkflowService.addNode", () => {
 
   // ─── Kind-aware parent-state restriction ─────────────────
 
-  it("REJECTS a task-kind node whose parent is `failed`", async () => {
+  it("REJECTS a worker-kind node whose parent is `failed`", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
@@ -91,7 +91,7 @@ describe("WorkflowService.addNode", () => {
     ).rejects.toBeInstanceOf(ParentStateError);
   });
 
-  it("REJECTS a task-kind node whose parent is `cancelled`", async () => {
+  it("REJECTS a worker-kind node whose parent is `cancelled`", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: parentId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
@@ -207,7 +207,7 @@ describe("WorkflowService.addNode", () => {
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
 
-  it("REJECTS when caller node is a task-kind node (not coord)", async () => {
+  it("REJECTS when caller node is a worker-kind node (not coord)", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     const { nodeId: taskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,

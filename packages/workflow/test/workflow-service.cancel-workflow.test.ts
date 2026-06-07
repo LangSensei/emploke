@@ -29,7 +29,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     });
     // Materialise a parent task and force it terminal so the
     // `running` task lands in `running` via eager dispatch — needed
-    // so the cancel reconciliation invokes handler.cancel for it.
+    // so the cancel reconciliation invokes runner.cancel for it.
     const { nodeId: parentTaskId } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,
       kind: "worker",
@@ -74,7 +74,7 @@ describe("WorkflowService.cancelWorkflow", () => {
     );
   });
 
-  it("does NOT call handler.cancel for not_started / not-yet-running nodes", async () => {
+  it("does NOT call runner.cancel for not_started / not-yet-running nodes", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     const { nodeId: pending } = await h.service.addNode({
       callerCoordNodeId: initialCoordNodeId,

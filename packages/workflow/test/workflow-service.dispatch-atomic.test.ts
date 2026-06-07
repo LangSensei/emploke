@@ -73,7 +73,7 @@ describe("WorkflowService.dispatchAtomic", () => {
       parents: [initialCoordNodeId, parentTask],
     });
     // Mark both parents terminal: parentTask FAILED, initialCoord
-    // SUCCEEDED. A task-kind child would NOT dispatch (failed
+    // SUCCEEDED. A worker-kind child would NOT dispatch (failed
     // parent) but a coord-kind child WILL.
     h.db.db.transaction((tx) => {
       h.repo.updateNodeLifecycle(tx, {
@@ -118,7 +118,7 @@ describe("WorkflowService.dispatchAtomic", () => {
     expect(h.workerRunner.dispatchCalls.length).toBe(before);
   });
 
-  it("on handler.dispatch throw, marks the node failed via a separate tx", async () => {
+  it("on runner.dispatch throw, marks the node failed via a separate tx", async () => {
     const { initialCoordNodeId } = await bootstrap(h);
     // Materialise a parent task and force it terminal so the new
     // task's parent-readiness predicate fires eager dispatch on insert.
