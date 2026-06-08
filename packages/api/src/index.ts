@@ -30,6 +30,13 @@ export {
 } from "./application.js";
 export { makeTaskKindHandler, TaskScheduleTargetError } from "./wiring/schedule-task-handler.js";
 export {
+  makeWorkflowStubCoordRunner,
+  WORKFLOW_STUB_WORKER_AGENT,
+  WORKFLOW_STUB_WORKER_BRIEF,
+  type WorkflowStubCoordRunnerDeps,
+  type WorkflowStubCoordSpec,
+} from "./wiring/workflow-coord-runner.js";
+export {
   DEFAULT_WORKER_MAX_POLL_ERRORS,
   DEFAULT_WORKER_POLL_INTERVAL_MS,
   type MakeWorkerNodeRunnerDeps,
