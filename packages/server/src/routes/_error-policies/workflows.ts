@@ -6,25 +6,29 @@
  *
  * Status assignments:
  *
- *   - 400 — structural validation rejections the caller can fix.
+ *   - 400 — caller-fixable structural validation, including bad enum
+ *           values supplied by the caller (a request specifying an
+ *           unknown `kind` reaches `WorkflowNodeKindUnknownError` /
+ *           `WorkflowEnumValueError` / `WorkflowNodeKindShapeError`
+ *           via the substrate's defensive parse path).
+ *   - 403 — caller is not an authorised mutator (the substrate's auth
+ *           gate: must be the unique running coordinator in this
+ *           workflow). Distinct from 404 (entity missing) and 409
+ *           (FSM/state conflict) — the entity exists, the request is
+ *           well-formed, but the caller does not own this workflow.
  *   - 404 — addressing miss (workflow / node / edge not in this
  *           workspace).
- *   - 409 — CAS / FSM conflict (workflow already terminal, node not
- *           mutable at the requested verb, edge would close a cycle,
- *           remove would orphan a child, etc.). The substrate emits
- *           these AFTER the row exists — the caller observed a stale
- *           state.
- *   - 500 — operator-config or schema-corruption (kind unknown, enum
- *           value not in vocabulary, kind shape invalid). These
- *           cannot fire from caller-supplied input on a healthy
- *           deploy; the body collapses to "internal error" because
- *           the names are NOT on the SAFE_ERROR_NAMES allow-list.
+ *   - 409 — CAS / FSM / DAG conflict against existing state (workflow
+ *           already terminal, node not mutable at the requested verb,
+ *           edge would close a cycle, remove would orphan a child,
+ *           etc.). The substrate emits these AFTER the row exists —
+ *           the caller observed a stale state.
  *
  * Agent-resolution failures from the coord-kind runner's `validate`
  * (`AgentNotFoundError` / `AgentResolutionFailedError` from the task
  * pkg) are listed below — reachable via `POST /workflows` at create
- * time. Worker-kind dispatch will reuse the same rows when M3 ships
- * DAG-mutation routes.
+ * time AND via the M2.5 mutation routes (`addNode`, `addSubgraph`,
+ * `replaceNodeSpec`) when the runner re-validates an agent FQN.
  */
 
 import {
@@ -78,6 +82,9 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowNodeNotFoundError, 404],
     [WorkflowEdgeNotFoundError, 404],
 
+    // 403 — caller is not an authorised mutator (auth gate failure)
+    [WorkflowMutationUnauthorizedError, 403],
+
     // 400 — caller-fixable structural validation
     [InvalidWorkflowIdError, 400],
     [InvalidWorkflowNodeIdError, 400],
@@ -87,10 +94,22 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowSubgraphTempIdInvalidError, 400],
     [WorkflowSubgraphTempParentlessError, 400],
     [WorkflowSubgraphNodeRefUnresolvedError, 400],
+    // The substrate's defensive enum / kind guards. Originally
+    // mapped to 500 (treated as schema corruption), but the M2.5
+    // mutation routes can surface them when a request crosses the
+    // boundary into substrate code paths that re-parse persisted
+    // rows (e.g. `getNode` after `replaceNodeSpec`, or `addSubgraph`
+    // when projecting batch results). Mapping to 400 keeps the
+    // caller's experience honest — the request failed structurally,
+    // it wasn't an internal error. Messages echo only caller-
+    // supplied values + the allowed alternatives, so the names are
+    // on the SAFE_ERROR_NAMES allow-list (see _shared.ts).
+    [WorkflowNodeKindUnknownError, 400],
+    [WorkflowEnumValueError, 400],
+    [WorkflowNodeKindShapeError, 400],
 
     // 409 — FSM / DAG conflict against existing state
     [WorkflowAlreadyTerminalError, 409],
-    [WorkflowMutationUnauthorizedError, 409],
     [WorkflowNodeNotMutableError, 409],
     [WorkflowEdgeCycleError, 409],
     [MultipleSuccessorCoordsError, 409],
@@ -101,14 +120,8 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowSubgraphCyclicError, 409],
     [WorkflowSubgraphMultipleCoordTempsError, 409],
 
-    // 500 — operator-config or schema-corruption. Bodies collapse to
-    // "internal error" because the names are not on SAFE_ERROR_NAMES.
-    [WorkflowNodeKindUnknownError, 500],
-    [WorkflowEnumValueError, 500],
-    [WorkflowNodeKindShapeError, 500],
-
     // Task-package surface — reachable from worker-kind handler
-    // dispatch paths surfaced via future DAG-mutation routes. Listed
+    // dispatch paths surfaced via M2.5 DAG-mutation routes. Listed
     // here proactively so policy is consistent with the schedules
     // policy's same fallthrough block.
     [InvalidTaskIdError, 400],

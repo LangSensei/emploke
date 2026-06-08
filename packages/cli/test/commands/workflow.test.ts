@@ -15,15 +15,23 @@
  *    code surfaces in stderr via `formatError`)
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  workflowAddEdge,
+  workflowAddNode,
+  workflowAddSubgraph,
   workflowCancel,
+  workflowCancelNode,
   workflowCreate,
   workflowDag,
+  workflowFinish,
   workflowList,
+  workflowRemoveEdge,
+  workflowRemoveNode,
+  workflowReplaceSpec,
   workflowShow,
 } from "../../src/commands/workflow.js";
 import { runCli } from "../_helpers/run-cli.js";
@@ -80,7 +88,7 @@ function stubFetchMulti(responses: readonly MockResponse[]): { calls: Call[] } {
     if (r === undefined) {
       return new Response(`unexpected request #${i}: ${String(input)}`, { status: 500 });
     }
-    return new Response(r.body, {
+    return new Response(r.body === "" ? null : r.body, {
       status: r.status,
       headers: { "content-type": r.contentType ?? "application/json" },
     });
@@ -574,5 +582,337 @@ describe("`emploke workflow …` commander wiring (argv → action)", () => {
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(CANCEL_URL);
     expect(calls[0]?.body).toBeUndefined();
+  });
+});
+
+// ─── M2.5 coord-callback mutation commands ───────────────────────────
+
+const NID = "20260601-bbbbbbbb";
+const NID2 = "20260601-cccccccc";
+const NODES_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/nodes`;
+const EDGES_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/edges`;
+const SUBGRAPH_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/subgraph`;
+const FINISH_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/finish`;
+const CANCEL_NODE_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/nodes/${NID}/cancel`;
+const REMOVE_NODE_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/nodes/${NID}`;
+const REMOVE_EDGE_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/edges/${NID}/${NID2}`;
+const REPLACE_SPEC_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/nodes/${NID}/spec`;
+
+const sampleNode = {
+  id: NID,
+  workflowId: WFID,
+  phase: 2,
+  status: "not_started" as const,
+  spec: { kind: "task" as const, agent: "writer", brief: "thing" },
+  createdAt: "2026-06-01T00:00:00.000Z",
+};
+
+async function writeSpec(payload: unknown): Promise<string> {
+  const filePath = path.join(home, `spec-${Math.random().toString(36).slice(2)}.json`);
+  await writeFile(filePath, JSON.stringify(payload), "utf8");
+  return filePath;
+}
+
+// ─── add-node ─────────────────────────────────────────────────────────
+
+describe("workflowAddNode", () => {
+  it("POSTs /nodes with kind + spec + parents from --spec-file and --parents", async () => {
+    const specFile = await writeSpec({ agent: "writer", brief: "draft" });
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify({ nodeId: NID, phase: 2 }) },
+    ]);
+    const r = await workflowAddNode({
+      ...commonOpts(),
+      wfid: WFID,
+      kind: "worker",
+      specFile,
+      parents: "p1,p2",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(NODES_URL);
+    expect(calls[0]?.body).toEqual({
+      kind: "worker",
+      spec: { agent: "writer", brief: "draft" },
+      parents: ["p1", "p2"],
+    });
+  });
+
+  it("rejects unknown --kind with exit 2, no fetch", async () => {
+    const specFile = await writeSpec({});
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowAddNode({
+      ...commonOpts(),
+      wfid: WFID,
+      kind: "human",
+      specFile,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects unreadable --spec-file with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowAddNode({
+      ...commonOpts(),
+      wfid: WFID,
+      kind: "worker",
+      specFile: path.join(home, "does-not-exist.json"),
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--spec-file read failed/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects --spec-file with malformed JSON with exit 2, no fetch", async () => {
+    const badPath = path.join(home, "bad.json");
+    await writeFile(badPath, "{not json", "utf8");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowAddNode({
+      ...commonOpts(),
+      wfid: WFID,
+      kind: "worker",
+      specFile: badPath,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/JSON parse error/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("server 403 surfaces typed code via formatError (exit 4)", async () => {
+    const specFile = await writeSpec({});
+    stubFetchMulti([
+      {
+        status: 403,
+        body: JSON.stringify({
+          error: "denied",
+          code: "WorkflowMutationUnauthorizedError",
+        }),
+      },
+    ]);
+    const r = await workflowAddNode({
+      ...commonOpts(),
+      wfid: WFID,
+      kind: "worker",
+      specFile,
+      parents: "p1",
+    });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("WorkflowMutationUnauthorizedError");
+  });
+});
+
+// ─── add-edge ─────────────────────────────────────────────────────────
+
+describe("workflowAddEdge", () => {
+  it("POSTs /edges with {fromNodeId, toNodeId} from --from / --to", async () => {
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify({ fromNodeId: NID, toNodeId: NID2 }) },
+    ]);
+    const r = await workflowAddEdge({
+      ...commonOpts(),
+      wfid: WFID,
+      from: NID,
+      to: NID2,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(EDGES_URL);
+    expect(calls[0]?.body).toEqual({ fromNodeId: NID, toNodeId: NID2 });
+  });
+
+  it("rejects missing --to with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowAddEdge({
+      ...commonOpts(),
+      wfid: WFID,
+      from: NID,
+      to: "",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── add-subgraph ─────────────────────────────────────────────────────
+
+describe("workflowAddSubgraph", () => {
+  it("POSTs /subgraph with the payload read from --spec-file", async () => {
+    const payload = {
+      nodes: [{ tempId: "t1", kind: "worker", spec: {} }],
+      edges: [{ from: { nodeId: NID }, to: { tempId: "t1" } }],
+    };
+    const specFile = await writeSpec(payload);
+    const { calls } = stubFetchMulti([
+      {
+        status: 200,
+        body: JSON.stringify({
+          insertedNodes: [{ tempId: "t1", nodeId: NID2, phase: 3 }],
+        }),
+      },
+    ]);
+    const r = await workflowAddSubgraph({ ...commonOpts(), wfid: WFID, specFile });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(SUBGRAPH_URL);
+    expect(calls[0]?.body).toEqual(payload);
+    expect(r.stdout).toContain("t1");
+    expect(r.stdout).toContain(NID2);
+  });
+
+  it("rejects --spec-file that isn't an object with nodes+edges arrays", async () => {
+    const specFile = await writeSpec(["wrong shape"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowAddSubgraph({ ...commonOpts(), wfid: WFID, specFile });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── remove-node ──────────────────────────────────────────────────────
+
+describe("workflowRemoveNode", () => {
+  it("DELETEs /nodes/:nid and exits 0 on 204", async () => {
+    const { calls } = stubFetchMulti([{ status: 204, body: "" }]);
+    const r = await workflowRemoveNode({ ...commonOpts(), wfid: WFID, nid: NID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(REMOVE_NODE_URL);
+  });
+
+  it("surfaces 409 WorkflowRemoveNodeOrphansChildError via exit 4", async () => {
+    stubFetchMulti([
+      {
+        status: 409,
+        body: JSON.stringify({
+          error: "orphan",
+          code: "WorkflowRemoveNodeOrphansChildError",
+        }),
+      },
+    ]);
+    const r = await workflowRemoveNode({ ...commonOpts(), wfid: WFID, nid: NID });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("WorkflowRemoveNodeOrphansChildError");
+  });
+});
+
+// ─── remove-edge ──────────────────────────────────────────────────────
+
+describe("workflowRemoveEdge", () => {
+  it("DELETEs /edges/:from/:to and exits 0 on 204", async () => {
+    const { calls } = stubFetchMulti([{ status: 204, body: "" }]);
+    const r = await workflowRemoveEdge({
+      ...commonOpts(),
+      wfid: WFID,
+      from: NID,
+      to: NID2,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(REMOVE_EDGE_URL);
+  });
+
+  it("rejects missing --from with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowRemoveEdge({
+      ...commonOpts(),
+      wfid: WFID,
+      from: "",
+      to: NID2,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── replace-spec ─────────────────────────────────────────────────────
+
+describe("workflowReplaceSpec", () => {
+  it("PATCHes /nodes/:nid/spec with {newSpec} from --spec-file", async () => {
+    const specFile = await writeSpec({ agent: "writer", brief: "rev" });
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleNode) }]);
+    const r = await workflowReplaceSpec({
+      ...commonOpts(),
+      wfid: WFID,
+      nid: NID,
+      specFile,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(REPLACE_SPEC_URL);
+    expect(calls[0]?.body).toEqual({ newSpec: { agent: "writer", brief: "rev" } });
+  });
+
+  it("rejects missing --spec-file with exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowReplaceSpec({
+      ...commonOpts(),
+      wfid: WFID,
+      nid: NID,
+      specFile: "",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── cancel-node ──────────────────────────────────────────────────────
+
+describe("workflowCancelNode", () => {
+  it("POSTs /nodes/:nid/cancel and renders the post-cancel node", async () => {
+    const cancelled = { ...sampleNode, status: "cancelled" as const };
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelled) }]);
+    const r = await workflowCancelNode({ ...commonOpts(), wfid: WFID, nid: NID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(CANCEL_NODE_URL);
+    expect(r.stdout).toContain("cancelled");
+  });
+
+  it("server 409 (coord-kind target) surfaces typed code via exit 4", async () => {
+    stubFetchMulti([
+      {
+        status: 409,
+        body: JSON.stringify({ error: "not mutable", code: "WorkflowNodeNotMutableError" }),
+      },
+    ]);
+    const r = await workflowCancelNode({ ...commonOpts(), wfid: WFID, nid: NID });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("WorkflowNodeNotMutableError");
+  });
+});
+
+// ─── finish ───────────────────────────────────────────────────────────
+
+describe("workflowFinish", () => {
+  it("POSTs /finish with {outcome:'succeeded'} and prints the post-finish header", async () => {
+    const succeededHeader = {
+      ...sampleHeader,
+      status: "succeeded" as const,
+      endedAt: "2026-06-01T01:00:00.000Z",
+    };
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(succeededHeader) }]);
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "succeeded",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(FINISH_URL);
+    expect(calls[0]?.body).toEqual({ outcome: "succeeded" });
+    expect(r.stdout).toContain("succeeded");
+  });
+
+  it("rejects --outcome=cancelled with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "cancelled",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

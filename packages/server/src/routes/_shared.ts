@@ -144,6 +144,15 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "WorkflowSubgraphNodeRefUnresolvedError",
   "WorkflowSubgraphCyclicError",
   "WorkflowSubgraphMultipleCoordTempsError",
+  // M2.5 — caller-facing kind-enum guards. Reachable from
+  // `POST .../nodes` / `POST .../subgraph` when the caller supplies a
+  // body with an out-of-vocab `kind`; the substrate's defensive
+  // throws surface the value the caller sent and the allowed set.
+  // Messages echo only caller-supplied values + the allowed list —
+  // no host paths, no third-party stack lines.
+  "WorkflowNodeKindUnknownError",
+  "WorkflowEnumValueError",
+  "WorkflowNodeKindShapeError",
 ]);
 
 /**
