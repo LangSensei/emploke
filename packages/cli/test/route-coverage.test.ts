@@ -50,6 +50,18 @@ const ALLOWED_GAPS: ReadonlySet<RouteKey> = new Set<RouteKey>([
   "workspaces.setCurrent",
   "tasks.artifact", // dashboard-only download endpoint; CLI users have direct fs access to <workspace>/tasks/<tid>/artifact/
   "schedules.previewCron", // dashboard-only live-preview endpoint for the create-schedule modal (#222); CLI uses ScheduleService.preview directly via `emploke schedule create --preview`
+  // Workflow routes are temporarily CLI-gapped: the dashboard and
+  // MCP surfaces consume them directly, but the `emploke workflow`
+  // subcommand is intentionally deferred to a follow-up PR (the
+  // substrate routes ship first so the dashboard can move
+  // independently). When the CLI subcommand lands, wire it in
+  // `packages/cli/src/commands/workflow.ts` and delete the entries
+  // below.
+  "workflows.list",
+  "workflows.create",
+  "workflows.get",
+  "workflows.dag",
+  "workflows.cancel",
 ]);
 
 /**
