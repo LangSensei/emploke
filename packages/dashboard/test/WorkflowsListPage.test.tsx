@@ -123,7 +123,7 @@ describe("WorkflowsPage — list rendering + sort", () => {
     expect(rows[1]?.getAttribute("data-testid")).toBe("workflow-row-wf-older");
   });
 
-  it("renders the zero-state when no workflows and no active status filter", async () => {
+  it("renders the zero-state when no workflows and no active filters", async () => {
     mockListWorkflows.mockResolvedValue([]);
     renderWorkflows("/workspaces/ws-1/runtime/workflows", agents);
     await waitFor(() => {
@@ -131,17 +131,25 @@ describe("WorkflowsPage — list rendering + sort", () => {
     });
   });
 
-  it("forwards ?status=failed to listWorkflows as { status: 'failed' }", async () => {
+  it("forwards ?q=foo to listWorkflows as { q: 'foo' }", async () => {
     mockListWorkflows.mockResolvedValue([]);
-    renderWorkflows("/workspaces/ws-1/runtime/workflows?status=failed", agents);
+    renderWorkflows("/workspaces/ws-1/runtime/workflows?q=foo&range=all", agents);
     await waitFor(() => {
-      expect(mockListWorkflows).toHaveBeenCalledWith({ status: "failed" });
+      expect(mockListWorkflows).toHaveBeenCalledWith({ q: "foo" });
+    });
+  });
+
+  it("forwards ?agent=emploke/dev to listWorkflows as { coordinatorAgent: ... }", async () => {
+    mockListWorkflows.mockResolvedValue([]);
+    renderWorkflows("/workspaces/ws-1/runtime/workflows?agent=emploke%2Fdev&range=all", agents);
+    await waitFor(() => {
+      expect(mockListWorkflows).toHaveBeenCalledWith({ coordinatorAgent: "emploke/dev" });
     });
   });
 
   it("renders the filtered-empty state when a filter yields no rows", async () => {
     mockListWorkflows.mockResolvedValue([]);
-    renderWorkflows("/workspaces/ws-1/runtime/workflows?status=cancelled", agents);
+    renderWorkflows("/workspaces/ws-1/runtime/workflows?q=missing&range=all", agents);
     await waitFor(() => {
       expect(screen.getByTestId("workflows-empty-filtered")).toBeTruthy();
     });

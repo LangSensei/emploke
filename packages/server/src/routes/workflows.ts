@@ -105,7 +105,6 @@ import {
   workflowDir as resolveWorkflowDir,
   WorkflowError,
   type WorkflowService,
-  type WorkflowStatus,
 } from "@emploke/workflow";
 import { Hono } from "hono";
 import { mimeBucketFor } from "../util/mime-bucket.js";
@@ -124,7 +123,6 @@ export type WorkflowTasksResolver = (c: import("hono").Context) => TaskService;
 export type WorkflowWorkspaceDirResolver = (c: import("hono").Context) => string;
 
 const ALLOWED_CREATE_KEYS = new Set(["brief", "details", "coordinatorAgent", "metadata"]);
-const KNOWN_STATUSES: readonly WorkflowStatus[] = ["running", "succeeded", "failed", "cancelled"];
 const KNOWN_NODE_KINDS: readonly NodeKind[] = ["coordinator", "worker"];
 const KNOWN_FINISH_OUTCOMES: readonly ("succeeded" | "failed")[] = ["succeeded", "failed"];
 
@@ -138,17 +136,18 @@ interface ValidationOk<T> {
 }
 type ValidationResult<T> = ValidationOk<T> | ValidationFail;
 
-function validateStatusQuery(
-  raw: string | undefined,
-): ValidationResult<WorkflowStatus | undefined> {
+function validateCreatedSinceQuery(raw: string | undefined): ValidationResult<string | undefined> {
   if (raw === undefined) return { ok: true, value: undefined };
-  if (!KNOWN_STATUSES.includes(raw as WorkflowStatus)) {
-    return {
-      ok: false,
-      error: `status must be one of: ${KNOWN_STATUSES.join(", ")}`,
-    };
+  // Accept any ISO 8601 string that `Date.parse` understands. The
+  // substrate forwards the string verbatim into a SQL `>=` predicate
+  // against the text-sortable `created_at` column, so any parseable
+  // shape works — we only reject obviously malformed input so the
+  // caller learns about it at the boundary rather than getting an
+  // empty list back.
+  if (Number.isNaN(Date.parse(raw))) {
+    return { ok: false, error: "createdSince must be an ISO 8601 timestamp" };
   }
-  return { ok: true, value: raw as WorkflowStatus };
+  return { ok: true, value: raw };
 }
 
 function validateCreateBody(raw: unknown): ValidationResult<CreateWorkflowBody> {
@@ -484,16 +483,26 @@ export function workflowsRoutes(
 ): Hono {
   const app = new Hono();
 
-  // ── GET / — list with optional status filter ─────────────────────
+  // ── GET / — list with optional q / coordinatorAgent / createdSince ─
   app.get("/", async (c) => {
-    const statusResult = validateStatusQuery(c.req.query("status"));
-    if (!statusResult.ok) {
-      return c.json(errorBody(new WorkflowError(statusResult.error)), 400);
+    const createdSinceResult = validateCreatedSinceQuery(c.req.query("createdSince"));
+    if (!createdSinceResult.ok) {
+      return c.json(errorBody(new WorkflowError(createdSinceResult.error)), 400);
     }
+    const q = c.req.query("q");
+    const coordinatorAgent = c.req.query("coordinatorAgent");
+    const opts: {
+      coordinatorAgent?: string;
+      createdSince?: string;
+      idLike?: string;
+    } = {};
+    if (q !== undefined && q !== "") opts.idLike = q;
+    if (coordinatorAgent !== undefined && coordinatorAgent !== "") {
+      opts.coordinatorAgent = coordinatorAgent;
+    }
+    if (createdSinceResult.value !== undefined) opts.createdSince = createdSinceResult.value;
     try {
-      const list = await resolve(c).list(
-        statusResult.value !== undefined ? { status: statusResult.value } : undefined,
-      );
+      const list = await resolve(c).list(Object.keys(opts).length === 0 ? undefined : opts);
       // `iterationCount` projected as 0 on list rows to keep the
       // endpoint O(workflows). Clients that need the accurate count
       // fetch the header via `GET /:wfid`.

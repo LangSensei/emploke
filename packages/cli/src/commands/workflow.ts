@@ -80,7 +80,6 @@ import type {
   WorkflowHeaderWire,
   WorkflowNodeKindWire,
   WorkflowNodeWire,
-  WorkflowStatusWire,
 } from "@emploke/contracts";
 import { makeClient, resolveWorkspace } from "../connect.js";
 import { formatError, formatJson, formatRecord, formatTable, pickFormat } from "../output.js";
@@ -94,36 +93,14 @@ interface CommonFlags {
   readonly json?: boolean;
 }
 
-const KNOWN_STATUSES: readonly WorkflowStatusWire[] = [
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-];
-
-function isWorkflowStatus(s: string): s is WorkflowStatusWire {
-  return (KNOWN_STATUSES as readonly string[]).includes(s);
-}
-
 // ─── list ──────────────────────────────────────────────────────────────
-export interface WorkflowListOpts extends CommonFlags {
-  /** Lifecycle status filter. One of {@link KNOWN_STATUSES}. */
-  readonly status?: string;
-}
+export type WorkflowListOpts = CommonFlags;
 
 export async function workflowList(opts: WorkflowListOpts = {}): Promise<CommandResult> {
-  if (opts.status !== undefined && !isWorkflowStatus(opts.status)) {
-    return {
-      exitCode: 2,
-      stderr: `--status must be one of: ${KNOWN_STATUSES.join(", ")}\n`,
-    };
-  }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    const query: { status?: WorkflowStatusWire } = {};
-    if (opts.status !== undefined) query.status = opts.status as WorkflowStatusWire;
-    const list = await client.call("workflows.list", { params: { id }, query });
+    const list = await client.call("workflows.list", { params: { id } });
     const fmt = pickFormat(opts, "table");
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(list) };
     return {

@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listWorkflows, type WorkflowHeaderWire, type WorkflowListQuery } from "../api";
-import {
-  ALL_STATUS,
-  type StatusFilter,
-  sortByCreatedDesc,
-  WORKFLOW_POLL_INTERVAL_MS,
-} from "../components/workflows/shared";
+import { ALL_AGENTS, presetToSinceMs, type TimePreset } from "../components/tasks/shared";
+import { sortByCreatedDesc, WORKFLOW_POLL_INTERVAL_MS } from "../components/workflows/shared";
 import { useMounted } from "./useMounted";
 
 export interface UseWorkflowsOpts {
   currentWorkspaceId: string | null;
-  statusFilter: StatusFilter;
+  /** Substring search on the workflow id; empty string = no filter. */
+  idQuery: string;
+  /** Coordinator-agent FQN; `ALL_AGENTS` sentinel = no filter. */
+  agentFilter: string;
+  /** Time-range preset; `"all"` = no `createdSince` lower bound. */
+  timeFilter: TimePreset;
 }
 
 export interface UseWorkflowsResult {
@@ -23,8 +24,10 @@ export interface UseWorkflowsResult {
 
 /**
  * Page-level data layer for the Workflows list. Mirrors `useTasks`
- * (`hooks/useTasks.ts`) without the runtime / time-range filters
- * since the workflow listing only filters by status.
+ * (`hooks/useTasks.ts`) — three URL-driven filter slots are
+ * translated into a single `WorkflowListQuery` and forwarded to the
+ * server. The server's `?q=` / `?coordinatorAgent=` / `?createdSince=`
+ * slots AND-combine; absent slots widen the result set.
  *
  * Polls every {@link WORKFLOW_POLL_INTERVAL_MS}ms while there is at
  * least one running workflow visible — stops as soon as everything is
@@ -33,7 +36,9 @@ export interface UseWorkflowsResult {
  */
 export function useWorkflows({
   currentWorkspaceId,
-  statusFilter,
+  idQuery,
+  agentFilter,
+  timeFilter,
 }: UseWorkflowsOpts): UseWorkflowsResult {
   const [workflows, setWorkflows] = useState<readonly WorkflowHeaderWire[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -50,8 +55,12 @@ export function useWorkflows({
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const opts: WorkflowListQuery = statusFilter !== ALL_STATUS ? { status: statusFilter } : {};
-      const next = await listWorkflows(opts);
+      const opts: { q?: string; coordinatorAgent?: string; createdSince?: string } = {};
+      if (idQuery !== "") opts.q = idQuery;
+      if (agentFilter !== ALL_AGENTS) opts.coordinatorAgent = agentFilter;
+      const sinceMs = presetToSinceMs(timeFilter);
+      if (sinceMs !== null) opts.createdSince = new Date(sinceMs).toISOString();
+      const next = await listWorkflows(opts as WorkflowListQuery);
       if (!mounted.current) return;
       setWorkflows(sortByCreatedDesc(next));
       setError(null);
@@ -62,7 +71,7 @@ export function useWorkflows({
       inFlightRef.current = false;
       if (mounted.current) setLoaded(true);
     }
-  }, [currentWorkspaceId, statusFilter]);
+  }, [currentWorkspaceId, idQuery, agentFilter, timeFilter]);
 
   useEffect(() => {
     void refresh();

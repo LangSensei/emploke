@@ -43,14 +43,9 @@ export function registerWorkflowCommands(program: Command, slot: Slot): void {
 
   withWorkspaceFlags(workflowCmd.command("list"))
     .description("List workflows in the current workspace")
-    .option(
-      "--status <status>",
-      "Filter to one lifecycle status (running | succeeded | failed | cancelled)",
-    )
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await workflowList({
         ...parseWorkspaceFlags(opts),
-        ...optionalString(opts, "status"),
       });
     });
 

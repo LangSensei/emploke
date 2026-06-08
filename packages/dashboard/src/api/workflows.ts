@@ -29,7 +29,11 @@ export const listWorkflows = (
   opts: WorkflowListQuery = {},
 ): Promise<readonly WorkflowHeaderWire[]> => {
   const qs = new URLSearchParams();
-  if (opts.status !== undefined) qs.set("status", opts.status);
+  if (opts.q !== undefined && opts.q !== "") qs.set("q", opts.q);
+  if (opts.coordinatorAgent !== undefined && opts.coordinatorAgent !== "") {
+    qs.set("coordinatorAgent", opts.coordinatorAgent);
+  }
+  if (opts.createdSince !== undefined) qs.set("createdSince", opts.createdSince);
   const suffix = qs.toString() === "" ? "" : `?${qs.toString()}`;
   return fetchJson<readonly WorkflowHeaderWire[]>(
     `${workspacePrefix()}/workflows${suffix}`,

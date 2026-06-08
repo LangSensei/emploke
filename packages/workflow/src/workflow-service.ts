@@ -52,7 +52,6 @@ import type {
   WorkflowNodeTerminalResult,
   WorkflowNodeValidateCtx,
   WorkflowRunners,
-  WorkflowStatus,
   WorkflowSuccess,
 } from "./types.js";
 import { generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
@@ -415,18 +414,28 @@ export class WorkflowService {
 
   /**
    * Unbounded list of workflow headers in this workspace, ordered by
-   * `created_at` descending (newest first). Optional `status` narrows
-   * to one terminal/non-terminal value. Unknown `status` values fall
-   * through to the SQL `WHERE status = '<bogus>'` predicate and
-   * silently return `[]` — caller-facing validation lives at the
-   * route boundary (the substrate stays kind-agnostic about wire-shape
-   * vocabularies).
+   * `created_at` descending (newest first). All three filter slots
+   * are AND-combined when supplied; omitted slots widen the result
+   * set. Caller-facing validation lives at the route boundary (the
+   * substrate stays kind-agnostic about wire-shape vocabularies).
+   *
+   *   - `coordinatorAgent` — exact-match on `coordinator_agent`
+   *     (uses the `workflows_coordinator_agent_idx` index).
+   *   - `createdSince`     — ISO 8601 lower bound (inclusive) on
+   *     `created_at`. Absent = unbounded.
+   *   - `idLike`           — case-sensitive substring match on the
+   *     workflow id; the repository escapes `LIKE` metacharacters so
+   *     a `%` typed into the search box doesn't widen the match.
    *
    * Per-workspace volume is small enough that pagination is not yet
    * needed — same shape as `ScheduleService.list` /
    * `TaskService.list`.
    */
-  async list(opts?: { readonly status?: WorkflowStatus }): Promise<readonly WorkflowEntity[]> {
+  async list(opts?: {
+    readonly coordinatorAgent?: string;
+    readonly createdSince?: string;
+    readonly idLike?: string;
+  }): Promise<readonly WorkflowEntity[]> {
     return this.repo.listWorkflows(opts);
   }
 

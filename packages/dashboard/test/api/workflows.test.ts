@@ -36,17 +36,51 @@ afterEach(() => {
 });
 
 describe("listWorkflows — URL construction", () => {
-  it("omits the status query when no filter is passed", async () => {
+  it("omits the query string when no filter is passed", async () => {
     installFetch([]);
     await listWorkflows();
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("/api/workspaces/ws-test-uuid/workflows");
   });
 
-  it("encodes the status filter as ?status=<value>", async () => {
+  it("encodes the q filter as ?q=<value>", async () => {
     installFetch([]);
-    await listWorkflows({ status: "running" });
-    expect(calls[0]?.url).toBe("/api/workspaces/ws-test-uuid/workflows?status=running");
+    await listWorkflows({ q: "abc123" });
+    expect(calls[0]?.url).toBe("/api/workspaces/ws-test-uuid/workflows?q=abc123");
+  });
+
+  it("encodes the coordinatorAgent filter as ?coordinatorAgent=<value>", async () => {
+    installFetch([]);
+    await listWorkflows({ coordinatorAgent: "agent-alpha" });
+    expect(calls[0]?.url).toBe(
+      "/api/workspaces/ws-test-uuid/workflows?coordinatorAgent=agent-alpha",
+    );
+  });
+
+  it("encodes the createdSince filter as ?createdSince=<iso>", async () => {
+    installFetch([]);
+    await listWorkflows({ createdSince: "2026-06-07T00:00:00.000Z" });
+    expect(calls[0]?.url).toBe(
+      "/api/workspaces/ws-test-uuid/workflows?createdSince=2026-06-07T00%3A00%3A00.000Z",
+    );
+  });
+
+  it("treats empty-string q / coordinatorAgent as absent (no query slot emitted)", async () => {
+    installFetch([]);
+    await listWorkflows({ q: "", coordinatorAgent: "" });
+    expect(calls[0]?.url).toBe("/api/workspaces/ws-test-uuid/workflows");
+  });
+
+  it("AND-combines all three slots into one query string", async () => {
+    installFetch([]);
+    await listWorkflows({
+      q: "abc",
+      coordinatorAgent: "agent-alpha",
+      createdSince: "2026-06-07T00:00:00.000Z",
+    });
+    expect(calls[0]?.url).toBe(
+      "/api/workspaces/ws-test-uuid/workflows?q=abc&coordinatorAgent=agent-alpha&createdSince=2026-06-07T00%3A00%3A00.000Z",
+    );
   });
 
   it("encodes the workspace id (path) and threads through the prefix builder", async () => {

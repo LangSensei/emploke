@@ -149,15 +149,6 @@ describe("workflowList — happy path", () => {
     expect(r.stdout).toContain("succeeded");
   });
 
-  it("--status forwards as query param", async () => {
-    const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify([{ ...sampleHeader, status: "succeeded" }]) },
-    ]);
-    const r = await workflowList({ ...commonOpts(), status: "succeeded" });
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(calls[0]?.url).toBe(`${LIST_URL}?status=succeeded`);
-  });
-
   it("--json emits the array as formatted JSON", async () => {
     stubFetchMulti([{ status: 200, body: JSON.stringify([sampleHeader]) }]);
     const r = await workflowList({ ...commonOpts(), json: true });
@@ -165,16 +156,6 @@ describe("workflowList — happy path", () => {
     const parsed = JSON.parse(r.stdout ?? "") as ReadonlyArray<{ id: string }>;
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.id).toBe(WFID);
-  });
-});
-
-describe("workflowList — validation", () => {
-  it("rejects unknown --status with exit 2, no fetch", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const r = await workflowList({ ...commonOpts(), status: "pending" });
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(/running, succeeded, failed, cancelled/);
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

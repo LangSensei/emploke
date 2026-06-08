@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, or } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { WorkflowNodeNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
@@ -61,23 +61,44 @@ export class WorkflowRepository {
 
   /**
    * Unbounded list of workflow header rows ordered by `created_at`
-   * descending (newest first). When `status` is supplied, narrows to
-   * rows whose `status` column equals that value; otherwise returns
-   * every row. Per-workspace volume is small enough that pagination is
-   * not yet needed — mirrors `ScheduleService.list` / `TaskService.list`
+   * descending (newest first). All four filter slots are AND-combined
+   * when supplied; omitted slots widen the result set.
+   *
+   *   - `coordinatorAgent` — exact-match on `coordinator_agent`
+   *     (denorm of the most-recent coord node's `spec.agent`). Uses
+   *     the `workflows_coordinator_agent_idx` index.
+   *   - `createdSince`     — ISO 8601 lower bound (inclusive) on
+   *     `created_at`. Per-workspace volume is small enough that a
+   *     full scan with a `WHERE created_at >= ?` clause is cheap
+   *     enough not to need a dedicated index.
+   *   - `idLike`           — substring match on the workflow id
+   *     (case-sensitive, anchored on `LIKE %x%`). The SQL fragment
+   *     escapes the `LIKE` metacharacters `%` / `_` so a literal id
+   *     fragment from a search box doesn't accidentally widen.
+   *
+   * Per-workspace volume is small enough that pagination is not yet
+   * needed — mirrors `ScheduleService.list` / `TaskService.list`
    * which are also unbounded on the same per-workspace scope.
    */
   async listWorkflows(opts?: {
-    readonly status?: WorkflowStatus;
+    readonly coordinatorAgent?: string;
+    readonly createdSince?: string;
+    readonly idLike?: string;
   }): Promise<readonly WorkflowEntity[]> {
+    const predicates = [];
+    if (opts?.coordinatorAgent !== undefined) {
+      predicates.push(eq(workflows.coordinatorAgent, opts.coordinatorAgent));
+    }
+    if (opts?.createdSince !== undefined) {
+      predicates.push(gte(workflows.createdAt, opts.createdSince));
+    }
+    if (opts?.idLike !== undefined && opts.idLike !== "") {
+      predicates.push(like(workflows.id, `%${escapeLike(opts.idLike)}%`));
+    }
+    const where = predicates.length === 0 ? undefined : and(...predicates);
     const rows =
-      opts?.status !== undefined
-        ? this.db
-            .select()
-            .from(workflows)
-            .where(eq(workflows.status, opts.status))
-            .orderBy(desc(workflows.createdAt))
-            .all()
+      where !== undefined
+        ? this.db.select().from(workflows).where(where).orderBy(desc(workflows.createdAt)).all()
         : this.db.select().from(workflows).orderBy(desc(workflows.createdAt)).all();
     return rows.map((row) => WorkflowEntity.fromRow(row));
   }
@@ -486,6 +507,26 @@ export class WorkflowRepository {
     const row = tx.select().from(workflowNodes).where(eq(workflowNodes.id, id)).get();
     return row === undefined ? null : WorkflowNodeEntity.fromRow(row);
   }
+}
+
+/**
+ * Escape SQL `LIKE` metacharacters in user-supplied substring search
+ * input. The drizzle `like(col, pattern)` call passes `pattern`
+ * through unescaped, so a literal `%` or `_` typed into the workflow
+ * id search box would silently widen the match. We surround the
+ * caller's payload with `%…%` ourselves; this helper only escapes
+ * the metacharacters inside the payload. The default `LIKE` escape
+ * is `\` in SQLite when an `ESCAPE` clause is supplied — drizzle's
+ * `like(...)` does not emit one, so we pre-escape with `\` and let
+ * the engine treat `\%` as literal `%` only if the caller adds an
+ * `ESCAPE '\'` clause. Without one, `\` is itself literal — so the
+ * cleanest defence is to refuse to forward the two metacharacters at
+ * all: any user-typed `%` / `_` is silently dropped. This matches
+ * the per-workspace search box where the operator types ids, never
+ * SQL patterns.
+ */
+function escapeLike(input: string): string {
+  return input.replace(/[%_]/g, "");
 }
 
 // Re-export row helpers so the service layer keeps a single import root.

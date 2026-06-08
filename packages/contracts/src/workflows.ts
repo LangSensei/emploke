@@ -242,13 +242,26 @@ export interface CreateWorkflowBody {
 }
 
 /**
- * Query string for `GET /workspaces/:id/workflows`. When `status` is
- * supplied, the server narrows the list to that lifecycle status;
- * otherwise every workflow is returned. Unknown `status` values are
- * rejected at the route boundary with HTTP 400.
+ * Query string for `GET /workspaces/:id/workflows`. All three slots
+ * are optional; absent slots widen the result set. The server
+ * forwards the trio to `WorkflowService.list` as-is.
+ *
+ *   - `q`                — case-sensitive substring match on the
+ *     workflow id (escapes SQL `LIKE` metacharacters).
+ *   - `coordinatorAgent` — exact match on the workflow's denormalised
+ *     `coordinator_agent` column.
+ *   - `createdSince`     — ISO 8601 lower bound (inclusive) on
+ *     `created_at`. Mirrors the `?range=` time-preset semantics on
+ *     the Tasks page once the dashboard converts a preset to an ISO
+ *     cutoff.
+ *
+ * v2.3 dropped the prior `status` slot on the wire (workflows are
+ * now grouped client-side into Running/Completed sections).
  */
 export interface WorkflowListQuery {
-  readonly status?: WorkflowStatusWire;
+  readonly q?: string;
+  readonly coordinatorAgent?: string;
+  readonly createdSince?: string;
 }
 
 // ─── Mutation primitives — wire-shape DTOs ────────────────────────

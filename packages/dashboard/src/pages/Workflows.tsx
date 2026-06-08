@@ -1,5 +1,5 @@
 import type { AgentEntry } from "@emploke/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   cancelWorkflow,
@@ -9,9 +9,15 @@ import {
 } from "../api";
 import { HeaderActions } from "../components/HeaderActions";
 import { PlusIcon } from "../components/Icons";
+import {
+  ALL_AGENTS,
+  coerceTimePreset,
+  DEFAULT_TIME_PRESET,
+  type TimePreset,
+} from "../components/tasks/shared";
 import { CreateWorkflowModal } from "../components/workflows/CreateWorkflowModal";
-import { ALL_STATUS, STATUS_FILTERS, type StatusFilter } from "../components/workflows/shared";
 import { CancelWorkflowModal } from "../components/workflows/WorkflowConfirmModals";
+import { WorkflowFilters } from "../components/workflows/WorkflowFilters";
 import { WorkflowList } from "../components/workflows/WorkflowList";
 import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
@@ -39,15 +45,20 @@ const DEFAULT_NODE_TASK_POLL_INTERVAL_MS = 4000;
  * Workflows page — workspace-scoped master-detail view for the
  * `@emploke/workflow` substrate.
  *
- * URL-driven state machine (mirrors the Schedules page's atomic
- * `setMasterDetailUrl` pattern):
+ * URL-driven state machine (mirrors the Tasks page slot-for-slot):
  *
- *   - `?status=running|succeeded|failed|cancelled|all` — list filter
- *     (default `all`, encoded as the {@link ALL_STATUS} sentinel)
- *   - `?workflowId=<wfid>` — master-detail selection
- *   - `?nodeTaskId=<taskId>` — Mode B drill-down (right pane swaps
+ *   - `?q=<idFragment>`   — substring search on the workflow id
+ *   - `?agent=<fqn>`      — coordinator-agent filter (`ALL_AGENTS`
+ *     sentinel = no filter)
+ *   - `?range=today|7d|30d|all` — time-preset filter on `createdAt`
+ *   - `?workflowId=<wfid>`     — master-detail selection
+ *   - `?nodeTaskId=<taskId>`   — Mode B drill-down (right pane swaps
  *     from the {@link WorkflowDetail} tab host to the full
  *     {@link WorkflowNodeTaskPane})
+ *
+ * v2.3 retired the prior `?status=` slot in favour of client-side
+ * Running/Completed grouping in the list — a stale `?status=` slot
+ * in old links is ignored gracefully (no read, no redirect).
  *
  * When `nodeTaskId` is present, the right pane is the node-task drill
  * (with a header pill walking the workflow's nodes in execution
@@ -60,14 +71,16 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
     config?.tasks?.pollIntervalMs ?? DEFAULT_NODE_TASK_POLL_INTERVAL_MS;
   const navigate = useNavigate();
   const location = useLocation();
-  const [statusFilterRaw, setStatusFilterRaw] = useUrlSearchValue("status", ALL_STATUS);
+
+  // URL-driven filter state — same slots + shape as Tasks.tsx.
+  const [idQuery, setIdQuery] = useUrlSearchValue("q", "");
+  const [agentFilter, setAgentFilter] = useUrlSearchValue("agent", ALL_AGENTS);
+  const [rangeUrl, setRangeUrl] = useUrlSearchValue("range", DEFAULT_TIME_PRESET);
+  const timeFilter = coerceTimePreset(rangeUrl);
+  const setTimeFilter = (v: TimePreset) => setRangeUrl(v);
+
   const [selectedIdRaw] = useUrlSearchValue("workflowId", "");
   const [nodeTaskIdRaw] = useUrlSearchValue("nodeTaskId", "");
-  const statusFilter = coerceStatusFilter(statusFilterRaw);
-  const setStatusFilter = useCallback(
-    (v: StatusFilter) => setStatusFilterRaw(v),
-    [setStatusFilterRaw],
-  );
   const selectedId = selectedIdRaw === "" ? null : selectedIdRaw;
   const nodeTaskId = nodeTaskIdRaw === "" ? null : nodeTaskIdRaw;
 
@@ -97,10 +110,27 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
 
   const { workflows, loaded, error, setError, refresh } = useWorkflows({
     currentWorkspaceId,
-    statusFilter,
+    idQuery,
+    agentFilter,
+    timeFilter,
   });
 
   const visible = workflows;
+
+  // Coordinator-agent dropdown population. Derived from the current
+  // `workflows` rows' `coordinatorAgent` field rather than the global
+  // `agents` catalogue: there is no marketplace flag on agents
+  // declaring "I am a coordinator", so the operational answer is
+  // "any agent that has actually run as a coordinator in this
+  // workspace". When a filter is active, we keep the currently-
+  // selected value in the list even if no row matches — otherwise
+  // the dropdown would silently drop the user's own selection.
+  const filterAgentNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const w of workflows) set.add(w.coordinatorAgent);
+    if (agentFilter !== ALL_AGENTS) set.add(agentFilter);
+    return Array.from(set).sort();
+  }, [workflows, agentFilter]);
 
   const effectiveSelectedId =
     selectedId !== null && visible.some((w) => w.id === selectedId)
@@ -177,17 +207,15 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
     (created: WorkflowHeaderWire) => {
       setError(null);
       setMasterDetailUrl({ workflowId: created.id, nodeTaskId: null });
-      // If the active status filter would hide the new row (its
-      // initial status is always `running`), reset the filter so the
-      // user sees the freshly-dispatched workflow.
-      if (statusFilter !== ALL_STATUS && statusFilter !== "running") {
-        setStatusFilter(ALL_STATUS);
-      }
       // Best-effort: refresh the list so the new row is sourced from
-      // the server rather than synthesised on the client.
+      // the server rather than synthesised on the client. v2.3
+      // grouping puts the freshly-`running` row in the Running
+      // section by construction, so no filter reset is needed (the
+      // active filters are search / agent / time, none of which hide
+      // a brand-new row by default).
       void refresh();
     },
-    [refresh, setError, setMasterDetailUrl, statusFilter, setStatusFilter],
+    [refresh, setError, setMasterDetailUrl],
   );
 
   const handleConfirmCancel = useCallback(
@@ -233,7 +261,8 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
     );
   }
 
-  const filtersActive = statusFilter !== ALL_STATUS;
+  const filtersActive =
+    idQuery !== "" || agentFilter !== ALL_AGENTS || timeFilter !== DEFAULT_TIME_PRESET;
   const detailWorkflow = detail.workflow;
   const showNodeTaskPane = nodeTaskId !== null && effectiveSelectedId !== null;
 
@@ -276,9 +305,14 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
         ) : (
           <div className="tasks-pane tasks-pane--with-detail">
             <div className="tasks-pane__list">
-              <WorkflowsFilters
-                statusFilter={statusFilter}
-                onStatusFilterChange={setStatusFilter}
+              <WorkflowFilters
+                idQuery={idQuery}
+                onIdQueryChange={setIdQuery}
+                agentFilter={agentFilter}
+                onAgentFilterChange={setAgentFilter}
+                timeFilter={timeFilter}
+                onTimeFilterChange={setTimeFilter}
+                filterAgentNames={filterAgentNames}
               />
               <div className="tasks-pane__list-scroll">
                 {!loaded ? (
@@ -289,7 +323,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
                   <div className="empty" data-testid="workflows-empty-filtered">
                     <p className="empty__title">No matches</p>
                     <p className="empty__hint">
-                      Adjust the status filter above to see more workflows.
+                      Adjust the search, agent, or time filter above to see more workflows.
                     </p>
                   </div>
                 ) : (
@@ -384,47 +418,5 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
         />
       )}
     </>
-  );
-}
-
-function coerceStatusFilter(raw: string): StatusFilter {
-  switch (raw) {
-    case "running":
-    case "succeeded":
-    case "failed":
-    case "cancelled":
-      return raw;
-    default:
-      return ALL_STATUS;
-  }
-}
-
-interface WorkflowsFiltersProps {
-  statusFilter: StatusFilter;
-  onStatusFilterChange: (next: StatusFilter) => void;
-}
-
-function WorkflowsFilters({ statusFilter, onStatusFilterChange }: WorkflowsFiltersProps) {
-  return (
-    <div className="tasks-filters" data-testid="workflows-filters">
-      <label htmlFor="workflows-status-filter">
-        <span className="muted" style={{ fontSize: 12, marginRight: 6 }}>
-          Status
-        </span>
-        <select
-          id="workflows-status-filter"
-          value={statusFilter}
-          onChange={(e) => onStatusFilterChange(e.target.value as StatusFilter)}
-          className="select"
-          data-testid="workflows-status-select"
-        >
-          {STATUS_FILTERS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
   );
 }

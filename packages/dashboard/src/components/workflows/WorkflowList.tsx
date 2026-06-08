@@ -1,4 +1,6 @@
+import { useMemo, useState } from "react";
 import type { WorkflowHeaderWire } from "../../api";
+import { type StatusGroup, statusGroup } from "./shared";
 import { WorkflowListItem } from "./WorkflowListItem";
 
 export interface WorkflowListProps {
@@ -13,19 +15,18 @@ export interface WorkflowListProps {
   onMenuOpenChange: (id: string | null) => void;
 }
 
+interface Group {
+  key: StatusGroup;
+  label: string;
+  workflows: readonly WorkflowHeaderWire[];
+}
+
 /**
- * Left-column workflow list. Thin labelled `<ul>` wrapper that
- * delegates row markup to {@link WorkflowListItem}. The `role="list"`
- * attribute is the Safari + VoiceOver workaround documented on
- * `components/schedules/ScheduleList.tsx`; jsdom does not replicate
- * the role-stripping behaviour, but Safari does. Page handles the
- * empty state (`pages/Workflows.tsx`) — the list never renders a "no
- * rows" placeholder itself.
- *
- * Row actions (`Cancel workflow`, `Copy ID`) are exposed via the
- * per-row `⋯` menu in `WorkflowListItem`. This list forwards the
- * page-level single-open coordination and cancel handler per row,
- * mirroring `ScheduleList`'s shape.
+ * Left-column workflow list, grouped by status (Running / Completed).
+ * Same shape as `components/tasks/TaskList`: collapsible sections with
+ * a count badge, empty groups auto-collapse, and row content is
+ * delegated to {@link WorkflowListItem}. Reuses the `task-list*` CSS
+ * classes verbatim so both pages stay visually identical.
  */
 export function WorkflowList({
   workflows,
@@ -35,22 +36,69 @@ export function WorkflowList({
   openMenuId,
   onMenuOpenChange,
 }: WorkflowListProps) {
+  const groups = useMemo<Group[]>(() => {
+    const running: WorkflowHeaderWire[] = [];
+    const completed: WorkflowHeaderWire[] = [];
+    for (const w of workflows) {
+      if (statusGroup(w.status) === "running") running.push(w);
+      else completed.push(w);
+    }
+    return [
+      { key: "running", label: "Running", workflows: running },
+      { key: "completed", label: "Completed", workflows: completed },
+    ];
+  }, [workflows]);
+
+  const [collapsed, setCollapsed] = useState<Record<StatusGroup, boolean>>({
+    running: false,
+    completed: false,
+  });
+  const toggle = (k: StatusGroup) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
+
   return (
-    // biome-ignore lint/a11y/noRedundantRoles: Safari + VoiceOver strip the implicit listitem role from <li> children when the <ul> has `list-style: none`. See components/schedules/ScheduleList.tsx for the parallel justification.
-    <ul role="list" className="task-list" aria-label="Workflows">
-      {workflows.map((w, idx, arr) => (
-        <WorkflowListItem
-          key={w.id}
-          workflow={w}
-          selected={selectedId === w.id}
-          onSelect={() => onSelect(w.id)}
-          onCancel={onCancel}
-          menuOpen={openMenuId === w.id}
-          onMenuOpenChange={(open) => onMenuOpenChange(open ? w.id : null)}
-          posinset={idx + 1}
-          setsize={arr.length}
-        />
-      ))}
-    </ul>
+    <div className="task-list-groups">
+      {groups.map((g) => {
+        const isEmpty = g.workflows.length === 0;
+        const isCollapsed = collapsed[g.key] || isEmpty;
+        return (
+          <section
+            key={g.key}
+            className={`task-list-group${isEmpty ? " task-list-group--empty" : ""}`}
+          >
+            <button
+              type="button"
+              className="task-list-group__header"
+              aria-expanded={!isCollapsed}
+              onClick={() => !isEmpty && toggle(g.key)}
+              disabled={isEmpty}
+            >
+              <span className={`task-list-group__caret${isCollapsed ? " is-collapsed" : ""}`}>
+                {isCollapsed ? "▸" : "▾"}
+              </span>
+              <span className="task-list-group__label">{g.label}</span>
+              <span className="task-list-group__count">{g.workflows.length}</span>
+            </button>
+            {!isCollapsed && (
+              // biome-ignore lint/a11y/noRedundantRoles: Safari + VoiceOver strip the implicit listitem role from <li> children when the <ul> has `list-style: none`. See components/schedules/ScheduleList.tsx for the parallel justification.
+              <ul role="list" className="task-list" aria-label={`${g.label} workflows`}>
+                {g.workflows.map((w, idx, arr) => (
+                  <WorkflowListItem
+                    key={w.id}
+                    workflow={w}
+                    selected={selectedId === w.id}
+                    onSelect={() => onSelect(w.id)}
+                    onCancel={onCancel}
+                    menuOpen={openMenuId === w.id}
+                    onMenuOpenChange={(open) => onMenuOpenChange(open ? w.id : null)}
+                    posinset={idx + 1}
+                    setsize={arr.length}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }

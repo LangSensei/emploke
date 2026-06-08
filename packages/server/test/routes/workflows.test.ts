@@ -149,19 +149,62 @@ describe("workflowsRoutes — list", () => {
     expect(svc.list).toHaveBeenCalledWith(undefined);
   });
 
-  it("GET /?status=running narrows the list opts", async () => {
+  it("GET /?q=… forwards to substrate as idLike", async () => {
+    const list = vi.fn(async () => []);
+    const svc = stubService({ list });
+    const res = await mountRoutes(svc).request("/?q=abc123");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ idLike: "abc123" });
+  });
+
+  it("GET /?coordinatorAgent=… forwards verbatim", async () => {
+    const list = vi.fn(async () => []);
+    const svc = stubService({ list });
+    const res = await mountRoutes(svc).request("/?coordinatorAgent=agent-alpha");
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ coordinatorAgent: "agent-alpha" });
+  });
+
+  it("GET /?createdSince=… forwards a parseable ISO timestamp", async () => {
+    const list = vi.fn(async () => []);
+    const svc = stubService({ list });
+    const res = await mountRoutes(svc).request(
+      `/?createdSince=${encodeURIComponent("2026-06-07T00:00:00.000Z")}`,
+    );
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ createdSince: "2026-06-07T00:00:00.000Z" });
+  });
+
+  it("GET /?createdSince=bogus returns 400 and does NOT call the service", async () => {
+    const svc = stubService({});
+    const res = await mountRoutes(svc).request("/?createdSince=not-a-date");
+    expect(res.status).toBe(400);
+    expect(svc.list).not.toHaveBeenCalled();
+  });
+
+  it("GET / AND-combines q + coordinatorAgent + createdSince when all supplied", async () => {
+    const list = vi.fn(async () => []);
+    const svc = stubService({ list });
+    const res = await mountRoutes(svc).request(
+      `/?q=abc&coordinatorAgent=agent-alpha&createdSince=${encodeURIComponent("2026-06-07T00:00:00.000Z")}`,
+    );
+    expect(res.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({
+      idLike: "abc",
+      coordinatorAgent: "agent-alpha",
+      createdSince: "2026-06-07T00:00:00.000Z",
+    });
+  });
+
+  it("GET /?status=… is no longer recognised — slot is silently ignored", async () => {
+    // v2.3 dropped the wire-side `?status=` slot in favour of
+    // client-side Running/Completed grouping. Any caller still
+    // passing it gets the unfiltered list, not a 400.
     const list = vi.fn(async () => []);
     const svc = stubService({ list });
     const res = await mountRoutes(svc).request("/?status=running");
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({ status: "running" });
-  });
-
-  it("GET /?status=bogus returns 400 and does NOT call the service", async () => {
-    const svc = stubService({});
-    const res = await mountRoutes(svc).request("/?status=bogus");
-    expect(res.status).toBe(400);
-    expect(svc.list).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledWith(undefined);
   });
 });
 

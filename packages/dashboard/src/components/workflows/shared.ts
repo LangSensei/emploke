@@ -7,19 +7,6 @@
 
 import type { WorkflowHeaderWire } from "../../api";
 
-/** Sentinel for the "All" option in the workflow status filter. */
-export const ALL_STATUS = "__all__";
-
-export type StatusFilter = "__all__" | "running" | "succeeded" | "failed" | "cancelled";
-
-export const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
-  { value: ALL_STATUS, label: "All" },
-  { value: "running", label: "Running" },
-  { value: "succeeded", label: "Succeeded" },
-  { value: "failed", label: "Failed" },
-  { value: "cancelled", label: "Cancelled" },
-];
-
 /**
  * Hard-coded poll cadence for workflow list + detail. The server-config
  * pipeline (`config.tasks.pollIntervalMs`) doesn't carry a workflow
@@ -77,4 +64,16 @@ export const WORKFLOW_STATUS_LABEL: Record<WorkflowHeaderWire["status"], string>
 /** Terminal statuses — used to gate the cancel CTA and stop polling. */
 export function isTerminal(status: WorkflowHeaderWire["status"]): boolean {
   return status !== "running";
+}
+
+/**
+ * Two-bucket grouping used by `WorkflowList` to slice the list into
+ * Running / Completed sections. Mirrors the Tasks page grouping; the
+ * three terminal statuses (`succeeded` / `failed` / `cancelled`)
+ * collapse into `completed`.
+ */
+export type StatusGroup = "running" | "completed";
+
+export function statusGroup(status: WorkflowHeaderWire["status"]): StatusGroup {
+  return status === "running" ? "running" : "completed";
 }

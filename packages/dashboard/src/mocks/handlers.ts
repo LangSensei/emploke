@@ -414,16 +414,15 @@ export const handlers = [
   // refresh, same lifetime as `schedulesState`.
   http.get(`/api/workspaces/${W}/workflows`, ({ request }) => {
     const url = new URL(request.url);
-    const status = url.searchParams.get("status");
+    const q = url.searchParams.get("q") ?? "";
+    const coordinatorAgent = url.searchParams.get("coordinatorAgent") ?? "";
+    const createdSince = url.searchParams.get("createdSince") ?? "";
     let rows = workflowsState.slice();
-    if (
-      status === "running" ||
-      status === "succeeded" ||
-      status === "failed" ||
-      status === "cancelled"
-    ) {
-      rows = rows.filter((w) => w.status === status);
+    if (q !== "") rows = rows.filter((w) => w.id.includes(q));
+    if (coordinatorAgent !== "") {
+      rows = rows.filter((w) => w.coordinatorAgent === coordinatorAgent);
     }
+    if (createdSince !== "") rows = rows.filter((w) => w.createdAt >= createdSince);
     rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return HttpResponse.json(rows);
   }),
