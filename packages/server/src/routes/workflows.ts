@@ -79,6 +79,7 @@ import type {
   AddSubgraphBody,
   AddSubgraphEdgeInputWire,
   AddSubgraphNodeInputWire,
+  CancelWorkflowBody,
   CreateWorkflowBody,
   FinishWorkflowBody,
   NodeRefWire,
@@ -351,10 +352,6 @@ function validateReplaceNodeSpecBody(raw: unknown): ValidationResult<ReplaceNode
 
 function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkflowBody> {
   if (!isPlainObject(raw)) return { ok: false, error: "request body must be an object" };
-  const allowed = new Set(["outcome"]);
-  for (const k of Object.keys(raw)) {
-    if (!allowed.has(k)) return { ok: false, error: `request body has unknown key "${k}"` };
-  }
   const { outcome } = raw;
   if (
     typeof outcome !== "string" ||
@@ -365,7 +362,103 @@ function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkfl
       error: `outcome must be one of: ${KNOWN_FINISH_OUTCOMES.join(", ")}`,
     };
   }
-  return { ok: true, value: { outcome: outcome as FinishWorkflowBody["outcome"] } };
+  if (outcome === "succeeded") {
+    const allowed = new Set(["outcome", "success"]);
+    for (const k of Object.keys(raw)) {
+      if (!allowed.has(k)) return { ok: false, error: `request body has unknown key "${k}"` };
+    }
+    const { success } = raw;
+    if (success !== undefined) {
+      if (!isPlainObject(success)) {
+        return { ok: false, error: "success must be an object" };
+      }
+      for (const k of Object.keys(success)) {
+        if (k !== "output") {
+          return { ok: false, error: `success has unknown key "${k}"` };
+        }
+      }
+      const out = (success as { output?: unknown }).output;
+      if (out !== undefined && out !== null && typeof out !== "string") {
+        return { ok: false, error: "success.output must be a string or null" };
+      }
+      return {
+        ok: true,
+        value: {
+          outcome: "succeeded",
+          success: { output: out === undefined ? null : (out as string | null) },
+        },
+      };
+    }
+    return { ok: true, value: { outcome: "succeeded" } };
+  }
+  // outcome === "failed"
+  const allowed = new Set(["outcome", "failure"]);
+  for (const k of Object.keys(raw)) {
+    if (!allowed.has(k)) return { ok: false, error: `request body has unknown key "${k}"` };
+  }
+  const { failure } = raw;
+  if (!isPlainObject(failure)) {
+    return { ok: false, error: "failure is required and must be an object" };
+  }
+  for (const k of Object.keys(failure)) {
+    if (k !== "kind" && k !== "message") {
+      return { ok: false, error: `failure has unknown key "${k}"` };
+    }
+  }
+  const kind = (failure as { kind?: unknown }).kind;
+  if (kind !== undefined && kind !== "coord") {
+    return { ok: false, error: 'failure.kind must be "coord" when supplied' };
+  }
+  const message = (failure as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return { ok: false, error: "failure.message must be a string" };
+  }
+  return {
+    ok: true,
+    value: {
+      outcome: "failed",
+      failure: { kind: "coord", message },
+    },
+  };
+}
+
+function validateCancelWorkflowBody(raw: unknown): ValidationResult<CancelWorkflowBody> {
+  if (!isPlainObject(raw)) return { ok: false, error: "request body must be an object" };
+  // Pre-v2.2 callers used `{ reason }` — reject explicitly so the
+  // boundary failure is loud rather than silently dropped.
+  if ("reason" in raw) {
+    return {
+      ok: false,
+      error:
+        'the pre-v2.2 "reason" body shape is no longer accepted; use { cancellation: { message } }',
+    };
+  }
+  for (const k of Object.keys(raw)) {
+    if (k !== "cancellation") {
+      return { ok: false, error: `request body has unknown key "${k}"` };
+    }
+  }
+  const { cancellation } = raw;
+  if (!isPlainObject(cancellation)) {
+    return { ok: false, error: "cancellation is required and must be an object" };
+  }
+  for (const k of Object.keys(cancellation)) {
+    if (k !== "kind" && k !== "message") {
+      return { ok: false, error: `cancellation has unknown key "${k}"` };
+    }
+  }
+  const kind = (cancellation as { kind?: unknown }).kind;
+  if (kind !== undefined && kind !== "user") {
+    return { ok: false, error: 'cancellation.kind must be "user" when supplied' };
+  }
+  const message = (cancellation as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return { ok: false, error: "cancellation.message must be a string" };
+  }
+  return {
+    ok: true,
+    value: { cancellation: { kind: "user", message } },
+  };
 }
 
 /**
@@ -478,13 +571,21 @@ export function workflowsRoutes(
   });
 
   // ── POST /:wfid/cancel — external cancel ─────────────────────────
-  // No request body — `CancelWorkflowArgs` only carries `workflowId`.
+  // Body shape: `{ cancellation: { kind?: 'user', message } }`.
   // The substrate's `cancelWorkflow` returns void; the route does a
   // second `getDag` so the response carries the post-cancel header.
   app.post("/:wfid/cancel", async (c) => {
     const wfid = c.req.param("wfid");
+    const parsed = await parseJsonBody(c);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const validated = validateCancelWorkflowBody(parsed.body);
+    if (!validated.ok) return c.json({ error: validated.error }, 400);
+    const { cancellation } = validated.value;
     try {
-      await resolve(c).cancelWorkflow({ workflowId: wfid });
+      await resolve(c).cancelWorkflow({
+        workflowId: wfid,
+        cancellation: { kind: cancellation.kind ?? "user", message: cancellation.message },
+      });
       const dag = await resolve(c).getDag(wfid);
       const iter = iterationCountForNodes(dag.nodes);
       logEvent(c, "workflow.cancel", { workflowId: wfid });
@@ -820,7 +921,19 @@ export function workflowsRoutes(
     if (!validated.ok) return c.json({ error: validated.error }, 400);
     const body = validated.value;
     try {
-      await resolve(c).finishWorkflow({ workflowId: wfid, outcome: body.outcome });
+      if (body.outcome === "succeeded") {
+        await resolve(c).finishWorkflow({
+          workflowId: wfid,
+          outcome: "succeeded",
+          success: { output: body.success?.output ?? null },
+        });
+      } else {
+        await resolve(c).finishWorkflow({
+          workflowId: wfid,
+          outcome: "failed",
+          failure: { kind: "coord", message: body.failure.message },
+        });
+      }
       const dag = await resolve(c).getDag(wfid);
       const iter = iterationCountForNodes(dag.nodes);
       logEvent(c, "workflow.finish", { workflowId: wfid, outcome: body.outcome });

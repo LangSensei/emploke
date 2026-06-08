@@ -296,7 +296,7 @@ describe("WorkflowService.removeNode", () => {
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     await expect(h.service.removeNode({ workflowId, nodeId })).rejects.toBeInstanceOf(
       WorkflowMutationUnauthorizedError,
     );

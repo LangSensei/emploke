@@ -58,6 +58,7 @@ import type {
   AddNodeResultWire,
   AddSubgraphBody,
   AddSubgraphResultWire,
+  CancelWorkflowBody,
   CreateWorkflowBody,
   FinishWorkflowBody,
   ReplaceNodeSpecBody,
@@ -773,15 +774,16 @@ export const ROUTES = {
   ),
   /**
    * External cancel — flips the workflow to `cancelled` and
-   * reconciles every non-terminal node. The route takes no request
-   * body (the substrate's `CancelWorkflowArgs` has no `reason`
-   * field). Returns the updated workflow header so callers see the
+   * reconciles every non-terminal node. v2.2 body requires
+   * `cancellation: { kind?: 'user', message }` so the operator's
+   * reason is persisted into the workflow's `cancellation` column.
+   * Returns the updated workflow header so callers see the
    * post-cancel `endedAt` / `status` without a second round-trip.
    */
-  "workflows.cancel": defineRoute<{ params: WorkflowPathParams }, WorkflowHeaderWire>(
-    "POST",
-    "/api/workspaces/:id/workflows/:wfid/cancel",
-  ),
+  "workflows.cancel": defineRoute<
+    { params: WorkflowPathParams; body: CancelWorkflowBody },
+    WorkflowHeaderWire
+  >("POST", "/api/workspaces/:id/workflows/:wfid/cancel"),
   /**
    * List artifacts for a workflow: workflow-summary entries (curated
    * by the coordinator under `<workflowDir>/artifact/`) followed by

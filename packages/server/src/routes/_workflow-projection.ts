@@ -62,6 +62,9 @@ export function projectWorkflowHeader(
     createdAt: wf.createdAt,
     ...(wf.startedAt !== undefined ? { startedAt: wf.startedAt } : {}),
     ...(wf.endedAt !== undefined ? { endedAt: wf.endedAt } : {}),
+    ...(wf.success !== undefined ? { success: wf.success } : {}),
+    ...(wf.failure !== undefined ? { failure: wf.failure } : {}),
+    ...(wf.cancellation !== undefined ? { cancellation: wf.cancellation } : {}),
   };
 }
 

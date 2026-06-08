@@ -93,6 +93,12 @@ export class WorkflowRepository {
    * updated. Used by `finishWorkflow` / `cancelWorkflow` so a
    * second caller can't double-terminate; the 0-row outcome is the
    * canonical signal to throw `WorkflowAlreadyTerminalError`.
+   *
+   * Terminal-payload columns (`success` / `failure` / `cancellation`)
+   * are written in the same UPDATE — exactly one of the three is
+   * supplied by `finishWorkflow` / `cancelWorkflow` per the cross-
+   * field invariant ("status='X' ⇒ X-payload column non-null"). The
+   * service layer is responsible for picking the right one.
    */
   casUpdateWorkflowStatus(
     tx: Db,
@@ -101,12 +107,22 @@ export class WorkflowRepository {
       readonly fromStatus: WorkflowStatus;
       readonly toStatus: WorkflowStatus;
       readonly endedAt: string;
+      readonly successJson?: string;
+      readonly failureJson?: string;
+      readonly cancellationJson?: string;
     },
   ): boolean {
     assertValidWorkflowId(opts.id);
+    const patch: Partial<typeof workflows.$inferInsert> = {
+      status: opts.toStatus,
+      endedAt: opts.endedAt,
+    };
+    if (opts.successJson !== undefined) patch.success = opts.successJson;
+    if (opts.failureJson !== undefined) patch.failure = opts.failureJson;
+    if (opts.cancellationJson !== undefined) patch.cancellation = opts.cancellationJson;
     const result = tx
       .update(workflows)
-      .set({ status: opts.toStatus, endedAt: opts.endedAt })
+      .set(patch)
       .where(and(eq(workflows.id, opts.id), eq(workflows.status, opts.fromStatus)))
       .run();
     return result.changes > 0;

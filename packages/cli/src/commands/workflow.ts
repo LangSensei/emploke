@@ -28,13 +28,13 @@
  *    the surface uniform with the rest of the workflow tree (no
  *    workflow command takes a positional id; an explicit flag pairs
  *    naturally with `--workspace` / `EMPLOKE_WORKSPACE`).
- *  - `--reason` on cancel is accepted for forward-compat with M3
- *    `outcomeReason` (#334). It is NOT sent on the wire today: the
- *    `workflows.cancel` route's contract has no `body` slot per R3
- *    sign-off (#pullrequestreview-4447183019). The flag is parsed so
- *    callers can adopt it now; once the substrate persists the reason,
- *    flipping the wire to include it is a one-line change here with no
- *    user-visible flag churn.
+ *  - `--message` / `--kind` on cancel send the v2.2 terminal payload
+ *    (`cancellation: { kind, message }`). Pre-v2.2 `--reason` is
+ *    removed; the wire shape now requires `cancellation.message` so
+ *    the flag has migrated from forward-compat placeholder to
+ *    first-class wire field.
+ *  - `--summary` on finish (succeeded path) → `success.output`.
+ *    `--message` on finish (failed path) → `failure.message`.
  *
  * Flag-name choices (M2.5):
  *  - `--wfid <id>` is universal across every mutation command — the
@@ -74,6 +74,7 @@ import type {
   AddEdgeBody,
   AddNodeBody,
   AddSubgraphBody,
+  CancelWorkflowBody,
   FinishWorkflowBody,
   ReplaceNodeSpecBody,
   WorkflowHeaderWire,
@@ -249,29 +250,38 @@ export async function workflowDag(opts: WorkflowDagOpts): Promise<CommandResult>
 export interface WorkflowCancelOpts extends CommonFlags {
   readonly wfid: string;
   /**
-   * Forward-compat free-text reason. Accepted but NOT sent on the
-   * wire today — `workflows.cancel`'s contract has no `body` slot
-   * (per R3 sign-off of PR #330 / #pullrequestreview-4447183019).
-   * Plumbed through so callers can adopt the flag now; the M3 work
-   * tracked in #334 will start persisting it.
+   * Free-text operator-supplied message persisted into the
+   * workflow's `cancellation` JSON column. Empty string is allowed
+   * but the flag itself MUST be present in v2.2 — the route rejects
+   * `{}` with a 400 because the `cancellation.message` field is
+   * required by the wire contract.
    */
-  readonly reason?: string;
+  readonly message?: string;
+  /**
+   * Cancellation kind. v2.2 only emits `"user"`; the flag is
+   * accepted for forward compatibility with future kinds (e.g.
+   * `"cascade"` once the substrate cascades cancels from a parent
+   * workflow). Defaults to `"user"` when omitted.
+   */
+  readonly kind?: string;
 }
 
 export async function workflowCancel(opts: WorkflowCancelOpts): Promise<CommandResult> {
   if (typeof opts.wfid !== "string" || opts.wfid.trim() === "") {
     return { exitCode: 2, stderr: "workflow id is required (--wfid <id>)\n" };
   }
+  if (opts.kind !== undefined && opts.kind !== "user") {
+    return { exitCode: 2, stderr: '--kind must be "user" when supplied\n' };
+  }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    // `--reason` is intentionally NOT included in the call options
-    // here: the route's typed contract has no `body` slot, so a body
-    // would either fail to type-check or have to be smuggled in via
-    // `callRaw`. The dashboard / MCP surfaces have the same gap and
-    // also discard the value today. See `--reason` doc-block above.
+    const body: CancelWorkflowBody = {
+      cancellation: { kind: "user", message: opts.message ?? "" },
+    };
     const updated = await client.call("workflows.cancel", {
       params: { id, wfid: opts.wfid },
+      body,
     });
     const fmt = pickFormat(opts, "table");
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(updated) };
@@ -309,13 +319,13 @@ function agentForSpec(spec: { readonly kind: string; readonly agent?: string }):
 // ─── M2.5 coord-callback mutations ─────────────────────────────────────
 
 const KNOWN_NODE_KINDS: readonly WorkflowNodeKindWire[] = ["coordinator", "worker"];
-const KNOWN_FINISH_OUTCOMES: readonly FinishWorkflowBody["outcome"][] = ["succeeded", "failed"];
+const KNOWN_FINISH_OUTCOMES: readonly ("succeeded" | "failed")[] = ["succeeded", "failed"];
 
 function isNodeKind(s: string): s is WorkflowNodeKindWire {
   return (KNOWN_NODE_KINDS as readonly string[]).includes(s);
 }
 
-function isFinishOutcome(s: string): s is FinishWorkflowBody["outcome"] {
+function isFinishOutcome(s: string): s is "succeeded" | "failed" {
   return (KNOWN_FINISH_OUTCOMES as readonly string[]).includes(s);
 }
 
@@ -621,6 +631,18 @@ export async function workflowCancelNode(opts: WorkflowCancelNodeOpts): Promise<
 export interface WorkflowFinishOpts extends CommonFlags {
   readonly wfid: string;
   readonly outcome: string;
+  /**
+   * Coordinator's free-form summary persisted into `success.output`
+   * when `--outcome succeeded`. Mutually exclusive with `--message`.
+   * `null` (no value supplied) is persisted as a null `output` field.
+   */
+  readonly summary?: string;
+  /**
+   * Failure message persisted into `failure.message` when
+   * `--outcome failed`. REQUIRED when the outcome is `failed`
+   * (empty string is allowed).
+   */
+  readonly message?: string;
 }
 
 export async function workflowFinish(opts: WorkflowFinishOpts): Promise<CommandResult> {
@@ -633,10 +655,31 @@ export async function workflowFinish(opts: WorkflowFinishOpts): Promise<CommandR
       stderr: `--outcome must be one of: ${KNOWN_FINISH_OUTCOMES.join(", ")}\n`,
     };
   }
+  if (opts.outcome === "failed" && opts.message === undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--message is required when --outcome failed\n",
+    };
+  }
+  if (opts.outcome === "succeeded" && opts.message !== undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--message is only valid with --outcome failed; use --summary instead\n",
+    };
+  }
+  if (opts.outcome === "failed" && opts.summary !== undefined) {
+    return {
+      exitCode: 2,
+      stderr: "--summary is only valid with --outcome succeeded; use --message instead\n",
+    };
+  }
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    const body: FinishWorkflowBody = { outcome: opts.outcome };
+    const body: FinishWorkflowBody =
+      opts.outcome === "succeeded"
+        ? { outcome: "succeeded", success: { output: opts.summary ?? null } }
+        : { outcome: "failed", failure: { kind: "coord", message: opts.message ?? "" } };
     const updated = await client.call("workflows.finish", {
       params: { id, wfid: opts.wfid },
       body,

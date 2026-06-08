@@ -10,16 +10,27 @@ const COORD_ID = "550e8400-e29b-41d4-a716-446655440001";
 const WORKER_ID = "550e8400-e29b-41d4-a716-446655440002";
 
 function makeWf(over?: Partial<{ status: string; coordinatorAgent: string }>): WorkflowEntity {
+  const status = over?.status ?? "running";
+  // v2.2: terminal rows carry a JSON payload column for the matching
+  // status. Tests synthesising terminal rows have to supply one so
+  // the cross-field invariant in `WorkflowEntity.fromRow` is met.
+  // Running rows leave all three columns null. The repository tests
+  // here exercise repo CRUD against `running` rows, so the inserted
+  // shape stays minimal; status-flips inside test bodies use
+  // `casUpdateWorkflowStatus` directly.
   return WorkflowEntity.fromRow({
     id: WF_ID,
     brief: "brief",
     details: null,
     coordinatorAgent: over?.coordinatorAgent ?? "agent-1",
-    status: over?.status ?? "running",
+    status,
     metadata: "{}",
     createdAt: NOW,
     startedAt: NOW,
     endedAt: null,
+    success: status === "succeeded" ? JSON.stringify({ output: null }) : null,
+    failure: status === "failed" ? JSON.stringify({ kind: "coord", message: "" }) : null,
+    cancellation: status === "cancelled" ? JSON.stringify({ kind: "user", message: "" }) : null,
   });
 }
 

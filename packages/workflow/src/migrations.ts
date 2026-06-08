@@ -42,6 +42,16 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
     folderMillis: 2,
     hash: "b04ef66661c80db01ebf25556a772781b67352307144033a98f620f79106832d",
   },
+  {
+    sql: [
+      "-- Adds typed terminal payload columns to workflows. Mirrors\r\n-- @emploke/task's success / failure / cancellation discriminated\r\n-- payload shape (each terminal status carries its own typed JSON\r\n-- blob; running rows have all three null).\r\n--\r\n-- No backfill needed: every existing row is already terminal-with-\r\n-- no-payload (pre-v2.2 behaviour). They surface in the dashboard\r\n-- via the read-path tolerance branch (\"the row is terminal but\r\n-- carries no payload — render a placeholder\").\r\n--\r\n-- Columns added in alphabetical order to match the schema.ts\r\n-- declaration order; the drizzle drift guard (gh #322) checks\r\n-- column ordering and rejects a mismatch.\r\nALTER TABLE `workflows` ADD COLUMN `cancellation` text;",
+      "\r\nALTER TABLE `workflows` ADD COLUMN `failure` text;",
+      "\r\nALTER TABLE `workflows` ADD COLUMN `success` text;\r\n"
+    ],
+    bps: true,
+    folderMillis: 3,
+    hash: "9bcd8b5c5098b75424bde6b0238fb3d7aad439aea6f57674b2129d0ba5427812",
+  },
 ];
 
 /**

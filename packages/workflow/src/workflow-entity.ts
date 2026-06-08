@@ -36,9 +36,12 @@ import type {
 } from "./schema.js";
 import type {
   NodeKind,
+  WorkflowCancellation,
+  WorkflowFailure,
   WorkflowNodeSpecEnvelope,
   WorkflowNodeStatus,
   WorkflowStatus,
+  WorkflowSuccess,
 } from "./types.js";
 import {
   assertValidWorkflowId,
@@ -46,6 +49,9 @@ import {
   assertValidWorkflowNodeKind,
   assertValidWorkflowNodeStatusEnum,
   assertValidWorkflowStatusEnum,
+  assertWorkflowCancellationShape,
+  assertWorkflowFailureShape,
+  assertWorkflowSuccessShape,
 } from "./validate.js";
 
 // ─── Workflow ───────────────────────────────────────────────────────
@@ -76,17 +82,81 @@ export class WorkflowEntity {
     readonly createdAt: string,
     readonly startedAt: string | undefined,
     readonly endedAt: string | undefined,
+    readonly success: WorkflowSuccess | undefined,
+    readonly failure: WorkflowFailure | undefined,
+    readonly cancellation: WorkflowCancellation | undefined,
   ) {}
 
   /**
    * Hydrate from a Drizzle row. Throws `WorkflowEnumValueError` if
    * the persisted `status` is not in the known vocabulary.
    * `metadata` is JSON-parsed; corrupt JSON throws `WorkflowError`.
+   *
+   * Terminal-payload columns (`success` / `failure` / `cancellation`)
+   * are JSON-parsed when non-null; each parsed payload is
+   * shape-checked the same way `@emploke/task`'s `fromStored` checks
+   * its payloads. A row with a non-null payload whose shape doesn't
+   * match throws `WorkflowError`.
+   *
+   * **Tolerance branch for legacy rows**: a row with a terminal
+   * `status` ('succeeded' / 'failed' / 'cancelled') but a NULL
+   * matching-payload column does NOT throw. Pre-v2.2 rows (terminal,
+   * payload columns NULL) are valid and the corresponding getter
+   * returns `undefined`; the dashboard renders a "legacy-note" muted
+   * message rather than failing the read. The cross-field invariant
+   * "if a payload exists, its column must match the status" still
+   * fires when a payload IS present.
    */
   static fromRow(row: WorkflowRow): WorkflowEntity {
     assertValidWorkflowId(row.id);
     assertValidWorkflowStatusEnum(row.status);
     const metadata = parseMetadataJson(row.id, row.metadata);
+    const success = parseTerminalPayload<WorkflowSuccess>(
+      row.id,
+      "success",
+      row.success,
+      assertWorkflowSuccessShape,
+    );
+    const failure = parseTerminalPayload<WorkflowFailure>(
+      row.id,
+      "failure",
+      row.failure,
+      assertWorkflowFailureShape,
+    );
+    const cancellation = parseTerminalPayload<WorkflowCancellation>(
+      row.id,
+      "cancellation",
+      row.cancellation,
+      assertWorkflowCancellationShape,
+    );
+    // Cross-field invariant: a payload belongs to its own terminal
+    // status (and only its own). A non-terminal row with any payload
+    // attached is corrupt. Pre-v2.2 terminal rows with NULL payloads
+    // are tolerated (see method JSDoc) — the matching-payload
+    // requirement is conditional on the column being non-null.
+    if (row.status === "succeeded" && (failure !== undefined || cancellation !== undefined)) {
+      throw new WorkflowError(
+        `Workflow "${row.id}" corrupted: status='succeeded' row carries failure/cancellation payload`,
+      );
+    }
+    if (row.status === "failed" && (success !== undefined || cancellation !== undefined)) {
+      throw new WorkflowError(
+        `Workflow "${row.id}" corrupted: status='failed' row carries success/cancellation payload`,
+      );
+    }
+    if (row.status === "cancelled" && (success !== undefined || failure !== undefined)) {
+      throw new WorkflowError(
+        `Workflow "${row.id}" corrupted: status='cancelled' row carries success/failure payload`,
+      );
+    }
+    if (
+      row.status === "running" &&
+      (success !== undefined || failure !== undefined || cancellation !== undefined)
+    ) {
+      throw new WorkflowError(
+        `Workflow "${row.id}" corrupted: status='running' row carries a terminal payload`,
+      );
+    }
     return new WorkflowEntity(
       row.id,
       row.brief,
@@ -97,6 +167,9 @@ export class WorkflowEntity {
       row.createdAt,
       row.startedAt ?? undefined,
       row.endedAt ?? undefined,
+      success,
+      failure,
+      cancellation,
     );
   }
 
@@ -112,6 +185,9 @@ export class WorkflowEntity {
       createdAt: this.createdAt,
       startedAt: this.startedAt ?? null,
       endedAt: this.endedAt ?? null,
+      success: this.success === undefined ? null : JSON.stringify(this.success),
+      failure: this.failure === undefined ? null : JSON.stringify(this.failure),
+      cancellation: this.cancellation === undefined ? null : JSON.stringify(this.cancellation),
     };
   }
 }
@@ -250,4 +326,30 @@ function parseSpecJson(nodeId: string, raw: string): unknown {
       `Workflow node "${nodeId}" corrupted: spec_json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Parse one of the optional terminal-payload columns. Returns
+ * `undefined` when the column is null/undefined (the tolerance branch
+ * for pre-v2.2 rows). When the column is a string, parses it as JSON
+ * and runs the supplied shape validator; a parse error or shape
+ * mismatch surfaces as `WorkflowError`.
+ */
+function parseTerminalPayload<T>(
+  rowId: string,
+  field: "success" | "failure" | "cancellation",
+  raw: string | null,
+  assertShape: (id: string, value: T) => void,
+): T | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new WorkflowError(
+      `Workflow "${rowId}" corrupted: ${field} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  assertShape(rowId, parsed as T);
+  return parsed as T;
 }

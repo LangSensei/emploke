@@ -65,6 +65,8 @@ export {
 // ─── Re-exported types ──────────────────────────────────────────────
 export type {
   NodeKind,
+  WorkflowCancellation,
+  WorkflowFailure,
   WorkflowNodeRunner,
   WorkflowNodeSpecEnvelope,
   WorkflowNodeStatus,
@@ -72,6 +74,7 @@ export type {
   WorkflowNodeValidateCtx,
   WorkflowRunners,
   WorkflowStatus,
+  WorkflowSuccess,
 } from "./types.js";
 export { deriveIterationCount, hasLiveCoord } from "./types.js";
 // ─── Validators ─────────────────────────────────────────────────────

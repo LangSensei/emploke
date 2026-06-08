@@ -642,7 +642,7 @@ describe("WorkflowService.addSubgraph", () => {
 
   it("REJECTS when workflow is terminal (cancel race)", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     await expect(
       h.service.addSubgraph({
         workflowId,

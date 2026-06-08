@@ -339,13 +339,20 @@ describe("workflowsRoutes — cancel", () => {
     };
     const getDag = vi.fn(async () => cancelledDag);
     const svc = stubService({ cancelWorkflow, getDag });
-    const res = await mountRoutes(svc).request(`/${WID}/cancel`, { method: "POST" });
+    const res = await mountRoutes(svc).request(`/${WID}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancellation: { message: "operator stopped" } }),
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.id).toBe(WID);
     expect(body.status).toBe("cancelled");
     expect(body.endedAt).toBe("2026-06-07T01:00:00.000Z");
-    expect(cancelWorkflow).toHaveBeenCalledWith({ workflowId: WID });
+    expect(cancelWorkflow).toHaveBeenCalledWith({
+      workflowId: WID,
+      cancellation: { kind: "user", message: "operator stopped" },
+    });
   });
 
   it("POST /:wfid/cancel maps WorkflowNotFoundError to 404", async () => {
@@ -354,7 +361,11 @@ describe("workflowsRoutes — cancel", () => {
         throw new WorkflowNotFoundError(WID);
       }),
     });
-    const res = await mountRoutes(svc).request(`/${WID}/cancel`, { method: "POST" });
+    const res = await mountRoutes(svc).request(`/${WID}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancellation: { message: "" } }),
+    });
     expect(res.status).toBe(404);
   });
 
@@ -364,10 +375,34 @@ describe("workflowsRoutes — cancel", () => {
         throw new WorkflowAlreadyTerminalError(WID);
       }),
     });
-    const res = await mountRoutes(svc).request(`/${WID}/cancel`, { method: "POST" });
+    const res = await mountRoutes(svc).request(`/${WID}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancellation: { message: "" } }),
+    });
     expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.code).toBe("WorkflowAlreadyTerminalError");
+  });
+
+  it("POST /:wfid/cancel rejects the pre-v2.2 { reason } body shape with 400", async () => {
+    const svc = stubService({ cancelWorkflow: vi.fn() });
+    const res = await mountRoutes(svc).request(`/${WID}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "legacy" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /:wfid/cancel rejects missing cancellation with 400", async () => {
+    const svc = stubService({ cancelWorkflow: vi.fn() });
+    const res = await mountRoutes(svc).request(`/${WID}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
   });
 });
 
@@ -638,13 +673,41 @@ describe("workflowsRoutes — finish (POST /:wfid/finish)", () => {
     const res = await mountRoutes(svc).request(`/${WID}/finish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ outcome: "succeeded" }),
+      body: JSON.stringify({ outcome: "succeeded", success: { output: "all good" } }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.status).toBe("succeeded");
     expect(body.endedAt).toBe("2026-06-07T01:00:00.000Z");
-    expect(finishWorkflow).toHaveBeenCalledWith({ workflowId: WID, outcome: "succeeded" });
+    expect(finishWorkflow).toHaveBeenCalledWith({
+      workflowId: WID,
+      outcome: "succeeded",
+      success: { output: "all good" },
+    });
+  });
+
+  it("defaults success.output to null when outcome='succeeded' and success is omitted", async () => {
+    const finishWorkflow = vi.fn(async () => {});
+    const succeededDag: WorkflowDagSnapshot = {
+      workflow: makeHeader({ status: "succeeded", endedAt: "2026-06-07T01:00:00.000Z" }),
+      nodes: [makeCoord()],
+      edges: [],
+    };
+    const svc = stubService({
+      finishWorkflow,
+      getDag: vi.fn(async () => succeededDag),
+    });
+    const res = await mountRoutes(svc).request(`/${WID}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: "succeeded" }),
+    });
+    expect(res.status).toBe(200);
+    expect(finishWorkflow).toHaveBeenCalledWith({
+      workflowId: WID,
+      outcome: "succeeded",
+      success: { output: null },
+    });
   });
 
   it("rejects outcome='cancelled' with 400", async () => {
@@ -657,6 +720,40 @@ describe("workflowsRoutes — finish (POST /:wfid/finish)", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects outcome='failed' without failure with 400", async () => {
+    const svc = stubService({ finishWorkflow: vi.fn() });
+    const res = await mountRoutes(svc).request(`/${WID}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: "failed" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts outcome='failed' with failure.message", async () => {
+    const finishWorkflow = vi.fn(async () => {});
+    const failedDag: WorkflowDagSnapshot = {
+      workflow: makeHeader({ status: "failed", endedAt: "2026-06-07T01:00:00.000Z" }),
+      nodes: [makeCoord()],
+      edges: [],
+    };
+    const svc = stubService({
+      finishWorkflow,
+      getDag: vi.fn(async () => failedDag),
+    });
+    const res = await mountRoutes(svc).request(`/${WID}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: "failed", failure: { message: "budget out" } }),
+    });
+    expect(res.status).toBe(200);
+    expect(finishWorkflow).toHaveBeenCalledWith({
+      workflowId: WID,
+      outcome: "failed",
+      failure: { kind: "coord", message: "budget out" },
+    });
+  });
+
   it("maps WorkflowMutationUnauthorizedError to 403", async () => {
     const svc = stubService({
       finishWorkflow: vi.fn(async () => {
@@ -666,7 +763,7 @@ describe("workflowsRoutes — finish (POST /:wfid/finish)", () => {
     const res = await mountRoutes(svc).request(`/${WID}/finish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ outcome: "failed" }),
+      body: JSON.stringify({ outcome: "failed", failure: { message: "x" } }),
     });
     expect(res.status).toBe(403);
   });

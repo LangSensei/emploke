@@ -183,7 +183,9 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
       setCancelBusy(true);
       setCancelError(null);
       try {
-        await cancelWorkflow(cancelTarget.id, reason === "" ? {} : { reason });
+        await cancelWorkflow(cancelTarget.id, {
+          cancellation: { kind: "user", message: reason },
+        });
         if (!mounted.current) return;
         setCancelTarget(null);
         await refresh();

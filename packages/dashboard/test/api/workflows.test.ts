@@ -91,17 +91,21 @@ describe("createWorkflow — POST body shape", () => {
 });
 
 describe("cancelWorkflow — POST /cancel", () => {
-  it("POSTs to /workflows/:id/cancel with an empty body when no reason is passed", async () => {
+  it("POSTs the v2.2 cancellation payload when message is empty", async () => {
     installFetch({ id: "wf-1" });
-    await cancelWorkflow("wf-1");
+    await cancelWorkflow("wf-1", { cancellation: { kind: "user", message: "" } });
     expect(calls[0]?.url).toBe("/api/workspaces/ws-test-uuid/workflows/wf-1/cancel");
     expect(calls[0]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      cancellation: { kind: "user", message: "" },
+    });
   });
 
-  it("includes the reason when one is provided", async () => {
+  it("includes the message when one is provided", async () => {
     installFetch({ id: "wf-1" });
-    await cancelWorkflow("wf-1", { reason: "superseded" });
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ reason: "superseded" });
+    await cancelWorkflow("wf-1", { cancellation: { kind: "user", message: "superseded" } });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      cancellation: { kind: "user", message: "superseded" },
+    });
   });
 });

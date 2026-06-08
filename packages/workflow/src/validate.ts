@@ -23,9 +23,17 @@ import {
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
   WorkflowEnumValueError,
+  WorkflowError,
   WorkflowNodeKindShapeError,
 } from "./errors.js";
-import type { NodeKind, WorkflowNodeStatus, WorkflowStatus } from "./types.js";
+import type {
+  NodeKind,
+  WorkflowCancellation,
+  WorkflowFailure,
+  WorkflowNodeStatus,
+  WorkflowStatus,
+  WorkflowSuccess,
+} from "./types.js";
 
 // ─── Id grammars ────────────────────────────────────────────────────
 
@@ -155,5 +163,65 @@ export function assertValidWorkflowNodeStatusEnum(
 export function assertValidWorkflowNodeKind(kind: unknown): asserts kind is NodeKind {
   if (kind !== "coordinator" && kind !== "worker") {
     throw new WorkflowNodeKindShapeError(String(kind));
+  }
+}
+
+// ─── Terminal-payload shape validators ──────────────────────────────
+
+const FAILURE_KINDS = new Set(["coord", "internal"]);
+const CANCELLATION_KINDS = new Set(["user", "cascade"]);
+
+/**
+ * Shape check for {@link WorkflowSuccess}. Used by
+ * `WorkflowEntity.fromRow` when the `success` column is non-null.
+ * Throws `WorkflowError` on miss.
+ */
+export function assertWorkflowSuccessShape(id: string, value: WorkflowSuccess): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new WorkflowError(`Workflow "${id}" corrupted: success must be an object`);
+  }
+  const v = value as { output?: unknown };
+  if (v.output !== null && typeof v.output !== "string") {
+    throw new WorkflowError(`Workflow "${id}" corrupted: success.output must be a string or null`);
+  }
+}
+
+/**
+ * Shape check for {@link WorkflowFailure}. Used by
+ * `WorkflowEntity.fromRow` when the `failure` column is non-null.
+ * Throws `WorkflowError` on miss.
+ */
+export function assertWorkflowFailureShape(id: string, value: WorkflowFailure): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new WorkflowError(`Workflow "${id}" corrupted: failure must be an object`);
+  }
+  const v = value as { kind?: unknown; message?: unknown };
+  if (typeof v.kind !== "string" || !FAILURE_KINDS.has(v.kind)) {
+    throw new WorkflowError(
+      `Workflow "${id}" corrupted: failure.kind must be one of: ${[...FAILURE_KINDS].join(", ")}`,
+    );
+  }
+  if (typeof v.message !== "string") {
+    throw new WorkflowError(`Workflow "${id}" corrupted: failure.message must be a string`);
+  }
+}
+
+/**
+ * Shape check for {@link WorkflowCancellation}. Used by
+ * `WorkflowEntity.fromRow` when the `cancellation` column is
+ * non-null. Throws `WorkflowError` on miss.
+ */
+export function assertWorkflowCancellationShape(id: string, value: WorkflowCancellation): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new WorkflowError(`Workflow "${id}" corrupted: cancellation must be an object`);
+  }
+  const v = value as { kind?: unknown; message?: unknown };
+  if (typeof v.kind !== "string" || !CANCELLATION_KINDS.has(v.kind)) {
+    throw new WorkflowError(
+      `Workflow "${id}" corrupted: cancellation.kind must be one of: ${[...CANCELLATION_KINDS].join(", ")}`,
+    );
+  }
+  if (typeof v.message !== "string") {
+    throw new WorkflowError(`Workflow "${id}" corrupted: cancellation.message must be a string`);
   }
 }

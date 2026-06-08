@@ -167,7 +167,7 @@ describe("WorkflowsPage — detail header", () => {
 
     await waitFor(() => {
       expect(mockCancelWorkflow).toHaveBeenCalledWith("wf-running", {
-        reason: "no longer needed",
+        cancellation: { kind: "user", message: "no longer needed" },
       });
     });
   });

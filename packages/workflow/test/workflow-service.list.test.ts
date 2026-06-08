@@ -38,7 +38,10 @@ describe("WorkflowService — list", () => {
     const a = await bootstrap(h, { brief: "alpha" });
     const b = await bootstrap(h, { brief: "beta" });
     // Cancel one workflow to flip it to a terminal status.
-    await h.service.cancelWorkflow({ workflowId: a.workflowId });
+    await h.service.cancelWorkflow({
+      workflowId: a.workflowId,
+      cancellation: { kind: "user", message: "" },
+    });
 
     const running = await h.service.list({ status: "running" });
     expect(running.map((wf) => wf.id)).toEqual([b.workflowId]);

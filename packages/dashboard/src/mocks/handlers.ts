@@ -492,17 +492,21 @@ export const handlers = [
         { status: 409 },
       );
     }
-    // M2's cancel route is body-less per #331 spec line 328 — we
-    // still parse + tolerate the body so a forward-compat client
-    // (sending the dashboard's `CancelWorkflowBody.reason`) doesn't
-    // 400. The reason is dropped because the contracts shape has no
-    // `outcomeReason` slot yet (#334 substrate gap).
-    await request.json().catch(() => ({}));
+    // v2.2 wire: `{ cancellation: { kind?: 'user', message } }`. The
+    // mock parses the message into the persisted `cancellation`
+    // payload so the dashboard's optimistic re-render and the post-
+    // cancel header show the operator-supplied reason.
+    const body = (await request.json().catch(() => ({}))) as {
+      cancellation?: { kind?: string; message?: string };
+    };
+    const message =
+      typeof body?.cancellation?.message === "string" ? body.cancellation.message : "";
     const now = new Date().toISOString();
     const cancelled: WorkflowHeaderWire = {
       ...current,
       status: "cancelled",
       endedAt: now,
+      cancellation: { kind: "user", message },
     };
     workflowsState[idx] = cancelled;
     const dag = dagsState.get(cancelled.id);

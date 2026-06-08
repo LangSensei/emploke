@@ -45,12 +45,15 @@ import type * as schema from "./schema.js";
 import { workflows } from "./schema.js";
 import type {
   NodeKind,
+  WorkflowCancellation,
+  WorkflowFailure,
   WorkflowNodeRunner,
   WorkflowNodeStatus,
   WorkflowNodeTerminalResult,
   WorkflowNodeValidateCtx,
   WorkflowRunners,
   WorkflowStatus,
+  WorkflowSuccess,
 } from "./types.js";
 import { generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
 import type { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
@@ -135,13 +138,42 @@ export interface CancelNodeArgs {
   readonly nodeId: string;
 }
 
-export interface FinishWorkflowArgs {
-  readonly workflowId: string;
-  readonly outcome: "succeeded" | "failed";
-}
+/**
+ * Args accepted by {@link WorkflowService.finishWorkflow}. Discriminated
+ * on `outcome`:
+ *
+ *   - `succeeded` — optional {@link WorkflowSuccess} payload. When
+ *     omitted, the substrate persists `{ output: null }` so the row
+ *     still satisfies the "succeeded ⇒ success non-null" invariant.
+ *   - `failed` — required {@link WorkflowFailure} payload. Coord
+ *     MUST supply a human-readable failure to surface in the
+ *     dashboard's Overview tab.
+ *
+ * `cancelled` is NOT an arm here — workflow cancellation is the
+ * external-operator route ({@link WorkflowService.cancelWorkflow}),
+ * not a coord-driven path.
+ */
+export type FinishWorkflowArgs =
+  | {
+      readonly workflowId: string;
+      readonly outcome: "succeeded";
+      readonly success?: WorkflowSuccess;
+    }
+  | {
+      readonly workflowId: string;
+      readonly outcome: "failed";
+      readonly failure: WorkflowFailure;
+    };
 
+/**
+ * Args accepted by {@link WorkflowService.cancelWorkflow}. The
+ * `cancellation` payload is REQUIRED — operator MUST supply at
+ * least a kind + message. The server route defaults `kind='user'`
+ * when omitted on the wire.
+ */
 export interface CancelWorkflowArgs {
   readonly workflowId: string;
+  readonly cancellation: WorkflowCancellation;
 }
 
 export interface RemoveNodeArgs {
@@ -852,8 +884,35 @@ export class WorkflowService {
   async finishWorkflow(args: FinishWorkflowArgs): Promise<void> {
     if (args.outcome !== "succeeded" && args.outcome !== "failed") {
       throw new WorkflowError(
-        `finishWorkflow: outcome must be 'succeeded' or 'failed', got "${args.outcome}"`,
+        `finishWorkflow: outcome must be 'succeeded' or 'failed', got "${(args as { outcome: string }).outcome}"`,
       );
+    }
+
+    // Resolve the terminal-payload JSON to persist. Mirrors the
+    // task substrate's `success`/`failure`/`cancellation` JSON
+    // columns: exactly one is non-null per terminal status.
+    let successJson: string | undefined;
+    let failureJson: string | undefined;
+    if (args.outcome === "succeeded") {
+      const success: WorkflowSuccess = args.success ?? { output: null };
+      if (typeof success !== "object" || success === null) {
+        throw new WorkflowError("finishWorkflow: success must be an object when supplied");
+      }
+      if (success.output !== null && typeof success.output !== "string") {
+        throw new WorkflowError("finishWorkflow: success.output must be a string or null");
+      }
+      successJson = JSON.stringify(success);
+    } else {
+      if (args.failure === undefined || typeof args.failure !== "object" || args.failure === null) {
+        throw new WorkflowError("finishWorkflow: failure is required when outcome='failed'");
+      }
+      if (typeof args.failure.message !== "string") {
+        throw new WorkflowError("finishWorkflow: failure.message must be a string");
+      }
+      if (args.failure.kind !== "coord" && args.failure.kind !== "internal") {
+        throw new WorkflowError("finishWorkflow: failure.kind must be 'coord' or 'internal'");
+      }
+      failureJson = JSON.stringify(args.failure);
     }
 
     const workflowId = args.workflowId;
@@ -870,6 +929,8 @@ export class WorkflowService {
         fromStatus: "running",
         toStatus: args.outcome,
         endedAt: nowIso,
+        ...(successJson !== undefined ? { successJson } : {}),
+        ...(failureJson !== undefined ? { failureJson } : {}),
       });
     });
     if (!casOk) throw new WorkflowAlreadyTerminalError(workflowId);
@@ -891,8 +952,27 @@ export class WorkflowService {
    * Post-tx reconciliation cancels every non-terminal node in the
    * workflow (including any running coord — there is no caller to
    * exclude here).
+   *
+   * The {@link WorkflowCancellation} payload is persisted in the
+   * same UPDATE as the status flip, mirroring `finishWorkflow`'s
+   * `success`/`failure` columns.
    */
   async cancelWorkflow(args: CancelWorkflowArgs): Promise<void> {
+    if (
+      args.cancellation === undefined ||
+      typeof args.cancellation !== "object" ||
+      args.cancellation === null
+    ) {
+      throw new WorkflowError("cancelWorkflow: cancellation payload is required");
+    }
+    if (typeof args.cancellation.message !== "string") {
+      throw new WorkflowError("cancelWorkflow: cancellation.message must be a string");
+    }
+    if (args.cancellation.kind !== "user" && args.cancellation.kind !== "cascade") {
+      throw new WorkflowError("cancelWorkflow: cancellation.kind must be 'user' or 'cascade'");
+    }
+    const cancellationJson = JSON.stringify(args.cancellation);
+
     let casOk = false;
     const nowIso = this.now().toISOString();
     this.db.transaction((tx) => {
@@ -903,6 +983,7 @@ export class WorkflowService {
         fromStatus: "running",
         toStatus: "cancelled",
         endedAt: nowIso,
+        cancellationJson,
       });
     });
     if (!casOk) throw new WorkflowAlreadyTerminalError(args.workflowId);

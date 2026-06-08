@@ -460,30 +460,39 @@ describe("workflowDag — server error envelope", () => {
 // ─── cancel ────────────────────────────────────────────────────────────
 
 describe("workflowCancel — happy path", () => {
-  it("POSTs /workflows/:wfid/cancel with no body (route contract has no body slot)", async () => {
+  it("POSTs /workflows/:wfid/cancel with cancellation payload body (v2.2)", async () => {
     const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
     const r = await workflowCancel({ ...commonOpts(), wfid: WFID });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(CANCEL_URL);
-    // Critical forward-compat assertion: even with --reason omitted,
-    // no request body is sent. See `workflows.cancel` route doc.
-    expect(calls[0]?.body).toBeUndefined();
+    // v2.2 always sends a body; --message omitted → empty string.
+    expect(calls[0]?.body).toEqual({
+      cancellation: { kind: "user", message: "" },
+    });
     expect(r.stdout).toContain(`workflow ${WFID} cancelled`);
     expect(r.stdout).toContain("STATUS");
     expect(r.stdout).toContain("cancelled");
   });
 
-  it("--reason is accepted but NOT sent on the wire (forward-compat with #334)", async () => {
+  it("--message is sent on the wire as cancellation.message (v2.2)", async () => {
     const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
-    const r = await workflowCancel({ ...commonOpts(), wfid: WFID, reason: "user pressed stop" });
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID, message: "user pressed stop" });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(1);
-    // Today the route's contract has no `body` slot — the CLI parses
-    // --reason but discards it. Pin the wire shape so a contract
-    // upgrade is a deliberate change, not silent drift.
-    expect(calls[0]?.body).toBeUndefined();
+    expect(calls[0]?.body).toEqual({
+      cancellation: { kind: "user", message: "user pressed stop" },
+    });
+  });
+
+  it("--kind=user is accepted (the only kind v2.2 emits)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID, kind: "user", message: "stop" });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      cancellation: { kind: "user", message: "stop" },
+    });
   });
 
   it("--json emits the post-cancel header as formatted JSON (no confirmation line)", async () => {
@@ -505,6 +514,14 @@ describe("workflowCancel — validation (no fetch)", () => {
     const r = await workflowCancel({ ...commonOpts(), wfid: "" });
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/--wfid/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("--kind other than 'user' → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID, kind: "cascade" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--kind/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -571,17 +588,19 @@ describe("`emploke workflow …` commander wiring (argv → action)", () => {
     });
   });
 
-  it("`workflow cancel --wfid --reason` routes through commander; --reason is discarded on the wire", async () => {
+  it("`workflow cancel --wfid --message` routes through commander; --message is sent on the wire", async () => {
     const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
     const r = await runCli(
-      ["workflow", "cancel", "--workspace", WSID, "--wfid", WFID, "--reason", "user pressed stop"],
+      ["workflow", "cancel", "--workspace", WSID, "--wfid", WFID, "--message", "user pressed stop"],
       env(),
     );
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(CANCEL_URL);
-    expect(calls[0]?.body).toBeUndefined();
+    expect(calls[0]?.body).toEqual({
+      cancellation: { kind: "user", message: "user pressed stop" },
+    });
   });
 });
 
@@ -886,7 +905,7 @@ describe("workflowCancelNode", () => {
 // ─── finish ───────────────────────────────────────────────────────────
 
 describe("workflowFinish", () => {
-  it("POSTs /finish with {outcome:'succeeded'} and prints the post-finish header", async () => {
+  it("POSTs /finish with {outcome:'succeeded', success:{output:null}} when --summary omitted", async () => {
     const succeededHeader = {
       ...sampleHeader,
       status: "succeeded" as const,
@@ -901,8 +920,85 @@ describe("workflowFinish", () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(FINISH_URL);
-    expect(calls[0]?.body).toEqual({ outcome: "succeeded" });
+    expect(calls[0]?.body).toEqual({ outcome: "succeeded", success: { output: null } });
     expect(r.stdout).toContain("succeeded");
+  });
+
+  it("forwards --summary into success.output (v2.2)", async () => {
+    const succeededHeader = {
+      ...sampleHeader,
+      status: "succeeded" as const,
+      endedAt: "2026-06-01T01:00:00.000Z",
+    };
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(succeededHeader) }]);
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "succeeded",
+      summary: "All sub-runs green.",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      outcome: "succeeded",
+      success: { output: "All sub-runs green." },
+    });
+  });
+
+  it("forwards --message into failure.message when outcome=failed", async () => {
+    const failedHeader = {
+      ...sampleHeader,
+      status: "failed" as const,
+      endedAt: "2026-06-01T01:00:00.000Z",
+    };
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(failedHeader) }]);
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "failed",
+      message: "budget exhausted",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      outcome: "failed",
+      failure: { kind: "coord", message: "budget exhausted" },
+    });
+  });
+
+  it("rejects --outcome=failed without --message with exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "failed",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--message is required/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects --summary with --outcome=failed", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "failed",
+      summary: "x",
+      message: "y",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects --message with --outcome=succeeded", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowFinish({
+      ...commonOpts(),
+      wfid: WFID,
+      outcome: "succeeded",
+      message: "x",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("rejects --outcome=cancelled with exit 2, no fetch", async () => {

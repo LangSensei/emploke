@@ -119,10 +119,15 @@ export type WorkflowNodeStatusWire =
  * Wire projection of a workflow header. Field set mirrors the
  * persisted `WorkflowEntity` shape verbatim — timestamps are ISO 8601
  * strings (already stored that way), optional `endedAt` is absent on
- * non-terminal rows. `iterationCount` is computed by the server from
- * the workflow's coord-node count (silent-retry coords are counted
- * too — a retry IS another iteration from the user's perspective);
- * see `deriveIterationCount` in `@emploke/workflow`.
+ * non-terminal rows.
+ *
+ * `iterationCount` is kept for forward diagnostics; not rendered
+ * after v2.2.
+ *
+ * `success` / `failure` / `cancellation` are v2.2 terminal payloads —
+ * exactly the one matching `status` is present on terminal rows
+ * (legacy pre-v2.2 terminal rows with no payload column populated
+ * round-trip with all three absent).
  */
 export interface WorkflowHeaderWire {
   readonly id: string;
@@ -131,11 +136,49 @@ export interface WorkflowHeaderWire {
   readonly coordinatorAgent: string;
   readonly status: WorkflowStatusWire;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /** Kept for forward diagnostics; not rendered after v2.2. */
   readonly iterationCount: number;
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly endedAt?: string;
+  readonly success?: WorkflowSuccessWire;
+  readonly failure?: WorkflowFailureWire;
+  readonly cancellation?: WorkflowCancellationWire;
 }
+
+/**
+ * Wire projection of a successful workflow's terminal payload.
+ * `output` is the coordinator's free-form summary (nullable to
+ * support headless coords that finish without a summary).
+ */
+export interface WorkflowSuccessWire {
+  readonly output: string | null;
+}
+
+/**
+ * Wire projection of a failed workflow's terminal payload.
+ * Discriminated on `kind`:
+ *
+ *   - `coord`    — coordinator explicitly called `/finish` with
+ *                  `outcome: 'failed'` and a message.
+ *   - `internal` — substrate self-terminated the workflow (reserved
+ *                  for future use; v2.2 emits only `coord`).
+ */
+export type WorkflowFailureWire =
+  | { readonly kind: "coord"; readonly message: string }
+  | { readonly kind: "internal"; readonly message: string };
+
+/**
+ * Wire projection of a cancelled workflow's terminal payload.
+ * Discriminated on `kind`:
+ *
+ *   - `user`    — operator called `/cancel` from the dashboard / CLI.
+ *   - `cascade` — substrate cancelled this workflow as collateral
+ *                 (reserved for future use; v2.2 emits only `user`).
+ */
+export type WorkflowCancellationWire =
+  | { readonly kind: "user"; readonly message: string }
+  | { readonly kind: "cascade"; readonly message: string };
 
 /**
  * Wire projection of a single workflow node. Per-kind `spec` is
@@ -342,13 +385,39 @@ export interface ReplaceNodeSpecBody {
 
 /**
  * Request body for `POST /workspaces/:id/workflows/:wfid/finish`.
- * `outcome` MUST be `"succeeded"` or `"failed"`; the substrate
- * rejects any other value at the boundary (`WorkflowError` → 400).
+ * Discriminated on `outcome`:
+ *
+ *   - `succeeded` — `success` is optional. When omitted, the server
+ *     defaults the persisted payload to `{ output: null }`.
+ *   - `failed`    — `failure` is REQUIRED. `kind` defaults to
+ *     `"coord"` at the server boundary when omitted; `message` is
+ *     a free-form string (empty allowed).
+ *
  * Workflow-level cancellation is a separate route
- * (`POST .../cancel`).
+ * (`POST .../cancel`) — see {@link CancelWorkflowBody}.
  */
-export interface FinishWorkflowBody {
-  readonly outcome: "succeeded" | "failed";
+export type FinishWorkflowBody =
+  | {
+      readonly outcome: "succeeded";
+      readonly success?: { readonly output?: string | null };
+    }
+  | {
+      readonly outcome: "failed";
+      readonly failure: { readonly kind?: "coord"; readonly message: string };
+    };
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/:wfid/cancel`.
+ * `cancellation.kind` defaults to `"user"` at the server boundary
+ * when omitted; `message` is a free-form string (empty allowed). The
+ * pre-v2.2 `{ reason }` body shape is no longer accepted — callers
+ * MUST switch to `{ cancellation: { message } }`.
+ */
+export interface CancelWorkflowBody {
+  readonly cancellation: {
+    readonly kind?: "user";
+    readonly message: string;
+  };
 }
 
 /**

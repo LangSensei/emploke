@@ -1,4 +1,5 @@
 import type {
+  CancelWorkflowBody,
   CreateWorkflowBody,
   WorkflowArtifactsResponse,
   WorkflowArtifactWire,
@@ -12,6 +13,7 @@ import type {
 import { fetchJson, jsonInit, mutateJson, workspacePrefix } from "./http.js";
 
 export type {
+  CancelWorkflowBody,
   CreateWorkflowBody,
   WorkflowArtifactsResponse,
   WorkflowArtifactWire,
@@ -22,19 +24,6 @@ export type {
   WorkflowNodeWire,
   WorkflowNodeWireSpec,
 };
-
-/**
- * Body for `POST /workflows/:wfid/cancel`. The server currently
- * discards the body (`#331` spec line 328 — cancel is body-less in
- * M2) but we keep the local DTO so the dashboard sends the user's
- * optional cancel reason for forward-compat with `#334` (the
- * substrate gap that will surface a structured cancel reason).
- * Marked dashboard-internal because the contracts package does not
- * yet model this body.
- */
-export interface CancelWorkflowBody {
-  readonly reason?: string;
-}
 
 export const listWorkflows = (
   opts: WorkflowListQuery = {},
@@ -63,10 +52,13 @@ export const getWorkflowDag = (id: string): Promise<WorkflowDagWire> =>
 export const createWorkflow = (body: CreateWorkflowBody): Promise<WorkflowHeaderWire> =>
   mutateJson<WorkflowHeaderWire>(`${workspacePrefix()}/workflows`, jsonInit("POST", body));
 
-export const cancelWorkflow = (
-  id: string,
-  body: CancelWorkflowBody = {},
-): Promise<WorkflowHeaderWire> =>
+/**
+ * Cancel a workflow. The v2.2 wire shape requires a
+ * `cancellation: { message }` body; the dashboard always sends `kind:
+ * "user"` (the only kind operator-driven cancels emit). Empty message
+ * is allowed but the `cancellation` object itself is required.
+ */
+export const cancelWorkflow = (id: string, body: CancelWorkflowBody): Promise<WorkflowHeaderWire> =>
   mutateJson<WorkflowHeaderWire>(
     `${workspacePrefix()}/workflows/${encodeURIComponent(id)}/cancel`,
     jsonInit("POST", body),
