@@ -337,76 +337,171 @@ describe("WorkflowEngine integration", () => {
     expect(node.status).toBe("succeeded");
   });
 
-  it("per-workflow serialization: two back-to-back triggers chain (no double-dispatch)", async () => {
-    // The per-workflow Promise chain in WorkflowEngine guarantees
-    // two triggerWorkflowTick calls on the same workflow do not
-    // interleave: the second tick's body only runs after the first
-    // tick's body fully completes. The visible consequence is that
-    // even when the engine is hammered with redundant triggers,
-    // each eligible node is dispatched exactly once — the second
-    // tick observes the post-commit state of the first tick and
-    // finds the node already `running`. `dispatchAtomic` also
-    // re-checks node status inside its write tx (defense in depth),
-    // but the chain is what prevents racing-tick dispatch attempts
-    // from happening in the first place.
-    const dispatchedNodeIds: string[] = [];
-    h.worker.setDispatch(async (opts) => {
-      dispatchedNodeIds.push(opts.nodeId);
-      // Yield to the event loop so any racing tick has a fair
-      // chance to attempt a second dispatch for this node. With
-      // the chain intact, no such race exists.
-      await new Promise((resolve) => setImmediate(resolve));
+  it("per-workflow serialization: concurrent triggers do not overlap dispatchAtomic per workflow", async () => {
+    // The Map<wfId, Promise> chain in WorkflowEngine serializes
+    // tickOnces per workflow. To prove the chain (not dispatchAtomic's
+    // tx-internal status recheck) is what prevents overlap, we count
+    // concurrent in-flight dispatchAtomic calls and stage one
+    // eligible node without firing a real dispatch from addNode.
+    // With the chain, per-workflow maxInFlight stays at 1; without
+    // it, every queued tick reads [w1] before the first dispatch's
+    // tx flips status and the entry-side counter exceeds 1.
+    const wfIdCache = new Map<string, string>();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const perWfInFlight = new Map<string, number>();
+    const perWfMaxInFlight = new Map<string, number>();
+
+    type DispatchAtomicFn = typeof h.module.service.dispatchAtomic;
+    const originalDispatchAtomic: DispatchAtomicFn = h.module.service.dispatchAtomic.bind(
+      h.module.service,
+    );
+    const wrappedDispatchAtomic: DispatchAtomicFn = async (nodeId, onTerminal) => {
+      inFlight += 1;
+      if (inFlight > maxInFlight) maxInFlight = inFlight;
+      let wfId = wfIdCache.get(nodeId);
+      if (wfId === undefined) {
+        try {
+          const node = await h.module.service.getNode(nodeId);
+          wfId = node.workflowId;
+          wfIdCache.set(nodeId, wfId);
+        } catch {
+          wfId = "unknown";
+        }
+      }
+      const wfCur = (perWfInFlight.get(wfId) ?? 0) + 1;
+      perWfInFlight.set(wfId, wfCur);
+      if (wfCur > (perWfMaxInFlight.get(wfId) ?? 0)) perWfMaxInFlight.set(wfId, wfCur);
+      try {
+        await originalDispatchAtomic(nodeId, onTerminal);
+      } finally {
+        inFlight -= 1;
+        perWfInFlight.set(wfId, (perWfInFlight.get(wfId) ?? 1) - 1);
+      }
+    };
+    (h.module.service as { dispatchAtomic: DispatchAtomicFn }).dispatchAtomic =
+      wrappedDispatchAtomic;
+    const noOpDispatchAtomic: DispatchAtomicFn = async () => {};
+
+    type DispatchFn = Parameters<RecordingRunner["setDispatch"]>[0];
+    const slowDispatch: DispatchFn = async (opts) => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
       queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
       return { unitId: `unit-${opts.nodeId}` };
-    });
+    };
+    h.coord.setDispatch(slowDispatch);
+    h.worker.setDispatch(slowDispatch);
 
-    const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
+    const wf1 = await h.module.service.createWorkflow({
       brief: "serialization-test",
       coordinatorAgent: "coord-agent",
     });
     await waitUntil(
-      async () => (await h.module.service.getNode(initialCoordNodeId)).status === "succeeded",
+      async () => (await h.module.service.getNode(wf1.initialCoordNodeId)).status === "succeeded",
       2000,
-      "coord succeeded",
+      "wf1 coord succeeded",
     );
 
-    // Two sibling workers, both immediately eligible after the coord
-    // succeeds. addNode itself triggers a tick via the post-commit
-    // nudge; the explicit triggerWorkflowTick calls below add
-    // concurrent pressure on the per-workflow chain.
-    const a = await h.module.service.addNode({
-      workflowId,
+    // Swap dispatchAtomic to a no-op for the duration of addNode so
+    // its inline `await this.dispatchAtomic(nodeId)` is a no-op, then
+    // restore. The worker is committed as not_started with coord
+    // already succeeded, so every tick that runs eligibility will see
+    // [w1] until the first real dispatch flips it to running.
+    (h.module.service as { dispatchAtomic: DispatchAtomicFn }).dispatchAtomic = noOpDispatchAtomic;
+    const w1 = await h.module.service.addNode({
+      workflowId: wf1.workflowId,
       kind: "worker",
-      spec: { agent: "w", brief: "A" },
-      parents: [initialCoordNodeId],
+      spec: { agent: "w", brief: "w1" },
+      parents: [wf1.initialCoordNodeId],
     });
-    const b = await h.module.service.addNode({
-      workflowId,
-      kind: "worker",
-      spec: { agent: "w", brief: "B" },
-      parents: [initialCoordNodeId],
-    });
+    (h.module.service as { dispatchAtomic: DispatchAtomicFn }).dispatchAtomic =
+      wrappedDispatchAtomic;
 
-    // Hammer the chain with concurrent triggers — none of these
-    // ticks should observe an eligible node that has already been
-    // flipped `ready → running` by a previous tick in the chain.
-    for (let i = 0; i < 5; i++) {
-      h.module.engine.triggerWorkflowTick(workflowId);
-      h.module.engine.triggerWorkflowTick(workflowId);
+    wfIdCache.clear();
+    perWfInFlight.clear();
+    perWfMaxInFlight.clear();
+    inFlight = 0;
+    maxInFlight = 0;
+
+    for (let i = 0; i < 10; i++) {
+      h.module.engine.triggerWorkflowTick(wf1.workflowId);
     }
 
     await waitUntil(
-      async () =>
-        (await h.module.service.getNode(a.nodeId)).status === "succeeded" &&
-        (await h.module.service.getNode(b.nodeId)).status === "succeeded",
+      async () => (await h.module.service.getNode(w1.nodeId)).status === "succeeded",
       2000,
-      "both workers succeeded",
+      "wf1 worker succeeded",
     );
 
-    // Chain invariant: each node was dispatched exactly once even
-    // under the pressure of 10 extra triggers.
-    expect(dispatchedNodeIds.filter((id) => id === a.nodeId).length).toBe(1);
-    expect(dispatchedNodeIds.filter((id) => id === b.nodeId).length).toBe(1);
+    expect(perWfMaxInFlight.get(wf1.workflowId)).toBe(1);
+
+    // Inverse spec: across two different workflows dispatchAtomic IS
+    // allowed to run concurrently. Pin both workflows' workers
+    // in-flight against a manual gate and assert the global counter
+    // reaches >= 2 while each per-workflow counter stays at 1.
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const gatedDispatch: DispatchFn = async (opts) => {
+      await gate;
+      queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
+      return { unitId: `unit-${opts.nodeId}` };
+    };
+    h.worker.setDispatch(gatedDispatch);
+
+    const wfA = await h.module.service.createWorkflow({
+      brief: "wf-A",
+      coordinatorAgent: "coord-agent",
+    });
+    const wfB = await h.module.service.createWorkflow({
+      brief: "wf-B",
+      coordinatorAgent: "coord-agent",
+    });
+    await waitUntil(
+      async () =>
+        (await h.module.service.getNode(wfA.initialCoordNodeId)).status === "succeeded" &&
+        (await h.module.service.getNode(wfB.initialCoordNodeId)).status === "succeeded",
+      2000,
+      "both cross-wf coords succeeded",
+    );
+
+    perWfInFlight.clear();
+    perWfMaxInFlight.clear();
+    inFlight = 0;
+    maxInFlight = 0;
+
+    const addAPromise = h.module.service.addNode({
+      workflowId: wfA.workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "A" },
+      parents: [wfA.initialCoordNodeId],
+    });
+    const addBPromise = h.module.service.addNode({
+      workflowId: wfB.workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "B" },
+      parents: [wfB.initialCoordNodeId],
+    });
+
+    await waitUntil(() => inFlight >= 2, 2000, "both cross-wf workers in flight against gate");
+
+    expect(maxInFlight).toBeGreaterThanOrEqual(2);
+    expect(perWfMaxInFlight.get(wfA.workflowId)).toBe(1);
+    expect(perWfMaxInFlight.get(wfB.workflowId)).toBe(1);
+
+    releaseGate?.();
+
+    const wA = await addAPromise;
+    const wB = await addBPromise;
+
+    await waitUntil(
+      async () =>
+        (await h.module.service.getNode(wA.nodeId)).status === "succeeded" &&
+        (await h.module.service.getNode(wB.nodeId)).status === "succeeded",
+      2000,
+      "both cross-wf workers succeeded after gate release",
+    );
   });
 
   it("cross-workflow parallelism: two workflows advance independently", async () => {

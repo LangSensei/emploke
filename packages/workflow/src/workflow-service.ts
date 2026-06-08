@@ -1668,7 +1668,7 @@ export class WorkflowService {
         // back into the runner).
         void this.markNodeTerminal(payload.workflowId, payload.nodeId, result).catch((err) => {
           this.logger.error(
-            { nodeId: payload.nodeId, err },
+            { workflowId: payload.workflowId, nodeId: payload.nodeId, err },
             "dispatchAtomic: default onTerminal markNodeTerminal threw",
           );
         });
