@@ -62,6 +62,7 @@ import { registerCatalogCommands } from "./registrars/catalog.js";
 import { registerScheduleCommands } from "./registrars/schedule.js";
 import { registerSessionCommands } from "./registrars/session.js";
 import { registerTaskCommands } from "./registrars/task.js";
+import { registerWorkflowCommands } from "./registrars/workflow.js";
 
 /** Exit code for usage / parse errors (POSIX EX_USAGE convention). */
 const EX_USAGE = 2;
@@ -306,6 +307,7 @@ function buildProgram(slot: Slot, argv: string[]): Command {
   registerSessionCommands(program, slot);
   registerScheduleCommands(program, slot);
   registerTaskCommands(program, slot);
+  registerWorkflowCommands(program, slot);
   registerCatalogCommands(program, slot);
 
   return program;
