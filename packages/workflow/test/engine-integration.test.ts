@@ -439,7 +439,7 @@ describe("WorkflowEngine integration", () => {
     // allowed to run concurrently. Pin both workflows' workers
     // in-flight against a manual gate and assert the global counter
     // reaches >= 2 while each per-workflow counter stays at 1.
-    let releaseGate: (() => void) | null = null;
+    let releaseGate!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve;
     });
@@ -490,7 +490,7 @@ describe("WorkflowEngine integration", () => {
     expect(perWfMaxInFlight.get(wfA.workflowId)).toBe(1);
     expect(perWfMaxInFlight.get(wfB.workflowId)).toBe(1);
 
-    releaseGate?.();
+    releaseGate();
 
     const wA = await addAPromise;
     const wB = await addBPromise;
