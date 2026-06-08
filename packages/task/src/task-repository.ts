@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, notInArray, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, notInArray, type SQL, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { CorruptedTaskError, InvalidTaskIdError } from "./errors.js";
@@ -210,6 +210,57 @@ export class TaskRepository {
       }
     }
     return out;
+  }
+
+  /**
+   * Find the most recent task — terminal or not — for a workflow
+   * node. Used by the wire-shape projector to enrich
+   * `WorkflowNodeWire.taskId` so the dashboard can navigate from a
+   * node click to its dispatched task (Mode B drill-down).
+   *
+   * Differs from {@link listInFlightForWorkflowNode} on two axes:
+   *
+   *   1. No `notInArray(tasks.status, TERMINAL_TASK_STATUSES)` filter
+   *      — a succeeded / failed / cancelled node still wants to
+   *      navigate to its task.
+   *   2. `ORDER BY createdAt DESC LIMIT 1` — if a worker was
+   *      re-dispatched after a cancel (unlikely today, but possible
+   *      when an operator manually retries a failed node), surface
+   *      the latest task.
+   *
+   * Returns `null` when no task has been dispatched for the node
+   * (only possible in the tight window between node insert and
+   * worker dispatch; acceptable for the dashboard).
+   *
+   * `workflowNodeId` is the canonical metadata key per
+   * `packages/workflow/src/types.ts:222`. Same `json_extract`
+   * predicate as the in-flight variants — no functional index yet
+   * (workflow worker volume is low; revisit if dashboards start to
+   * lag on the `/dag` route).
+   */
+  async findTaskByWorkflowNode(nodeId: string): Promise<TaskEntity | null> {
+    const row = this.db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.origin, "workflow"),
+          sql`json_extract(${tasks.metadata}, '$.workflowNodeId') = ${nodeId}`,
+        ),
+      )
+      .orderBy(desc(tasks.createdAt))
+      .limit(1)
+      .get();
+    if (row === undefined) return null;
+    try {
+      return rowToTask(row);
+    } catch (err) {
+      this.logger.warn(
+        { taskId: row.id ?? null, err },
+        "tasks: skipping corrupted task row in findTaskByWorkflowNode",
+      );
+      return null;
+    }
   }
 
   /**

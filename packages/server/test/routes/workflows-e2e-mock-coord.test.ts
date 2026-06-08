@@ -112,7 +112,14 @@ async function makeHarness(): Promise<Harness> {
     logger: silentLogger,
     trustedCallerForTesting: true,
   });
-  const app = workflowsRoutes(() => module.service);
+  const app = workflowsRoutes(
+    () => module.service,
+    () =>
+      ({
+        findTaskByWorkflowNode: async () => null,
+      }) as unknown as import("@emploke/task").TaskService,
+    () => workspaceDir,
+  );
   return {
     module,
     app,

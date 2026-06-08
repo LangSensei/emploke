@@ -149,6 +149,18 @@ export interface WorkflowNodeWire {
   readonly workflowId: string;
   readonly phase: number;
   readonly status: WorkflowNodeStatusWire;
+  /**
+   * Dispatched task id for this node. Present iff this node has a
+   * dispatched task — both worker AND coordinator nodes get a
+   * `taskId` because the substrate dispatches coord agents as tasks
+   * too (see `packages/api/src/wiring/workflow-coord-task-runner.ts`).
+   * Absent on a node that has been inserted but not yet dispatched
+   * (a tight window in normal operation). Server-enriched at
+   * projection time via the `task.metadata.workflowNodeId === node.id`
+   * reverse-lookup; see `projectWorkflowNodeWithTaskId` in
+   * `packages/server/src/routes/_workflow-projection.ts`.
+   */
+  readonly taskId?: string;
   readonly spec: WorkflowNodeWireSpec;
   readonly createdAt: string;
   readonly readyAt?: string;
@@ -337,4 +349,67 @@ export interface ReplaceNodeSpecBody {
  */
 export interface FinishWorkflowBody {
   readonly outcome: "succeeded" | "failed";
+}
+
+/**
+ * MIME bucket for a workflow artifact. Hint used by the dashboard's
+ * Artifacts tab to pick an icon (📄 text / 🖼️ image / 📦 archive /
+ * 📎 generic) without doing its own ext sniffing. Server-side
+ * detection lives in `packages/server/src/util/mime-bucket.ts`.
+ */
+export type WorkflowArtifactMimeBucket = "text" | "image" | "archive" | "generic";
+
+/**
+ * Wire projection of a single workflow artifact. Discriminated by
+ * `kind`:
+ *
+ *   - `workflow-summary` — file under `<workflowDir>/artifact/`,
+ *     curated by the coordinator. `path` is relative to that root.
+ *     Coordinator may rewrite at any time (the static-bytes route
+ *     sends `Cache-Control: no-store` for this kind).
+ *   - `node` — file under `<tasks-root>/<taskId>/artifact/`, owned
+ *     by a single worker / coord node. Write-once after the task
+ *     terminates (the static-bytes route sends `Cache-Control:
+ *     max-age=300` for this kind).
+ *
+ * `mimeBucket` is the server's presentation hint — see
+ * {@link WorkflowArtifactMimeBucket}.
+ */
+export type WorkflowArtifactWire =
+  | {
+      readonly kind: "workflow-summary";
+      /** Relative path under `<workflowDir>/artifact/`. */
+      readonly path: string;
+      /** Size in bytes. */
+      readonly size: number;
+      /** RFC3339 mtime. */
+      readonly modifiedAt: string;
+      /** Detected MIME bucket: "text" | "image" | "archive" | "generic". */
+      readonly mimeBucket: WorkflowArtifactMimeBucket;
+    }
+  | {
+      readonly kind: "node";
+      /** The owning node id. */
+      readonly nodeId: string;
+      /** The owning node's task id (from substrate enrichment). */
+      readonly taskId: string;
+      /** Relative path under `<tasks-root>/<taskId>/artifact/`. */
+      readonly path: string;
+      readonly size: number;
+      readonly modifiedAt: string;
+      readonly mimeBucket: WorkflowArtifactMimeBucket;
+    };
+
+/**
+ * Wire response shape for `GET /workspaces/:id/workflows/:wfid/artifacts`.
+ *
+ * Artifacts are listed in two namespaces: `workflow-summary`
+ * artifacts live under `<workflowDir>/artifact/` (curated by the
+ * coordinator); `node` artifacts live under each worker / coord
+ * task's `artifact/` dir. The list route aggregates both,
+ * `workflow-summary` first then `node` groups sorted by `nodeId` for
+ * stability.
+ */
+export interface WorkflowArtifactsResponse {
+  readonly artifacts: readonly WorkflowArtifactWire[];
 }

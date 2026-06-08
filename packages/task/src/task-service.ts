@@ -36,6 +36,7 @@ import {
   recoverOrphaned,
 } from "./task-service/mutations.js";
 import {
+  findTaskByWorkflowNode,
   getTask,
   hasInFlightForSchedule,
   hasInFlightForWorkflowNode,
@@ -185,6 +186,18 @@ export class TaskService {
    */
   async listInFlightForWorkflowNode(nodeId: string): Promise<TaskEntity[]> {
     return listInFlightForWorkflowNode(this.ctx, nodeId);
+  }
+
+  /**
+   * Find the most recent task (terminal or not) dispatched for a
+   * workflow node. Powers the wire-shape projector's
+   * `WorkflowNodeWire.taskId` enrichment so the dashboard can
+   * navigate from a node click to its dispatched task. Returns
+   * `null` when no task exists for the node (the worker has not
+   * dispatched yet).
+   */
+  async findTaskByWorkflowNode(nodeId: string): Promise<TaskEntity | null> {
+    return findTaskByWorkflowNode(this.ctx, nodeId);
   }
 
   async deleteForSchedule(scheduleId: string): Promise<{ deletedCount: number }> {
