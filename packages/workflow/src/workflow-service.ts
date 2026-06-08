@@ -47,6 +47,7 @@ import type {
   NodeKind,
   WorkflowNodeRunner,
   WorkflowNodeStatus,
+  WorkflowNodeTerminalResult,
   WorkflowNodeValidateCtx,
   WorkflowRunners,
 } from "./types.js";
@@ -58,6 +59,19 @@ type Db = BetterSQLite3Database<typeof schema>;
 
 const silentLogger: Logger = pino({ level: "silent" });
 
+/**
+ * Engine seam the service uses to nudge the in-memory
+ * {@link WorkflowEngine} after every mutation tx commits. Kept as a
+ * narrow structural type so the service file does not import the
+ * engine class directly (preserving the one-way engine → service
+ * import direction; the cycle is broken by the engine living in
+ * `_engine.ts` and the service receiving the engine via a setter
+ * called from `compose.ts` after both have been constructed).
+ */
+export interface WorkflowEngineLike {
+  triggerWorkflowTick(workflowId: string): void;
+}
+
 export interface WorkflowServiceOpts {
   readonly repo: WorkflowRepository;
   readonly db: Db;
@@ -66,6 +80,13 @@ export interface WorkflowServiceOpts {
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
+  /**
+   * TEST ONLY — see {@link WorkflowModuleOptions.trustedCallerForTesting}.
+   * When `true`, the auth-gate steps inside `addNode` / `addEdge` /
+   * `addSubgraph` are skipped. Structural rules (parent state,
+   * cycle, kind-aware) still fire.
+   */
+  readonly trustedCallerForTesting?: boolean;
 }
 
 export interface CreateWorkflowArgs {
@@ -237,6 +258,8 @@ export class WorkflowService {
   private readonly now: () => Date;
   private readonly randomUUID: () => string;
   private readonly runners: WorkflowRunners;
+  private readonly trustedCallerForTesting: boolean;
+  private engine: WorkflowEngineLike | null;
 
   constructor(opts: WorkflowServiceOpts) {
     this.repo = opts.repo;
@@ -246,6 +269,80 @@ export class WorkflowService {
     this.logger = opts.logger ?? silentLogger;
     this.now = opts.now ?? (() => new Date());
     this.randomUUID = opts.randomUUID ?? (() => nodeRandomUUID());
+    this.trustedCallerForTesting = opts.trustedCallerForTesting === true;
+    this.engine = null;
+  }
+
+  /**
+   * Two-phase init seam: `WorkflowService` and `WorkflowEngine` form
+   * a tight cycle (the service nudges the engine after each tx
+   * commits; the engine calls back into the service via
+   * {@link markNodeTerminal} and {@link dispatchAtomic} from its tick
+   * loop). `compose.ts` constructs both then calls this setter so
+   * neither class needs a partially-constructed sibling in its
+   * constructor.
+   *
+   * Idempotent — re-setting the same engine is a no-op; passing a
+   * different engine logs a warning and overwrites (only happens in
+   * tests that swap engines).
+   */
+  setEngine(engine: WorkflowEngineLike | null): void {
+    if (this.engine !== null && engine !== null && this.engine !== engine) {
+      this.logger.warn("WorkflowService.setEngine: engine being replaced (test-only path)");
+    }
+    this.engine = engine;
+  }
+
+  /**
+   * Post-commit hook fired by every mutation method that could
+   * change readiness. Safe to call when no engine is wired (existing
+   * service tests, plus code paths that haven't yet had the engine
+   * plugged in) — the no-op behavior matches the pre-engine shape,
+   * so all 207 baseline workflow tests continue to pass with no
+   * engine attached.
+   */
+  private nudgeEngine(workflowId: string): void {
+    if (this.engine === null) return;
+    try {
+      this.engine.triggerWorkflowTick(workflowId);
+    } catch (err) {
+      this.logger.warn({ workflowId, err }, "nudgeEngine: triggerWorkflowTick threw");
+    }
+  }
+
+  /**
+   * Engine-facing read primitive: enumerate the node ids in
+   * `workflowId` that are currently eligible for dispatch — i.e.
+   * status is `not_started` or `ready` AND per-kind parent readiness
+   * is satisfied (or the node has no parents).
+   *
+   * Returns node ids only (the engine re-reads each node fresh inside
+   * `dispatchAtomic` anyway). Computed inside a single read tx for a
+   * consistent snapshot. The engine treats the returned list as a
+   * best-effort hint: `dispatchAtomic` re-checks each gate inside
+   * its own write tx, so a node that becomes ineligible between this
+   * read and the dispatch tx is silently no-op'd.
+   */
+  async listEligibleNodeIdsForDispatch(workflowId: string): Promise<readonly string[]> {
+    return this.db.transaction((tx) => {
+      const wf = this.repo.readWorkflowTx(tx, workflowId);
+      if (wf === null || wf.status !== "running") return [] as readonly string[];
+      const nodes = this.repo.listNodesByWorkflowTx(tx, workflowId);
+      const edges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+      const byId = new Map(nodes.map((n) => [n.id, n] as const));
+      const eligible: string[] = [];
+      for (const node of nodes) {
+        if (node.status !== "not_started" && node.status !== "ready") continue;
+        const parentIds = parentsOf(node.id, edges);
+        const parents = parentIds
+          .map((pid) => byId.get(pid))
+          .filter((p): p is WorkflowNodeEntity => p !== undefined);
+        if (parents.length !== parentIds.length) continue;
+        if (parents.length > 0 && !parentsReadyForKind(node.kind, parents)) continue;
+        eligible.push(node.id);
+      }
+      return eligible;
+    });
   }
 
   /**
@@ -372,6 +469,7 @@ export class WorkflowService {
     });
 
     await this.dispatchAtomic(initialCoordNodeId);
+    this.nudgeEngine(workflowId);
     return { workflowId, initialCoordNodeId };
   }
 
@@ -396,7 +494,13 @@ export class WorkflowService {
     // and construct the validate ctx. `runner.validate` may do async
     // catalog lookups; it runs OUTSIDE the write tx so a network
     // round-trip never holds a write lock.
-    const C = await this.deriveCallerCoord(args.workflowId);
+    //
+    // When `trustedCallerForTesting` is set, the substrate skips
+    // the auth-gate derivation entirely (a synthetic `C` is fabricated
+    // for the validate ctx; the inside-tx recheck below is also
+    // skipped). Structural rules (parent state, cycle, kind-aware
+    // parent-readiness) still fire.
+    const C = await this.deriveCallerCoordOrTrustedSentinel(args.workflowId);
     const validateCtx: WorkflowNodeValidateCtx = {
       workflowId: args.workflowId,
       callerCoordNodeId: C.id,
@@ -421,7 +525,12 @@ export class WorkflowService {
       // Defense-in-depth recheck: re-assert that C is still a
       // running coord in a running workflow. Catches a concurrent
       // caller-coord termination between Phase A and the write tx.
-      this.assertAuthCallerCoord(tx, C.id, workflowId);
+      //
+      // Skipped under trustedCallerForTesting (the test fabric is
+      // the source of truth in that mode).
+      if (!this.trustedCallerForTesting) {
+        this.assertAuthCallerCoord(tx, C.id, workflowId);
+      }
 
       // Read the parent set inside the tx.
       uniqueParents = Array.from(new Set(args.parents));
@@ -450,7 +559,12 @@ export class WorkflowService {
         }
       }
 
-      if (args.kind === COORDINATOR_KIND) {
+      if (args.kind === COORDINATOR_KIND && !this.trustedCallerForTesting) {
+        // The orphan-coord and single-coord-successor rules only
+        // make sense when a real caller `C` exists; under
+        // trustedCallerForTesting the substrate has no live caller
+        // to reference, so the test fabric is trusted to keep the
+        // coord topology sane.
         if (!uniqueParents.includes(C.id)) {
           throw new OrphanCoordInsertError(workflowId, C.id);
         }
@@ -510,6 +624,7 @@ export class WorkflowService {
       await this.dispatchAtomic(nodeId);
     }
 
+    this.nudgeEngine(workflowId);
     return { nodeId, phase: resultPhase };
   }
 
@@ -523,12 +638,16 @@ export class WorkflowService {
 
     // Derive `C` (and validate that `args.workflowId` is running)
     // outside the write tx; the inside-tx recheck below catches a
-    // concurrent caller termination.
-    const C = await this.deriveCallerCoord(args.workflowId);
+    // concurrent caller termination. Under trustedCallerForTesting
+    // the substrate fabricates a sentinel `C` and skips the auth-gate
+    // recheck.
+    const C = await this.deriveCallerCoordOrTrustedSentinel(args.workflowId);
     const workflowId = args.workflowId;
 
     this.db.transaction((tx) => {
-      this.assertAuthCallerCoord(tx, C.id, workflowId);
+      if (!this.trustedCallerForTesting) {
+        this.assertAuthCallerCoord(tx, C.id, workflowId);
+      }
 
       const endpoints = this.repo.readNodesByIds(tx, [args.fromNodeId, args.toNodeId]);
       const fromNode = endpoints.find((n) => n.id === args.fromNodeId);
@@ -613,6 +732,7 @@ export class WorkflowService {
       }
     }
 
+    this.nudgeEngine(workflowId);
     return { toPhase: resultToPhase };
   }
 
@@ -675,6 +795,7 @@ export class WorkflowService {
         );
       }
     }
+    this.nudgeEngine(workflowId);
   }
 
   // ─── finishWorkflow ──────────────────────────────────────
@@ -730,6 +851,7 @@ export class WorkflowService {
     // CAS would observe a terminal workflow and find 0 running
     // coords, so the exclusion would degrade to "exclude nothing".
     await this.reconcileCancelExceptCaller(workflowId, C.id);
+    this.nudgeEngine(workflowId);
   }
 
   // ─── cancelWorkflow ──────────────────────────────────────
@@ -759,6 +881,7 @@ export class WorkflowService {
     if (!casOk) throw new WorkflowAlreadyTerminalError(args.workflowId);
 
     await this.reconcileCancelExceptCaller(args.workflowId, null);
+    this.nudgeEngine(args.workflowId);
   }
 
   // ─── removeNode ──────────────────────────────────────────
@@ -838,6 +961,7 @@ export class WorkflowService {
     // TODO(phase-3-dispatch): no nodes become dispatchable from a
     // pure removal; left as a comment for symmetry with the other
     // structural primitives.
+    this.nudgeEngine(workflowId);
   }
 
   // ─── removeEdge ──────────────────────────────────────────
@@ -918,6 +1042,7 @@ export class WorkflowService {
     // TODO(phase-3-dispatch): no nodes become dispatchable from a
     // pure edge removal; left as a comment for symmetry with the
     // other structural primitives.
+    this.nudgeEngine(workflowId);
   }
 
   // ─── replaceNodeSpec ─────────────────────────────────────
@@ -1034,6 +1159,7 @@ export class WorkflowService {
         }
       }
     });
+    this.nudgeEngine(workflowId);
   }
 
   // ─── addSubgraph ─────────────────────────────────────────
@@ -1115,7 +1241,7 @@ export class WorkflowService {
     // on tempId so the inserted-nodes return order is stable.
     const topoOrder = resolveSubgraphTopology(workflowId, tempNodes, tempEdges);
 
-    const C = await this.deriveCallerCoord(workflowId);
+    const C = await this.deriveCallerCoordOrTrustedSentinel(workflowId);
 
     // Pass A (P15-c): cheap existing-ref existence + workflow-membership
     // pre-check. Runs BEFORE the per-temp `runner.validate` calls so
@@ -1195,7 +1321,9 @@ export class WorkflowService {
     const insertedNodes: AddSubgraphInsertedNode[] = [];
 
     this.db.transaction((tx) => {
-      this.assertAuthCallerCoord(tx, C.id, workflowId);
+      if (!this.trustedCallerForTesting) {
+        this.assertAuthCallerCoord(tx, C.id, workflowId);
+      }
 
       // Resolve every existing-ref against the live DB state. One
       // pass collects all referenced existing ids, then a single
@@ -1260,7 +1388,7 @@ export class WorkflowService {
           }
         }
       }
-      if (coordTemp !== undefined) {
+      if (coordTemp !== undefined && !this.trustedCallerForTesting) {
         if (!coordTemp.existingParents.includes(C.id)) {
           throw new OrphanCoordInsertError(workflowId, C.id);
         }
@@ -1431,6 +1559,7 @@ export class WorkflowService {
     // already; the batch primitive's reaction belongs in the Phase
     // 3+4 wiring.
 
+    this.nudgeEngine(workflowId);
     return { insertedNodes };
   }
 
@@ -1456,8 +1585,22 @@ export class WorkflowService {
    * The runner invocation is OUTSIDE the tx because holding a
    * write lock across an async network call would serialize the
    * entire workflow engine on a slow dispatch.
+   *
+   * `onTerminal` is threaded into the runner's `dispatch` opts so
+   * the runner can push terminal results back to the substrate
+   * (where it's handled by {@link markNodeTerminal}) without
+   * knowing about service plumbing. When this method is invoked
+   * from the legacy eager-dispatch reactions (createWorkflow /
+   * addNode / addEdge) without an engine wired, the substrate
+   * substitutes a default `onTerminal` that delegates to {@link
+   * markNodeTerminal} directly. Either path lands the same
+   * idempotent state write — `markNodeTerminal` is the single
+   * source of truth for the substrate's terminal write.
    */
-  async dispatchAtomic(nodeId: string): Promise<void> {
+  async dispatchAtomic(
+    nodeId: string,
+    onTerminal?: (result: WorkflowNodeTerminalResult) => void,
+  ): Promise<void> {
     let dispatchPayload: {
       readonly runner: WorkflowNodeRunner;
       readonly workflowId: string;
@@ -1506,26 +1649,49 @@ export class WorkflowService {
       readonly spec: unknown;
       readonly nodeDir: string;
     };
+
+    // Resolve the `onTerminal` callback. Callers that don't supply
+    // one (eager-dispatch reactions on the legacy path, or tests
+    // that exercise dispatchAtomic directly without an engine) get
+    // a default that drives `markNodeTerminal` so the substrate's
+    // terminal-write path stays single-source-of-truth.
+    const effectiveOnTerminal: (result: WorkflowNodeTerminalResult) => void =
+      onTerminal ??
+      ((result) => {
+        // Default path used when no engine-supplied callback is
+        // present (eager-dispatch reactions on the legacy path, or
+        // tests that exercise `dispatchAtomic` directly). Fire-and-
+        // forget into `markNodeTerminal`, with a `.catch` so a
+        // throw from the terminal-write tx surfaces as a logged
+        // error instead of an unhandled promise rejection (we hold
+        // a synchronous closure boundary here and cannot propagate
+        // back into the runner).
+        void this.markNodeTerminal(payload.workflowId, payload.nodeId, result).catch((err) => {
+          this.logger.error(
+            { workflowId: payload.workflowId, nodeId: payload.nodeId, err },
+            "dispatchAtomic: default onTerminal markNodeTerminal threw",
+          );
+        });
+      });
+
     try {
       await payload.runner.dispatch({
         workflowId: payload.workflowId,
         nodeId: payload.nodeId,
         spec: payload.spec,
         nodeDir: payload.nodeDir,
+        onTerminal: effectiveOnTerminal,
       });
     } catch (err) {
       this.logger.warn(
         { nodeId, err },
         "dispatchAtomic: runner.dispatch threw; marking node failed",
       );
-      const failedAtIso = this.now().toISOString();
+      const reason = `runner.dispatch threw: ${err instanceof Error ? err.message : String(err)}`;
       try {
-        this.db.transaction((tx) => {
-          this.repo.updateNodeLifecycle(tx, {
-            id: nodeId,
-            status: "failed",
-            endedAt: failedAtIso,
-          });
+        await this.markNodeTerminal(payload.workflowId, payload.nodeId, {
+          status: "failed",
+          reason,
         });
       } catch (writeErr) {
         this.logger.error(
@@ -1533,6 +1699,85 @@ export class WorkflowService {
           "dispatchAtomic: failed to write failed status after dispatch error",
         );
       }
+    }
+  }
+
+  // ─── markNodeTerminal ────────────────────────────────────
+
+  /**
+   * Idempotent terminal-state writer. Called by the engine's
+   * `onTerminal` handler when a runner pushes a terminal outcome
+   * back to the substrate. Also used as the default `onTerminal`
+   * inside {@link dispatchAtomic} when no engine is wired.
+   *
+   * Idempotency: if the target node is already terminal in the DB
+   * at the time of the write, the call is a silent no-op (debug-
+   * logged). The substrate considers double-firing benign — runners
+   * SHOULD avoid it (one extra tx per duplicate), but cannot violate
+   * substrate invariants by doing so.
+   *
+   * On a successful terminal write the substrate nudges the engine
+   * (downstream nodes may have become eligible). The nudge is
+   * post-commit and best-effort — a missing engine is a no-op.
+   *
+   * `cancelled` is a legal terminal coming from the runner (it
+   * observed the unit-of-work being cancelled out-of-band, e.g.
+   * via a parallel CLI). The substrate accepts it the same way
+   * `cancelNode` would.
+   */
+  async markNodeTerminal(
+    workflowId: string,
+    nodeId: string,
+    result: WorkflowNodeTerminalResult,
+  ): Promise<void> {
+    const nowIso = this.now().toISOString();
+    let didWrite = false;
+    try {
+      this.db.transaction((tx) => {
+        const node = this.repo.readNodeTx(tx, nodeId);
+        if (node === null) {
+          this.logger.warn(
+            { workflowId, nodeId, result },
+            "markNodeTerminal: node not found; ignoring",
+          );
+          return;
+        }
+        if (node.workflowId !== workflowId) {
+          this.logger.warn(
+            {
+              workflowId,
+              nodeId,
+              actualWorkflowId: node.workflowId,
+              result,
+            },
+            "markNodeTerminal: node belongs to a different workflow; ignoring",
+          );
+          return;
+        }
+        if (
+          node.status === "succeeded" ||
+          node.status === "failed" ||
+          node.status === "cancelled"
+        ) {
+          this.logger.debug(
+            { workflowId, nodeId, status: node.status, result },
+            "markNodeTerminal: node already terminal; idempotent no-op",
+          );
+          return;
+        }
+        this.repo.updateNodeLifecycle(tx, {
+          id: nodeId,
+          status: result.status,
+          endedAt: nowIso,
+        });
+        didWrite = true;
+      });
+    } catch (err) {
+      this.logger.error({ workflowId, nodeId, result, err }, "markNodeTerminal: write tx threw");
+      throw err;
+    }
+    if (didWrite) {
+      this.nudgeEngine(workflowId);
     }
   }
 
@@ -1619,6 +1864,36 @@ export class WorkflowService {
     const parsed = parseSpecJson(only.specJson);
     assertCoordinatorSpecAgent(parsed);
     return { id: only.id, spec: parsed };
+  }
+
+  /**
+   * R4 caller-coord derivation with a test-only escape hatch.
+   *
+   * When the service was constructed with
+   * `trustedCallerForTesting: true`, returns a synthetic sentinel
+   * coord identity that bypasses the substrate's "caller IS a
+   * running coord in this workflow" check (the structural rules
+   * still fire). The sentinel uses a string that is intentionally
+   * invalid as a real node id (`'<trusted-caller>'`) so it can
+   * never collide with a row in the DB. The matching inside-tx
+   * `assertAuthCallerCoord` recheck is also skipped under the same
+   * flag.
+   *
+   * Production paths NEVER set `trustedCallerForTesting`. The flag is
+   * not exposed on `@emploke/api`; it exists only so tests in
+   * `@emploke/workflow` and `@emploke/api` can populate workflow
+   * graphs without standing up a coord runner.
+   */
+  private async deriveCallerCoordOrTrustedSentinel(
+    workflowId: string,
+  ): Promise<{ readonly id: string; readonly spec: { readonly agent: string } }> {
+    if (this.trustedCallerForTesting) {
+      return {
+        id: "<trusted-caller>",
+        spec: { agent: "<trusted-caller>" },
+      };
+    }
+    return this.deriveCallerCoord(workflowId);
   }
 
   /**

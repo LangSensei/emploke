@@ -67,6 +67,9 @@ importers:
       '@emploke/terminal':
         specifier: workspace:*
         version: link:../terminal
+      '@emploke/workflow':
+        specifier: workspace:*
+        version: link:../workflow
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace

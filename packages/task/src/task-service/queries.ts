@@ -54,6 +54,35 @@ export async function hasInFlightForSchedule(
   return ctx.repository.hasInFlightForSchedule(scheduleId);
 }
 
+/**
+ * True if any non-terminal task with `origin='workflow'` and
+ * `metadata.workflowNodeId === nodeId` exists. Used by the workflow
+ * worker runner's `hasInFlightForNode` implementation (see
+ * `packages/api/src/wiring/workflow-task-runner.ts`). Narrow
+ * additive surface mirroring {@link hasInFlightForSchedule} —
+ * deliberately NOT a generic `metadata` filter on `ListTaskOpts` so
+ * the broadening stays contained to the one call site that needs
+ * it.
+ */
+export async function hasInFlightForWorkflowNode(
+  ctx: TaskServiceCtx,
+  nodeId: string,
+): Promise<boolean> {
+  return ctx.repository.hasInFlightForWorkflowNode(nodeId);
+}
+
+/**
+ * List non-terminal tasks for a workflow node. Used by the worker
+ * runner's `cancel(nodeId)` reverse-lookup. Returns full entities
+ * because the caller needs `task.id` to call `tasks.cancel(...)`.
+ */
+export async function listInFlightForWorkflowNode(
+  ctx: TaskServiceCtx,
+  nodeId: string,
+): Promise<TaskEntity[]> {
+  return ctx.repository.listInFlightForWorkflowNode(nodeId);
+}
+
 export async function getTask(ctx: TaskServiceCtx, id: string): Promise<TaskEntity | null> {
   assertValidTaskId(id);
   const task = await ctx.repository.read(id);

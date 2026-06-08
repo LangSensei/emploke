@@ -29,4 +29,12 @@ export {
   composeApplication,
 } from "./application.js";
 export { makeTaskKindHandler, TaskScheduleTargetError } from "./wiring/schedule-task-handler.js";
+export {
+  DEFAULT_WORKER_MAX_POLL_ERRORS,
+  DEFAULT_WORKER_POLL_INTERVAL_MS,
+  type MakeWorkerNodeRunnerDeps,
+  makeWorkerNodeRunner,
+  type WorkerNodeSpec,
+  WorkflowWorkerSpecError,
+} from "./wiring/workflow-task-runner.js";
 export { type WorkspaceContext, WorkspaceHasLiveTasksError } from "./workspace-context.js";

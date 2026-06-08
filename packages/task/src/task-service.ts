@@ -38,6 +38,8 @@ import {
 import {
   getTask,
   hasInFlightForSchedule,
+  hasInFlightForWorkflowNode,
+  listInFlightForWorkflowNode,
   listTasks,
   liveCount,
   resolveArtifactPath,
@@ -157,6 +159,32 @@ export class TaskService {
 
   async hasInFlightForSchedule(scheduleId: string): Promise<boolean> {
     return hasInFlightForSchedule(this.ctx, scheduleId);
+  }
+
+  /**
+   * True if any non-terminal task originated from the workflow with
+   * `metadata.workflowNodeId === nodeId`. Narrow surface that mirrors
+   * {@link TaskService.hasInFlightForSchedule}; used by
+   * `@emploke/api/src/wiring/workflow-task-runner.ts` to implement
+   * `WorkflowNodeRunner.hasInFlightForNode` for worker nodes without
+   * broadening {@link ListTaskOpts} with a generic metadata filter.
+   *
+   * The metadata key `workflowNodeId` matches the canonical reverse-
+   * lookup contract in `packages/workflow/src/types.ts:222`.
+   */
+  async hasInFlightForWorkflowNode(nodeId: string): Promise<boolean> {
+    return hasInFlightForWorkflowNode(this.ctx, nodeId);
+  }
+
+  /**
+   * List non-terminal tasks for a given workflow node. Companion to
+   * {@link TaskService.hasInFlightForWorkflowNode}; used by the
+   * worker runner's `cancel(nodeId)` reverse-lookup so it can call
+   * `tasks.cancel(...)` on each in-flight task. Best-effort, may be
+   * empty.
+   */
+  async listInFlightForWorkflowNode(nodeId: string): Promise<TaskEntity[]> {
+    return listInFlightForWorkflowNode(this.ctx, nodeId);
   }
 
   async deleteForSchedule(scheduleId: string): Promise<{ deletedCount: number }> {

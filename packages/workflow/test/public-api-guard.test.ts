@@ -77,6 +77,7 @@ import {
   type WorkflowNodeSpecEnvelope,
   WorkflowNodeSpecError,
   type WorkflowNodeStatus,
+  type WorkflowNodeTerminalResult,
   type WorkflowNodeValidateCtx,
   WorkflowNotFoundError,
   WorkflowRemoveEdgeOrphansChildError,
@@ -165,6 +166,37 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
   });
 
+  it("M1 (#325 D1): exposes WorkflowNodeTerminalResult discriminated union", () => {
+    // The terminal-result type is the runner's push-back shape. Three
+    // arms (succeeded / failed / cancelled). Failed requires a string
+    // reason; the others do not. `output` is opaque on succeeded /
+    // failed; cancelled has no output. Locking the exact shape here
+    // means a downstream pkg's exhaustive pattern-match stays
+    // exhaustive even after refactors.
+    expectTypeOf<WorkflowNodeTerminalResult>().toEqualTypeOf<
+      | { readonly status: "succeeded"; readonly output?: unknown }
+      | { readonly status: "failed"; readonly reason: string; readonly output?: unknown }
+      | { readonly status: "cancelled" }
+    >();
+  });
+
+  it("M1 (#325 D1): dispatch opts include the additive onTerminal callback", () => {
+    // The ONLY interface change at this layer is the new
+    // `onTerminal` field inside `dispatch`'s opts parameter. Lock
+    // the parameter shape here so a future refactor renaming or
+    // removing the callback is a compile-time failure rather than
+    // a silent breakage of the engine ↔ runner contract.
+    type DispatchParam = Parameters<WorkflowNodeRunner["dispatch"]>[0];
+    expectTypeOf<DispatchParam>().toHaveProperty("workflowId");
+    expectTypeOf<DispatchParam>().toHaveProperty("nodeId");
+    expectTypeOf<DispatchParam>().toHaveProperty("spec");
+    expectTypeOf<DispatchParam>().toHaveProperty("nodeDir");
+    expectTypeOf<DispatchParam>().toHaveProperty("onTerminal");
+    expectTypeOf<DispatchParam["onTerminal"]>().toEqualTypeOf<
+      (result: WorkflowNodeTerminalResult) => void
+    >();
+  });
+
   it("requires a runner per NodeKind via WorkflowRunners", () => {
     // Both fields non-optional: `composeWorkflowModule({ runners: {
     // coordinator } })` is a TypeScript compile error, not a runtime
@@ -226,6 +258,33 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowModuleOptions>().toHaveProperty("runners");
   });
 
+  it("M1 (#325 D5): WorkflowModule exposes the engine alongside service + close", () => {
+    // The engine field is the structural seam composition callers
+    // use to drive `start()` (currently a no-op) and `stop()`
+    // (drains in-flight per-workflow tick chains). The type is left
+    // opaque-ish (no static reference to the class) — downstream
+    // consumers should not import the engine directly; they
+    // interact through the module.
+    expectTypeOf<WorkflowModule>().toHaveProperty("engine");
+  });
+
+  it("M1 (#325 D7): WorkflowModuleOptions exposes test-only trustedCallerForTesting", () => {
+    // This OPTIONAL field bypasses the caller-coord auth gate on
+    // addNode/addEdge/addSubgraph for tests that don't have a coord
+    // runner. The field is documented as TESTING ONLY; the api-pkg
+    // public-API guard asserts the field is NOT plumbed through
+    // `@emploke/api`'s surface so production paths cannot
+    // accidentally enable it.
+    expectTypeOf<WorkflowModuleOptions>().toHaveProperty("trustedCallerForTesting");
+    // Compile-time check that the field is shaped as a boolean,
+    // not (say) a config object. We don't lock optionality here
+    // because `exactOptionalPropertyTypes` makes the indexed-access
+    // assertion brittle; the `?` on the source declaration is
+    // covered by the `toHaveProperty` above.
+    type FlagType = NonNullable<WorkflowModuleOptions["trustedCallerForTesting"]>;
+    expectTypeOf<FlagType>().toEqualTypeOf<boolean>();
+  });
+
   it("preserves the service class", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("getWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("getDag");
@@ -243,6 +302,9 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("removeEdge");
     expectTypeOf<WorkflowService>().toHaveProperty("replaceNodeSpec");
     expectTypeOf<WorkflowService>().toHaveProperty("addSubgraph");
+    // Engine-facing terminal writer + engine wire-up.
+    expectTypeOf<WorkflowService>().toHaveProperty("markNodeTerminal");
+    expectTypeOf<WorkflowService>().toHaveProperty("setEngine");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("workflow");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("nodes");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("edges");

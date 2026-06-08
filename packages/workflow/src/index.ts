@@ -68,6 +68,7 @@ export type {
   WorkflowNodeRunner,
   WorkflowNodeSpecEnvelope,
   WorkflowNodeStatus,
+  WorkflowNodeTerminalResult,
   WorkflowNodeValidateCtx,
   WorkflowRunners,
   WorkflowStatus,
