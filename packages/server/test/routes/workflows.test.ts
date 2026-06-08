@@ -55,6 +55,9 @@ function makeHeader(overrides: Partial<{ status: string; endedAt: string }> = {}
     createdAt: "2026-06-07T00:00:00.000Z",
     startedAt: "2026-06-07T00:00:00.000Z",
     endedAt: overrides.endedAt ?? null,
+    success: null,
+    failure: null,
+    cancellation: null,
   });
 }
 

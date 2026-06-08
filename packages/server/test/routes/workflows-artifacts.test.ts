@@ -9,8 +9,9 @@
  * fragile than just touching a few files).
  *
  * `findTaskByWorkflowNode` is stubbed at the resolver boundary so we
- * don't have to spin up the task-service db; the listing code only
- * needs `{ id }`.
+ * don't have to spin up the task-service db; the byte handler needs
+ * `{ id, status }` so it can switch `Cache-Control` based on whether
+ * the owning task is terminal.
  *
  * Coverage:
  *  1. list returns workflow-summary entries with `kind: "workflow-summary"`
@@ -18,9 +19,10 @@
  *  3. list returns `{ artifacts: [] }` when both namespaces are empty
  *  4. list 404s when getDag rejects with WorkflowNotFoundError
  *  5. GET summary/<name> streams bytes with `Cache-Control: no-store`
- *  6. GET nodes/<nid>/<name> streams bytes with `Cache-Control: max-age=300`
- *  7. GET nodes/<nid>/<name> 404s when no task is dispatched
- *  8. GET …/..%2F… (traversal) rejects with 400
+ *  6. GET nodes/<nid>/<name> with terminal task → `Cache-Control: max-age=300`
+ *  7. GET nodes/<nid>/<name> with running task  → `Cache-Control: no-store`
+ *  8. GET nodes/<nid>/<name> 404s when no task is dispatched
+ *  9. GET …/..%2F… (traversal) rejects with 400
  */
 
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -53,6 +55,9 @@ function makeHeader(): WorkflowEntity {
     createdAt: "2026-06-07T00:00:00.000Z",
     startedAt: "2026-06-07T00:00:00.000Z",
     endedAt: null,
+    success: null,
+    failure: null,
+    cancellation: null,
   });
 }
 
@@ -105,15 +110,29 @@ function stubService(overrides: Partial<Record<keyof WorkflowService, unknown>>)
 }
 
 interface TaskStub {
-  findTaskByWorkflowNode: (nodeId: string) => Promise<{ readonly id: string } | null>;
+  findTaskByWorkflowNode: (nodeId: string) => Promise<{
+    readonly id: string;
+    readonly status: "running" | "succeeded" | "failed" | "cancelled";
+  } | null>;
 }
 
-function stubTasks(map: Record<string, string | null>): TaskStub {
+type TaskStubValue =
+  | string
+  | { readonly id: string; readonly status: "running" | "succeeded" | "failed" | "cancelled" }
+  | null;
+
+function stubTasks(map: Record<string, TaskStubValue>): TaskStub {
   return {
     findTaskByWorkflowNode: async (nodeId: string) => {
-      const id = map[nodeId];
-      if (id === undefined || id === null) return null;
-      return { id };
+      const v = map[nodeId];
+      if (v === undefined || v === null) return null;
+      if (typeof v === "string") {
+        // Bare task-id form defaults to terminal status; the
+        // byte handler treats terminal tasks as immutable bytes
+        // and caches the response.
+        return { id: v, status: "succeeded" };
+      }
+      return v;
     },
   };
 }
@@ -223,20 +242,49 @@ describe("workflowsRoutes — artifacts bytes", () => {
     expect(text).toBe("# hello world");
   });
 
-  it("streams node bytes with Cache-Control: max-age=300", async () => {
+  it("streams node bytes with Cache-Control: max-age=300 when task is terminal", async () => {
     await writeFileAt(
       path.join(workspaceDir, "tasks", WORKER_TID, "artifact"),
       "out.txt",
       "result",
     );
     const svc = stubService({});
-    const tasks = stubTasks({ [WORKER_NID]: WORKER_TID });
+    const tasks = stubTasks({ [WORKER_NID]: { id: WORKER_TID, status: "succeeded" } });
     const encoded = encodeURIComponent(`nodes/${WORKER_NID}/out.txt`);
     const res = await mountRoutes(svc, tasks, workspaceDir).request(`/${WID}/artifacts/${encoded}`);
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("max-age=300");
     const text = await res.text();
     expect(text).toBe("result");
+  });
+
+  it("streams node bytes with Cache-Control: no-store while task is still running", async () => {
+    // A node artifact that the worker is still appending to (running
+    // task) must NOT be cached; otherwise the dashboard would serve
+    // stale mid-stream bytes on subsequent polls.
+    await writeFileAt(
+      path.join(workspaceDir, "tasks", WORKER_TID, "artifact"),
+      "out.txt",
+      "partial",
+    );
+    const svc = stubService({});
+    const tasks = stubTasks({ [WORKER_NID]: { id: WORKER_TID, status: "running" } });
+    const encoded = encodeURIComponent(`nodes/${WORKER_NID}/out.txt`);
+    const res = await mountRoutes(svc, tasks, workspaceDir).request(`/${WID}/artifacts/${encoded}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const text = await res.text();
+    expect(text).toBe("partial");
+  });
+
+  it("streams node bytes with Cache-Control: max-age=300 when task is failed (terminal)", async () => {
+    await writeFileAt(path.join(workspaceDir, "tasks", WORKER_TID, "artifact"), "out.txt", "boom");
+    const svc = stubService({});
+    const tasks = stubTasks({ [WORKER_NID]: { id: WORKER_TID, status: "failed" } });
+    const encoded = encodeURIComponent(`nodes/${WORKER_NID}/out.txt`);
+    const res = await mountRoutes(svc, tasks, workspaceDir).request(`/${WID}/artifacts/${encoded}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("max-age=300");
   });
 
   it("404s when no task is dispatched for the node", async () => {

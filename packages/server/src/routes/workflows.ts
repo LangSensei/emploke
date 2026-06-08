@@ -66,7 +66,10 @@
  * segment, so multi-segment paths (`summary/foo/bar.md`) MUST be
  * url-encoded with `%2F` for `/`. Two sentinels:
  *   - `summary/<rest>` — `<workflowDir>/artifact/<rest>` (no-store)
- *   - `nodes/<nodeId>/<rest>` — `<tasksRoot>/<taskId>/artifact/<rest>` (max-age=300)
+ *   - `nodes/<nodeId>/<rest>` — `<tasksRoot>/<taskId>/artifact/<rest>`
+ *     (`Cache-Control: max-age=300` once the owning task is terminal,
+ *     `no-store` while it is still running so the dashboard reloads
+ *     mid-stream files cleanly).
  * Any other prefix yields 400.
  */
 
@@ -682,7 +685,9 @@ export function workflowsRoutes(
   // `safeJoinNested` before serving bytes.
   //
   //   - `summary/<rest>` → `<workflowDir>/artifact/<rest>` (no-store)
-  //   - `nodes/<nodeId>/<rest>` → `<tasksRoot>/<taskId>/artifact/<rest>` (max-age=300)
+  //   - `nodes/<nodeId>/<rest>` → `<tasksRoot>/<taskId>/artifact/<rest>`
+  //     (`max-age=300` once owning task is terminal; `no-store` while
+  //     it is still running, since the worker may still be appending)
   //
   // Any other prefix yields 400.
   app.get("/:wfid/artifacts/:encodedPath", async (c) => {
@@ -741,7 +746,13 @@ export function workflowsRoutes(
       } catch {
         return c.json({ error: "artifact path escapes task root" }, 400);
       }
-      cacheControl = "max-age=300";
+      // Per-node artifact bytes are only write-once AFTER the owning
+      // task reaches a terminal status (the worker may still be
+      // appending to a file while it runs). Cache aggressively once
+      // terminal; force a re-fetch on every read while running.
+      const taskTerminal =
+        task.status === "succeeded" || task.status === "failed" || task.status === "cancelled";
+      cacheControl = taskTerminal ? "max-age=300" : "no-store";
     } else {
       return c.json({ error: "artifact path must start with summary/ or nodes/<nid>/" }, 400);
     }
