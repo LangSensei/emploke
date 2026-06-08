@@ -148,12 +148,12 @@ export class TaskRepository {
    * (see `packages/api/src/wiring/workflow-task-runner.ts`).
    *
    * Unlike {@link hasInFlightForSchedule} there is no functional
-   * index on `metadata.workflowNodeId` in M1 (the brief explicitly
-   * forbids new migrations); the planner falls back to filtering by
-   * `origin='workflow'` first (still index-eligible via the same
-   * row's `origin` column path) and applying the `json_extract`
-   * predicate on the matched rows only. Workflow worker volume is
-   * small in M1, so a functional index is a Phase 3+ concern.
+   * index on `metadata.workflowNodeId`; the planner falls back to
+   * filtering by `origin='workflow'` first (still index-eligible
+   * via the same row's `origin` column path) and applying the
+   * `json_extract` predicate on the matched rows only. Workflow
+   * worker volume is currently low enough that a functional index
+   * is not yet worth the migration cost.
    *
    * `workflowNodeId` is the canonical metadata key per
    * `packages/workflow/src/types.ts:222` (substrate-side denorm of

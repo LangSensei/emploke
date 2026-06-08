@@ -181,11 +181,11 @@ describe("@emploke/workflow public API guard", () => {
   });
 
   it("M1 (#325 D1): dispatch opts include the additive onTerminal callback", () => {
-    // The ONLY interface change in M1 is the new `onTerminal` field
-    // inside `dispatch`'s opts parameter. Lock the parameter shape
-    // here so a future refactor renaming or removing the callback is
-    // a compile-time failure rather than a silent breakage of the
-    // engine ↔ runner contract.
+    // The ONLY interface change at this layer is the new
+    // `onTerminal` field inside `dispatch`'s opts parameter. Lock
+    // the parameter shape here so a future refactor renaming or
+    // removing the callback is a compile-time failure rather than
+    // a silent breakage of the engine ↔ runner contract.
     type DispatchParam = Parameters<WorkflowNodeRunner["dispatch"]>[0];
     expectTypeOf<DispatchParam>().toHaveProperty("workflowId");
     expectTypeOf<DispatchParam>().toHaveProperty("nodeId");
@@ -259,22 +259,22 @@ describe("@emploke/workflow public API guard", () => {
   });
 
   it("M1 (#325 D5): WorkflowModule exposes the engine alongside service + close", () => {
-    // The engine field is the M1 addition to WorkflowModule. It is
-    // the structural seam composition callers use to drive `start()`
-    // (no-op in M1) and `stop()` (drains in-flight per-workflow tick
-    // chains). The type is left opaque-ish (no static reference to
-    // the class) — downstream consumers should not import the engine
-    // directly; they interact through the module.
+    // The engine field is the structural seam composition callers
+    // use to drive `start()` (currently a no-op) and `stop()`
+    // (drains in-flight per-workflow tick chains). The type is left
+    // opaque-ish (no static reference to the class) — downstream
+    // consumers should not import the engine directly; they
+    // interact through the module.
     expectTypeOf<WorkflowModule>().toHaveProperty("engine");
   });
 
   it("M1 (#325 D7): WorkflowModuleOptions exposes test-only trustedCallerForTesting", () => {
-    // Per spec #325 D7 (Option A), this OPTIONAL field bypasses the
-    // caller-coord auth gate on addNode/addEdge/addSubgraph for
-    // tests that don't have a coord runner. The field is documented
-    // as TESTING ONLY; the api-pkg public-API guard asserts the
-    // field is NOT plumbed through `@emploke/api`'s surface so
-    // production paths cannot accidentally enable it.
+    // This OPTIONAL field bypasses the caller-coord auth gate on
+    // addNode/addEdge/addSubgraph for tests that don't have a coord
+    // runner. The field is documented as TESTING ONLY; the api-pkg
+    // public-API guard asserts the field is NOT plumbed through
+    // `@emploke/api`'s surface so production paths cannot
+    // accidentally enable it.
     expectTypeOf<WorkflowModuleOptions>().toHaveProperty("trustedCallerForTesting");
     // Compile-time check that the field is shaped as a boolean,
     // not (say) a config object. We don't lock optionality here
@@ -302,7 +302,7 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("removeEdge");
     expectTypeOf<WorkflowService>().toHaveProperty("replaceNodeSpec");
     expectTypeOf<WorkflowService>().toHaveProperty("addSubgraph");
-    // M1 additions: engine-facing terminal writer + engine wire-up.
+    // Engine-facing terminal writer + engine wire-up.
     expectTypeOf<WorkflowService>().toHaveProperty("markNodeTerminal");
     expectTypeOf<WorkflowService>().toHaveProperty("setEngine");
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("workflow");

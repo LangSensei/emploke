@@ -2,8 +2,8 @@
  * Compile-time public API guard for `@emploke/api`.
  *
  * WHAT this file does:
- *   Uses Vitest's `expectTypeOf<T>()` to lock the M1 additions to
- *   the pkg's public surface — specifically the
+ *   Uses Vitest's `expectTypeOf<T>()` to lock the workflow-related
+ *   additions to the pkg's public surface — specifically the
  *   {@link makeWorkerNodeRunner} factory + {@link WorkerNodeSpec} +
  *   {@link WorkflowWorkerSpecError} exports — and asserts that NO
  *   public type mentions `trustedCallerForTesting`. The flag is a
@@ -12,11 +12,11 @@
  *   let production paths accidentally enable it.
  *
  * WHY it is valuable:
- *   This is the second half of the spec #325 D7 contract. The first
- *   half is the warn-log at boot in `composeWorkflowModule` when the
- *   flag is true; the second half is THIS guard, which makes it a
- *   compile-time error for any future refactor to propagate the
- *   flag up into `@emploke/api`.
+ *   This is the second half of the `trustedCallerForTesting`
+ *   containment contract. The first half is the warn-log at boot in
+ *   `composeWorkflowModule` when the flag is true; the second half
+ *   is THIS guard, which makes it a compile-time error for any
+ *   future refactor to propagate the flag up into `@emploke/api`.
  *
  * The tripwire is a `not.toHaveProperty` style assertion at the
  * indexed-access level — Type-level negative assertions cost less
@@ -61,7 +61,7 @@ describe("@emploke/api public API guard — M1 additions", () => {
   });
 
   /**
-   * Spec #325 D7 tripwire. The `trustedCallerForTesting` flag lives
+   * Containment tripwire. The `trustedCallerForTesting` flag lives
    * on `@emploke/workflow`'s `WorkflowModuleOptions`; api-pkg tests
    * that need it use `composeWorkflowModule` directly, NOT through
    * `composeApplication`. This assertion fails the build if a future

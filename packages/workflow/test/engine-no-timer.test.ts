@@ -1,10 +1,9 @@
 /**
  * Tripwire test for `packages/workflow/src/_engine.ts`.
  *
- * Per spec #325 D3 and the M1 brief: the engine module MUST NOT
- * contain `setInterval` or `setTimeout`. All polling cadence lives
- * inside concrete runner implementations (e.g.
- * `packages/api/src/wiring/workflow-task-runner.ts`).
+ * The engine module MUST NOT contain `setInterval` or `setTimeout`.
+ * All polling cadence lives inside concrete runner implementations
+ * (e.g. `packages/api/src/wiring/workflow-task-runner.ts`).
  *
  * This is a SOURCE-level grep — strings appearing inside JSDoc
  * comments (e.g. "MUST NOT contain `setInterval`") are intentionally
@@ -14,10 +13,8 @@
  * `setIntervalMs` (an opt name) or `pollIntervalMs` won't fire, but
  * a bare `setInterval(...)` or `setTimeout(...)` will.
  *
- * If you NEED a deferred callback in the engine, you've discovered a
- * spec violation — stop and surface the discrepancy per the brief's
- * "STOP and report" rule, then fix the spec; do not work around this
- * tripwire.
+ * If you need a deferred callback in the engine, do not work around
+ * this tripwire — fix the design seam first.
  */
 
 import { readFileSync } from "node:fs";

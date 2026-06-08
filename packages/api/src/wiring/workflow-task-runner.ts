@@ -1,5 +1,5 @@
 /**
- * `makeWorkerNodeRunner` — the M1 worker-kind {@link
+ * `makeWorkerNodeRunner` — the worker-kind {@link
  * WorkflowNodeRunner} that maps a workflow worker node to a
  * `@emploke/task` task.
  *
@@ -33,15 +33,15 @@
  *
  * # Why `setInterval` lives here, not in `@emploke/workflow/_engine.ts`
  *
- * Per spec #325 D3 the engine is event-driven and contains zero
- * timers. The runner is the layer that owns per-host polling cadence
- * because polling cadence is per-host: a worker driven by
- * `@emploke/task` polls a sqlite read every 2s; a coord driven by a
- * future LLM host might poll an HTTP backend every 30s; a hypothetical
- * in-process runner might never poll. Centralizing this would force
- * one cadence on every host — and would still need a runner-side
- * "tell me when the unit terminated" callback for non-poll hosts.
- * Keep polling local; push terminal state up via `onTerminal`.
+ * The engine is event-driven and contains zero timers. Polling
+ * cadence is the runner's concern because it is per-host: a worker
+ * driven by `@emploke/task` polls a sqlite read every 2s; a
+ * different host could choose a different cadence (or skip polling
+ * entirely and push terminal state via an in-process event).
+ * Centralizing this would force one cadence on every host — and
+ * would still need a runner-side "tell me when the unit
+ * terminated" callback for non-poll hosts. Keep polling local;
+ * push terminal state up via `onTerminal`.
  *
  * # Spec invariants honored
  *
@@ -56,7 +56,7 @@
  * - `dispatch` returns `{unitId: task.id}` for audit/log correlation
  *   only — the substrate explicitly does NOT persist `unitId` (per
  *   the same `types.ts:222` comment).
- * - No retry, no exponential backoff in M1 (per spec D6); a single
+ * - No retry, no exponential backoff at the runner level; a single
  *   runner-local poll-error budget (`maxPollErrors`, default 3)
  *   maps repeated `tasks.get` failures to
  *   `onTerminal({status: 'failed', reason: 'tasks.get exhausted: ...'})`.
@@ -73,9 +73,9 @@ import pino, { type Logger } from "pino";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
-/** Default polling cadence for `tasks.get(taskId)`. Spec #325 D10. */
+/** Default poll cadence for `tasks.get(taskId)` in the worker runner. */
 export const DEFAULT_WORKER_POLL_INTERVAL_MS = 2000;
-/** Default runner-local poll-error budget. Spec #325 D10. */
+/** Default runner-local poll-error budget before surfacing as failed. */
 export const DEFAULT_WORKER_MAX_POLL_ERRORS = 3;
 
 /**
@@ -129,7 +129,7 @@ export interface MakeWorkerNodeRunnerDeps {
  * The `dispose()` method is on the returned object's intersection
  * type, NOT on the `WorkflowNodeRunner` interface — the interface
  * keeps the 4-method contract (`validate / dispatch /
- * hasInFlightForNode / cancel`) per spec #325 D1.
+ * hasInFlightForNode / cancel`).
  */
 export function makeWorkerNodeRunner(
   deps: MakeWorkerNodeRunnerDeps,
@@ -287,8 +287,9 @@ export function makeWorkerNodeRunner(
           }
           consecutivePollErrors = 0;
           if (task === null) {
-            // Task deleted out from under us. Spec #325 D10:
-            // surface as a failure with reason "task not found".
+            // Task deleted out from under us. Surface as a failure
+            // with reason "task not found" — the workflow node has
+            // no unit-of-work to wait on any more.
             fireTerminal(nodeId, onTerminal, {
               status: "failed",
               reason: "task not found",

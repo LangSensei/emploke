@@ -5,9 +5,9 @@
  *
  * # Why no timer?
  *
- * Per spec #325 D3 + the M1 brief: this module MUST NOT contain
- * `setInterval` or `setTimeout`. All polling lives inside concrete
- * runner implementations (e.g. `workflow-task-runner.ts` polls
+ * This module contains no `setInterval` or `setTimeout`. Polling
+ * cadence is per-host and lives inside the concrete runner
+ * implementations (e.g. `workflow-task-runner.ts` polls
  * `tasks.get(...)` to discover terminal status). The engine reacts
  * to two events only:
  *
@@ -25,9 +25,8 @@
  * A central interval timer would either tick too fast (wasted DB
  * reads) or too slow (stale state) and would defeat the per-runner
  * polling cadence. By staying purely event-driven, the engine is
- * latency-optimal under the legal-cancellation pattern (Phase 2b)
- * and the cost of a workflow that's "doing nothing" is exactly
- * zero CPU.
+ * latency-optimal under the legal-cancellation pattern and the
+ * cost of a workflow that's "doing nothing" is exactly zero CPU.
  *
  * The acceptance gate is enforced by `engine-no-timer.test.ts`,
  * which greps this file's source for `setInterval` / `setTimeout`.
@@ -59,8 +58,7 @@
  * Pure in-memory: a `Map<workflowId, Promise>` chain + a
  * `shuttingDown` flag + the injected deps. No tables, no module-
  * level mutables, no persistence — engine restart = in-flight nodes
- * stuck `running` until a Phase 3 recovery story lands (out of scope
- * per the M1 brief).
+ * stuck `running` until a recovery hook lands.
  */
 
 import type { Logger } from "pino";
@@ -89,16 +87,16 @@ export class WorkflowEngine {
   /**
    * Lifecycle hook called by `compose.ts` after construction.
    *
-   * M1 is a no-op: there are no timers to launch and no recovery
-   * scan to run (engine restart recovery is out-of-scope per the
-   * brief; in-flight nodes from a previous process are stuck
-   * `running` until Phase 3 ships the recovery hook). Present as a
-   * named method so compose stays symmetrical with `stop()` and so
-   * future milestones have a place to plug recovery in without
-   * changing the boot contract.
+   * Currently a no-op: there are no timers to launch and no
+   * recovery scan to run. Engine-restart recovery is not yet
+   * implemented — in-flight nodes from a previous process stay
+   * `running` until a recovery hook lands. Present as a named
+   * method so compose stays symmetrical with `stop()` and gives a
+   * stable place to plug recovery in without changing the boot
+   * contract.
    */
   start(): void {
-    this.logger.debug("WorkflowEngine.start: no-op in M1");
+    this.logger.debug("WorkflowEngine.start: currently a no-op");
   }
 
   /**

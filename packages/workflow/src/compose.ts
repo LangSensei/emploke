@@ -28,14 +28,13 @@
  *
  * # `trustedCallerForTesting` (TEST ONLY)
  *
- * Per spec #325 D7 (Option A): when `true`, the substrate's caller-
- * coord auth gate on `addNode` / `addEdge` / `addSubgraph` is
- * bypassed (structural rules — cycle check, parent-readiness, kind-
- * aware rules — still fire). A `warn` log fires once at boot when
- * the flag is `true`. Production paths NEVER set this flag; it is
- * not exposed on `@emploke/api`'s public surface and exists only so
- * tests can populate workflow graphs without standing up a coord
- * runner.
+ * When `true`, the substrate's caller-coord auth gate on
+ * `addNode` / `addEdge` / `addSubgraph` is bypassed (structural
+ * rules — cycle check, parent-readiness, kind-aware rules — still
+ * fire). A `warn` log fires once at boot when the flag is `true`.
+ * Production paths NEVER set this flag; it is not exposed on
+ * `@emploke/api`'s public surface and exists only so tests can
+ * populate workflow graphs without standing up a coord runner.
  */
 
 import Database, { type Database as BetterSqliteDatabase } from "better-sqlite3";
@@ -66,8 +65,8 @@ export type WorkflowModuleOptions = (
    * rules (cycle check, parent-readiness, kind-aware rules) still
    * fire. Logs a `warn` at boot when `true`. Default `false`.
    *
-   * Per spec #325 D7 (Option A). NOT exposed on `@emploke/api` —
-   * the api-pkg public-API guard test asserts this absence.
+   * NOT exposed on `@emploke/api` — the api-pkg public-API guard
+   * test asserts this absence.
    */
   readonly trustedCallerForTesting?: boolean;
 };

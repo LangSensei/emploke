@@ -17,8 +17,8 @@
  *     idempotency on duplicate cancel
  *   - dispose clears every armed interval (no `setInterval` leaks)
  *
- * The spec (#325 F.2) describes a variant using a REAL `TaskService`
- * + no-op runtime. Two reasons we use mocks instead:
+ * A variant using a REAL `TaskService` + no-op runtime is possible.
+ * Two reasons we use mocks here instead:
  *   1. The schedule-task-handler tests next to this one use mocks
  *      — staying consistent with that precedent keeps the api-pkg
  *      test surface uniform.
@@ -27,8 +27,9 @@
  *      verify TaskService's behavior, not the runner's.
  * The engine-integration test (`packages/workflow/test/engine-integration.test.ts`)
  * already exercises the engine ↔ runner pipeline end-to-end with a
- * fake runner; together the two tiers cover every M1 invariant
- * without the cost of a real TaskService boot in this layer.
+ * fake runner; together the two tiers cover every invariant the
+ * runner is responsible for without the cost of a real TaskService
+ * boot in this layer.
  */
 
 import type { CatalogService } from "@emploke/catalog";

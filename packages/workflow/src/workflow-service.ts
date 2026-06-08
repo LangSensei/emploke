@@ -296,10 +296,10 @@ export class WorkflowService {
   /**
    * Post-commit hook fired by every mutation method that could
    * change readiness. Safe to call when no engine is wired (existing
-   * service tests, and code paths during M1 that haven't yet had
-   * the engine plugged in) — the no-op behavior matches the pre-M1
-   * shape, so all 207 baseline workflow tests continue to pass with
-   * no engine attached.
+   * service tests, plus code paths that haven't yet had the engine
+   * plugged in) — the no-op behavior matches the pre-engine shape,
+   * so all 207 baseline workflow tests continue to pass with no
+   * engine attached.
    */
   private nudgeEngine(workflowId: string): void {
     if (this.engine === null) return;
@@ -499,7 +499,7 @@ export class WorkflowService {
     // the auth-gate derivation entirely (a synthetic `C` is fabricated
     // for the validate ctx; the inside-tx recheck below is also
     // skipped). Structural rules (parent state, cycle, kind-aware
-    // parent-readiness) still fire. See D7 in spec #325.
+    // parent-readiness) still fire.
     const C = await this.deriveCallerCoordOrTrustedSentinel(args.workflowId);
     const validateCtx: WorkflowNodeValidateCtx = {
       workflowId: args.workflowId,
@@ -560,11 +560,11 @@ export class WorkflowService {
       }
 
       if (args.kind === COORDINATOR_KIND && !this.trustedCallerForTesting) {
-        // The coord-handover rules (D27 orphan-coord; D23
-        // single-coord-successor) only make sense when a real
-        // caller `C` exists; under trustedCallerForTesting the
-        // substrate has no live caller to reference, so the test
-        // fabric is trusted to keep the coord topology sane.
+        // The orphan-coord and single-coord-successor rules only
+        // make sense when a real caller `C` exists; under
+        // trustedCallerForTesting the substrate has no live caller
+        // to reference, so the test fabric is trusted to keep the
+        // coord topology sane.
         if (!uniqueParents.includes(C.id)) {
           throw new OrphanCoordInsertError(workflowId, C.id);
         }
@@ -640,7 +640,7 @@ export class WorkflowService {
     // outside the write tx; the inside-tx recheck below catches a
     // concurrent caller termination. Under trustedCallerForTesting
     // the substrate fabricates a sentinel `C` and skips the auth-gate
-    // recheck (D7).
+    // recheck.
     const C = await this.deriveCallerCoordOrTrustedSentinel(args.workflowId);
     const workflowId = args.workflowId;
 
@@ -1586,14 +1586,15 @@ export class WorkflowService {
    * write lock across an async network call would serialize the
    * entire workflow engine on a slow dispatch.
    *
-   * M1 — `onTerminal` is threaded into the runner's `dispatch` opts
-   * so async runners can push terminal state back to the substrate
-   * (where it's handled by {@link markNodeTerminal}). When this
-   * method is invoked from the legacy eager-dispatch reactions
-   * (createWorkflow / addNode / addEdge) without an engine wired,
-   * the substrate substitutes a default `onTerminal` that delegates
-   * to {@link markNodeTerminal} directly. Either path lands the
-   * same idempotent state write — `markNodeTerminal` is the single
+   * `onTerminal` is threaded into the runner's `dispatch` opts so
+   * the runner can push terminal results back to the substrate
+   * (where it's handled by {@link markNodeTerminal}) without
+   * knowing about service plumbing. When this method is invoked
+   * from the legacy eager-dispatch reactions (createWorkflow /
+   * addNode / addEdge) without an engine wired, the substrate
+   * substitutes a default `onTerminal` that delegates to {@link
+   * markNodeTerminal} directly. Either path lands the same
+   * idempotent state write — `markNodeTerminal` is the single
    * source of truth for the substrate's terminal write.
    */
   async dispatchAtomic(
@@ -1657,10 +1658,20 @@ export class WorkflowService {
     const effectiveOnTerminal: (result: WorkflowNodeTerminalResult) => void =
       onTerminal ??
       ((result) => {
-        // Fire-and-forget: any error landing terminal state is
-        // already logged by `markNodeTerminal`. We can't propagate
-        // because runners hold the synchronous closure boundary.
-        void this.markNodeTerminal(payload.workflowId, payload.nodeId, result);
+        // Default path used when no engine-supplied callback is
+        // present (eager-dispatch reactions on the legacy path, or
+        // tests that exercise `dispatchAtomic` directly). Fire-and-
+        // forget into `markNodeTerminal`, with a `.catch` so a
+        // throw from the terminal-write tx surfaces as a logged
+        // error instead of an unhandled promise rejection (we hold
+        // a synchronous closure boundary here and cannot propagate
+        // back into the runner).
+        void this.markNodeTerminal(payload.workflowId, payload.nodeId, result).catch((err) => {
+          this.logger.error(
+            { nodeId: payload.nodeId, err },
+            "dispatchAtomic: default onTerminal markNodeTerminal threw",
+          );
+        });
       });
 
     try {
@@ -1709,10 +1720,10 @@ export class WorkflowService {
    * (downstream nodes may have become eligible). The nudge is
    * post-commit and best-effort — a missing engine is a no-op.
    *
-   * Spec #325 D6 — `cancelled` is a legal terminal coming from the
-   * runner (the runner observed the unit-of-work being cancelled
-   * out-of-band, e.g. via a parallel CLI). The substrate accepts it
-   * the same way `cancelNode` would.
+   * `cancelled` is a legal terminal coming from the runner (it
+   * observed the unit-of-work being cancelled out-of-band, e.g.
+   * via a parallel CLI). The substrate accepts it the same way
+   * `cancelNode` would.
    */
   async markNodeTerminal(
     workflowId: string,
@@ -1859,13 +1870,14 @@ export class WorkflowService {
    * R4 caller-coord derivation with a test-only escape hatch.
    *
    * When the service was constructed with
-   * `trustedCallerForTesting: true` (spec #325 D7 Option A), returns
-   * a synthetic sentinel coord identity that bypasses the substrate's
-   * "caller IS a running coord in this workflow" check. The sentinel
-   * uses a string that is intentionally invalid as a real node id
-   * (`'<trusted-caller>'`) so it can never collide with a row in the
-   * DB. The matching inside-tx `assertAuthCallerCoord` recheck is
-   * also skipped under the same flag.
+   * `trustedCallerForTesting: true`, returns a synthetic sentinel
+   * coord identity that bypasses the substrate's "caller IS a
+   * running coord in this workflow" check (the structural rules
+   * still fire). The sentinel uses a string that is intentionally
+   * invalid as a real node id (`'<trusted-caller>'`) so it can
+   * never collide with a row in the DB. The matching inside-tx
+   * `assertAuthCallerCoord` recheck is also skipped under the same
+   * flag.
    *
    * Production paths NEVER set `trustedCallerForTesting`. The flag is
    * not exposed on `@emploke/api`; it exists only so tests in
