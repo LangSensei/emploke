@@ -31,7 +31,7 @@ import {
   makeWorkflowStubCoordRunner,
   WORKFLOW_STUB_WORKER_AGENT,
   WORKFLOW_STUB_WORKER_BRIEF,
-} from "../src/wiring/workflow-coord-runner.js";
+} from "../../src/wiring/workflow-coord-runner.js";
 
 const WORKFLOW_ID = "550e8400-e29b-41d4-a716-446655440000";
 const INITIAL_COORD_ID = "550e8400-e29b-41d4-a716-446655440001";

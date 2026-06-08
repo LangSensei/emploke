@@ -27,7 +27,7 @@ import {
   makeWorkflowStubCoordRunner,
   WORKFLOW_STUB_WORKER_AGENT,
   WORKFLOW_STUB_WORKER_BRIEF,
-} from "../src/wiring/workflow-coord-runner.js";
+} from "../../src/wiring/workflow-coord-runner.js";
 
 const silentLogger = pino({ level: "silent" });
 const STUB_COORD_AGENT = "stub-coord";
