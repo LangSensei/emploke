@@ -24,4 +24,5 @@ export * from "./schedules.js";
 export * from "./sessions.js";
 export * from "./system.js";
 export * from "./tasks.js";
+export * from "./workflows.js";
 export * from "./workspaces.js";

@@ -14,6 +14,7 @@ import {
   SessionsIcon,
   SettingsIcon,
   TasksIcon,
+  WorkflowsIcon,
 } from "./Icons";
 
 export type SectionId = "overview" | "runtime" | "catalog" | "settings";
@@ -23,11 +24,13 @@ export type SectionId = "overview" | "runtime" | "catalog" | "settings";
  * §4.1: Agents (existing default landing) plus Sessions and Tasks which
  * used to be either top-level items (legacy) or per-agent sub-tabs
  * (PR #189). PR 4/4 of #61 adds Schedules — workspace-scoped cron
- * triggers — as the fourth child. They share the workspace-scoped
- * path prefix `/runtime/<child>` so the highlight selector can match
- * on the segment after the section.
+ * triggers — as the fourth child. Workflows — coordinator-driven
+ * multi-step runs from the `@emploke/workflow` substrate — is the
+ * fifth child and rounds out the runtime group. They share the
+ * workspace-scoped path prefix `/runtime/<child>` so the highlight
+ * selector can match on the segment after the section.
  */
-export type RuntimeChildId = "agents" | "sessions" | "tasks" | "schedules";
+export type RuntimeChildId = "agents" | "sessions" | "tasks" | "schedules" | "workflows";
 
 /**
  * Full identity of a clickable sidebar item. A `SectionId` selects a
@@ -66,6 +69,7 @@ const CHILD_ICONS: Record<RuntimeChildId, (props: { className?: string }) => Rea
   sessions: SessionsIcon,
   tasks: TasksIcon,
   schedules: SchedulesIcon,
+  workflows: WorkflowsIcon,
 };
 
 const ADD_OPTION = "__add__";

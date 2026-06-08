@@ -18,9 +18,12 @@ import { type DefaultBodyType, HttpResponse, http } from "msw";
 
 import type {
   CreateScheduleBody,
+  CreateWorkflowBody,
   PatchScheduleBody,
   ScheduleDetail,
   ScheduleView,
+  WorkflowHeaderWire,
+  WorkflowNodeWire,
 } from "../api/index.js";
 import {
   artifactBodies,
@@ -30,6 +33,8 @@ import {
   fixtureSchedules,
   fixtureSessions,
   fixtureTasks,
+  fixtureWorkflowDags,
+  fixtureWorkflows,
   fixtureWorkspaces,
 } from "./fixtures/index.js";
 
@@ -57,6 +62,34 @@ const schedulesState: ScheduleDetail[] = fixtureSchedules.map((s) => ({ ...s }))
 const tasksState = fixtureTasks.map((t) => ({ ...t }));
 
 let synthFireSeq = 0;
+
+/**
+ * Ephemeral workflow mutation slice. Header rows live in
+ * `workflowsState`, DAGs in `dagsState` keyed by workflow id. Both
+ * reset on browser refresh — designer mode is non-persistent. Headers
+ * are stored as mutable copies of the readonly fixtures so the cancel
+ * handler can flip status/endedAt/outcomeReason in place. The DAG
+ * shape uses a local mutable mirror of the wire type so the cancel
+ * handler can re-attach the updated header and re-write the node
+ * array without colliding with the wire-type's `readonly` modifiers.
+ */
+interface MutableWorkflowDag {
+  workflow: WorkflowHeaderWire;
+  nodes: WorkflowNodeWire[];
+  edges: { from: string; to: string }[];
+}
+
+const workflowsState: WorkflowHeaderWire[] = fixtureWorkflows.map((w) => ({ ...w }));
+const dagsState: Map<string, MutableWorkflowDag> = new Map(
+  Array.from(fixtureWorkflowDags.entries()).map(([id, dag]) => [
+    id,
+    {
+      workflow: { ...dag.workflow },
+      nodes: dag.nodes.map((n) => ({ ...n })),
+      edges: dag.edges.map((e) => ({ ...e })),
+    },
+  ]),
+);
 
 /**
  * Short, deterministic-enough random id helper for synthesised
@@ -372,6 +405,121 @@ export const handlers = [
       startedAt: firedAt,
     });
     return HttpResponse.json({ dispatchId });
+  }),
+
+  // ── workflows (workspace-scoped) ─────────────────────────────
+  // List + detail + DAG + create + cancel. Workflow rows live in
+  // `workflowsState` and DAGs in `dagsState`; both reset on browser
+  // refresh, same lifetime as `schedulesState`.
+  http.get(`/api/workspaces/${W}/workflows`, ({ request }) => {
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status");
+    let rows = workflowsState.slice();
+    if (
+      status === "running" ||
+      status === "succeeded" ||
+      status === "failed" ||
+      status === "cancelled"
+    ) {
+      rows = rows.filter((w) => w.status === status);
+    }
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return HttpResponse.json(rows);
+  }),
+  http.post(`/api/workspaces/${W}/workflows`, async ({ request }) => {
+    const body = (await request.json()) as CreateWorkflowBody;
+    if (typeof body.brief !== "string" || body.brief.trim() === "") {
+      return HttpResponse.json({ error: "brief must be a non-empty string" }, { status: 400 });
+    }
+    if (typeof body.coordinatorAgent !== "string" || body.coordinatorAgent.trim() === "") {
+      return HttpResponse.json(
+        { error: "coordinatorAgent must be a non-empty agent FQN" },
+        { status: 400 },
+      );
+    }
+    const id = `wf-${cryptoRandom8()}`;
+    const now = new Date().toISOString();
+    const created: WorkflowHeaderWire = {
+      id,
+      brief: body.brief.trim(),
+      ...(typeof body.details === "string" && body.details.trim() !== ""
+        ? { details: body.details }
+        : {}),
+      status: "running",
+      coordinatorAgent: body.coordinatorAgent,
+      createdAt: now,
+      updatedAt: now,
+      iterationCount: 0,
+    };
+    workflowsState.unshift(created);
+    const coordNode: WorkflowNodeWire = {
+      id: `wfn-${cryptoRandom8()}`,
+      workflowId: id,
+      kind: "coordinator",
+      status: "running",
+      phase: 0,
+      spec: { kind: "coordinator", agent: body.coordinatorAgent },
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+    };
+    dagsState.set(id, {
+      workflow: { ...created },
+      nodes: [coordNode],
+      edges: [],
+    });
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.get(`/api/workspaces/${W}/workflows/:wfid`, ({ params }) => {
+    const row = workflowsState.find((w) => w.id === params.wfid);
+    return row ? HttpResponse.json(row) : notFound("workflow not found");
+  }),
+  http.get(`/api/workspaces/${W}/workflows/:wfid/dag`, ({ params }) => {
+    const dag = dagsState.get(String(params.wfid));
+    if (!dag) return notFound("workflow not found");
+    const row = workflowsState.find((w) => w.id === params.wfid);
+    if (row) dag.workflow = { ...row };
+    return HttpResponse.json(dag);
+  }),
+  http.post(`/api/workspaces/${W}/workflows/:wfid/cancel`, async ({ params, request }) => {
+    const idx = workflowsState.findIndex((w) => w.id === params.wfid);
+    if (idx === -1) return notFound("workflow not found");
+    const current = workflowsState[idx]!;
+    if (current.status !== "running") {
+      return HttpResponse.json(
+        { error: `workflow is already ${current.status}; cancel is a no-op` },
+        { status: 409 },
+      );
+    }
+    const body = (await request.json().catch(() => ({}))) as { reason?: string };
+    const now = new Date().toISOString();
+    const cancelled: WorkflowHeaderWire = {
+      ...current,
+      status: "cancelled",
+      updatedAt: now,
+      endedAt: now,
+      outcomeReason:
+        typeof body.reason === "string" && body.reason.trim() !== ""
+          ? body.reason.trim()
+          : "Manually cancelled",
+    };
+    workflowsState[idx] = cancelled;
+    const dag = dagsState.get(cancelled.id);
+    if (dag) {
+      dag.workflow = { ...cancelled };
+      dag.nodes = dag.nodes.map((n) =>
+        n.status === "ready" || n.status === "running"
+          ? {
+              ...n,
+              status: "cancelled",
+              updatedAt: now,
+              endedAt: now,
+              outcomeReason: "Cancelled with parent workflow",
+            }
+          : n,
+      );
+    }
+    return HttpResponse.json(cancelled);
   }),
 
   // ── catch-all: 501 mutations + pass-through unknown GETs ─────

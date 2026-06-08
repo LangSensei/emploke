@@ -48,6 +48,7 @@ import { SchedulesPage } from "./pages/Schedules";
 import { SessionsPage } from "./pages/Sessions";
 import { SettingsPage } from "./pages/Settings";
 import { TasksPage } from "./pages/Tasks";
+import { WorkflowsPage } from "./pages/Workflows";
 import { startClockSync } from "./serverClock";
 import { formatRelative } from "./utils/time";
 
@@ -61,6 +62,7 @@ const SECTIONS: SectionDef[] = [
       { id: "sessions", label: "Sessions" },
       { id: "tasks", label: "Tasks" },
       { id: "schedules", label: "Schedules" },
+      { id: "workflows", label: "Workflows" },
     ],
   },
   { id: "catalog", label: "Catalog" },
@@ -80,6 +82,7 @@ const VALID_RUNTIME_CHILDREN = new Set<RuntimeChildId>([
   "sessions",
   "tasks",
   "schedules",
+  "workflows",
 ]);
 const VALID_CATALOG_TABS = new Set<CatalogTab>(["agents", "skills", "mcps"]);
 
@@ -127,6 +130,7 @@ export function App() {
         <Route path="runtime/sessions" element={<RuntimeSessionsRoute />} />
         <Route path="runtime/tasks" element={<RuntimeTasksRoute />} />
         <Route path="runtime/schedules" element={<RuntimeSchedulesRoute />} />
+        <Route path="runtime/workflows" element={<RuntimeWorkflowsRoute />} />
         {/* Legacy routes (Block C → Phase 1.5 Block F). PR #189 added
             adapters for the bookmarked top-level URLs that pre-date the
             Runtime IA promotion; Phase 1.5 retargets them one level
@@ -897,6 +901,18 @@ function RuntimeSchedulesRoute() {
   const { wsId, data, config } = useWorkspaceShell();
   useBreadcrumb("Schedules", ["Runtime", "Schedules"]);
   return <SchedulesPage agents={data.agents} currentWorkspaceId={wsId} config={config} />;
+}
+
+/**
+ * Workspace-scoped Workflows page. Renders the master-detail
+ * Workflows view at `/workspaces/<wsId>/runtime/workflows`. The
+ * detail panel selection is URL-driven via `?workflowId=`, mirroring
+ * the Tasks / Schedules `?taskId=` / `?scheduleId=` patterns.
+ */
+function RuntimeWorkflowsRoute() {
+  const { wsId, data } = useWorkspaceShell();
+  useBreadcrumb("Workflows", ["Runtime", "Workflows"]);
+  return <WorkflowsPage agents={data.agents} currentWorkspaceId={wsId} />;
 }
 
 function capitalize(s: string): string {
