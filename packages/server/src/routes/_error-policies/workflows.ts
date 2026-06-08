@@ -20,12 +20,11 @@
  *           deploy; the body collapses to "internal error" because
  *           the names are NOT on the SAFE_ERROR_NAMES allow-list.
  *
- * The catalog-resolution failures the worker-kind handler would throw
+ * Agent-resolution failures from the coord-kind runner's `validate`
  * (`AgentNotFoundError` / `AgentResolutionFailedError` from the task
- * pkg) are NOT listed here: the M2 routes shipped in this iteration
- * (`list` / `create` / `get` / `dag` / `cancel`) never traverse the
- * worker-kind handler. When the M3 surface adds DAG-mutation routes,
- * those rows can be added at that time.
+ * pkg) are listed below — reachable via `POST /workflows` at create
+ * time. Worker-kind dispatch will reuse the same rows when M3 ships
+ * DAG-mutation routes.
  */
 
 import {
