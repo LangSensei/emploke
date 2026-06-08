@@ -31,7 +31,7 @@ function iso(offsetMinutes: number): string {
 
 export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
   {
-    id: "wf-running-multistage",
+    id: "20260608-1f3a7b9c",
     brief: "Migrate auth module to OAuth + add regression tests",
     details:
       "Replace the legacy session middleware with OAuth, then run a sweep to confirm no caller relied on the old session cookie. Coordinator should choose between scoped tests and a full suite once the migration patch lands.",
@@ -43,7 +43,7 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
     iterationCount: 3,
   },
   {
-    id: "wf-succeeded-simple",
+    id: "20260607-2e4b8cad",
     brief: "Refactor packages/catalog logging to the structured-logger API",
     details:
       "Move all `console.log` calls in packages/catalog to the structured logger and add one happy-path test per repository module.",
@@ -56,7 +56,7 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
     iterationCount: 2,
   },
   {
-    id: "wf-failed-early",
+    id: "20260606-3d5c9dbe",
     brief: "Bump @emploke/contracts to 0.42 and update downstream callers",
     details: "Bump the version, run typecheck, then surface any breaking imports.",
     status: "failed",
@@ -68,7 +68,7 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
     iterationCount: 1,
   },
   {
-    id: "wf-cancelled-late",
+    id: "20260605-4e6dabcf",
     brief: "Generate a marketing landing page from the new brand kit",
     details:
       "Coordinator turned out to be on the wrong agent; cancelled before phase 2 was scheduled.",
@@ -87,7 +87,7 @@ const dagRunningMultistage: WorkflowDagWire = {
   nodes: [
     {
       id: "wfn-mig-coord-0",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       status: "succeeded",
       phase: 0,
       taskId: "wf-task-mig-coord-0",
@@ -99,7 +99,7 @@ const dagRunningMultistage: WorkflowDagWire = {
     },
     {
       id: "wfn-mig-task-1a",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       status: "succeeded",
       phase: 1,
       taskId: "wf-task-mig-task-1a",
@@ -116,7 +116,7 @@ const dagRunningMultistage: WorkflowDagWire = {
     },
     {
       id: "wfn-mig-coord-2",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       status: "succeeded",
       phase: 2,
       taskId: "wf-task-mig-coord-2",
@@ -128,7 +128,7 @@ const dagRunningMultistage: WorkflowDagWire = {
     },
     {
       id: "wfn-mig-task-3a",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       status: "running",
       phase: 3,
       taskId: "wf-task-mig-task-3a",
@@ -155,7 +155,7 @@ const dagSucceededSimple: WorkflowDagWire = {
   nodes: [
     {
       id: "wfn-log-coord-0",
-      workflowId: "wf-succeeded-simple",
+      workflowId: "20260607-2e4b8cad",
       status: "succeeded",
       phase: 0,
       taskId: "wf-task-log-coord-0",
@@ -167,7 +167,7 @@ const dagSucceededSimple: WorkflowDagWire = {
     },
     {
       id: "wfn-log-task-1a",
-      workflowId: "wf-succeeded-simple",
+      workflowId: "20260607-2e4b8cad",
       status: "succeeded",
       phase: 1,
       taskId: "wf-task-log-task-1a",
@@ -183,7 +183,7 @@ const dagSucceededSimple: WorkflowDagWire = {
     },
     {
       id: "wfn-log-task-1b",
-      workflowId: "wf-succeeded-simple",
+      workflowId: "20260607-2e4b8cad",
       status: "succeeded",
       phase: 1,
       taskId: "wf-task-log-task-1b",
@@ -209,7 +209,7 @@ const dagFailedEarly: WorkflowDagWire = {
   nodes: [
     {
       id: "wfn-bump-coord-0",
-      workflowId: "wf-failed-early",
+      workflowId: "20260606-3d5c9dbe",
       status: "failed",
       phase: 0,
       taskId: "wf-task-bump-coord-0",
@@ -228,7 +228,7 @@ const dagCancelledLate: WorkflowDagWire = {
   nodes: [
     {
       id: "wfn-brand-coord-0",
-      workflowId: "wf-cancelled-late",
+      workflowId: "20260605-4e6dabcf",
       status: "succeeded",
       phase: 0,
       taskId: "wf-task-brand-coord-0",
@@ -240,7 +240,7 @@ const dagCancelledLate: WorkflowDagWire = {
     },
     {
       id: "wfn-brand-task-1a",
-      workflowId: "wf-cancelled-late",
+      workflowId: "20260605-4e6dabcf",
       status: "cancelled",
       phase: 1,
       taskId: "wf-task-brand-task-1a",

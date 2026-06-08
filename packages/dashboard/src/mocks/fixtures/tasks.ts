@@ -274,7 +274,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-mig-coord-0`,
       runtime: "copilot",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       workflowNodeId: "wfn-mig-coord-0",
     },
     createdAt: "2026-05-27T21:00:00.000Z",
@@ -291,7 +291,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-mig-task-1a`,
       runtime: "copilot",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       workflowNodeId: "wfn-mig-task-1a",
     },
     createdAt: "2026-05-27T21:21:00.000Z",
@@ -308,7 +308,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-mig-coord-2`,
       runtime: "copilot",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       workflowNodeId: "wfn-mig-coord-2",
     },
     createdAt: "2026-05-27T22:31:00.000Z",
@@ -325,7 +325,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-mig-task-3a`,
       runtime: "claude",
-      workflowId: "wf-running-multistage",
+      workflowId: "20260608-1f3a7b9c",
       workflowNodeId: "wfn-mig-task-3a",
     },
     createdAt: "2026-05-27T22:51:00.000Z",
@@ -340,7 +340,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-log-coord-0`,
       runtime: "copilot",
-      workflowId: "wf-succeeded-simple",
+      workflowId: "20260607-2e4b8cad",
       workflowNodeId: "wfn-log-coord-0",
     },
     createdAt: "2026-05-27T00:00:00.000Z",
@@ -357,7 +357,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-log-task-1a`,
       runtime: "copilot",
-      workflowId: "wf-succeeded-simple",
+      workflowId: "20260607-2e4b8cad",
       workflowNodeId: "wfn-log-task-1a",
     },
     createdAt: "2026-05-27T00:11:00.000Z",
@@ -374,7 +374,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-log-task-1b`,
       runtime: "copilot",
-      workflowId: "wf-succeeded-simple",
+      workflowId: "20260607-2e4b8cad",
       workflowNodeId: "wfn-log-task-1b",
     },
     createdAt: "2026-05-27T00:12:00.000Z",
@@ -391,7 +391,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-bump-coord-0`,
       runtime: "copilot",
-      workflowId: "wf-failed-early",
+      workflowId: "20260606-3d5c9dbe",
       workflowNodeId: "wfn-bump-coord-0",
     },
     createdAt: "2026-05-26T00:00:00.000Z",
@@ -408,7 +408,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-brand-coord-0`,
       runtime: "copilot",
-      workflowId: "wf-cancelled-late",
+      workflowId: "20260605-4e6dabcf",
       workflowNodeId: "wfn-brand-coord-0",
     },
     createdAt: "2026-05-25T00:00:00.000Z",
@@ -425,7 +425,7 @@ export const fixtureTasks: TaskRecord[] = [
     metadata: {
       workdir: `${ART_DIR}/wf-task-brand-task-1a`,
       runtime: "copilot",
-      workflowId: "wf-cancelled-late",
+      workflowId: "20260605-4e6dabcf",
       workflowNodeId: "wfn-brand-task-1a",
     },
     createdAt: "2026-05-25T00:21:00.000Z",

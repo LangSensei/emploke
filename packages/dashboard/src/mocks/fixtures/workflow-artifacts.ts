@@ -3,16 +3,16 @@ import type { WorkflowArtifactWire } from "../../api";
 /**
  * Designer-mode fixtures for the workflow Artifacts tab.
  *
- * Keyed by workflow id (`wf-running-multistage`, …) and laid out to
+ * Keyed by workflow id (`20260608-1f3a7b9c`, …) and laid out to
  * cover the four interesting list shapes:
  *
- *   - `wf-running-multistage` — workflow-summary entries (one md +
+ *   - `20260608-1f3a7b9c` — workflow-summary entries (one md +
  *     one png) + per-node entries for the running phase-3 task.
- *   - `wf-succeeded-simple`   — per-node entries for both phase-1
+ *   - `20260607-2e4b8cad`   — per-node entries for both phase-1
  *     workers; no curated workflow-summary content.
- *   - `wf-failed-early`       — empty (`[]`), exercising the empty
+ *   - `20260606-3d5c9dbe`       — empty (`[]`), exercising the empty
  *     state in the Artifacts tab.
- *   - `wf-cancelled-late`     — workflow-summary entry only (the
+ *   - `20260605-4e6dabcf`     — workflow-summary entry only (the
  *     coordinator left a final report.md before cancel).
  *
  * Per-node `taskId` keys match the synthetic `wf-task-*` ids on the
@@ -28,7 +28,7 @@ const iso = (offsetMinutes: number): string =>
 export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArtifactWire[]> =
   new Map([
     [
-      "wf-running-multistage",
+      "20260608-1f3a7b9c",
       [
         {
           kind: "workflow-summary",
@@ -65,7 +65,7 @@ export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArti
       ] as readonly WorkflowArtifactWire[],
     ],
     [
-      "wf-succeeded-simple",
+      "20260607-2e4b8cad",
       [
         {
           kind: "node",
@@ -87,9 +87,9 @@ export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArti
         },
       ] as readonly WorkflowArtifactWire[],
     ],
-    ["wf-failed-early", [] as readonly WorkflowArtifactWire[]],
+    ["20260606-3d5c9dbe", [] as readonly WorkflowArtifactWire[]],
     [
-      "wf-cancelled-late",
+      "20260605-4e6dabcf",
       [
         {
           kind: "workflow-summary",
