@@ -95,6 +95,23 @@ describe("OverviewTab — typed state strips", () => {
     expect(screen.getByTestId("workflow-overview-legacy-note")).toBeTruthy();
   });
 
+  it("v2.3: succeeded-with-no-payload uses the same alert chrome as the failed/cancelled legacy branches", () => {
+    // Regression guard for v2.3 chrome unification. Pre-v2.3 the
+    // succeeded legacy branch rendered as a plain `<p
+    // class="overview-tab__no-summary">`, splitting the visual look
+    // for no reason — all three legacy-payload states describe the
+    // same situation ("your row predates the v2.2 payload migration")
+    // and should look identical. The unified branch wraps the note
+    // in `.alert.alert--info.overview-tab__strip`, same as the
+    // failed/cancelled legacy notes.
+    render(<OverviewTab workflow={makeWf({ status: "succeeded" })} />);
+    const note = screen.getByTestId("workflow-overview-legacy-note");
+    expect(note.className).toContain("alert");
+    expect(note.className).toContain("alert--info");
+    expect(note.className).toContain("overview-tab__strip");
+    expect(note.tagName).toBe("DIV");
+  });
+
   it("renders the running hint for in-flight workflows", () => {
     render(<OverviewTab workflow={makeWf({ status: "running" })} />);
     expect(screen.getByTestId("workflow-overview-running-hint")).toBeTruthy();

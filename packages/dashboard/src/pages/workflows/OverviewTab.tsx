@@ -147,10 +147,20 @@ function renderStateStrip({
       // row migrated from the gap-tracking days; surface the legacy
       // note rather than the friendlier "no summary" line so the
       // operator knows why the Summary card is absent.
+      //
+      // v2.3: unified to the same .alert.alert--info.overview-tab__strip
+      // wrapper the failed/cancelled legacy branches use, so all three
+      // legacy-payload states render with identical visual chrome. The
+      // earlier <p class="overview-tab__no-summary"> split the look
+      // for no good reason — the situation it described (operator-
+      // facing "your row is missing data") is the same in all cases.
       return (
-        <p className="overview-tab__no-summary" data-testid="workflow-overview-legacy-note">
+        <div
+          className="alert alert--info overview-tab__strip"
+          data-testid="workflow-overview-legacy-note"
+        >
           Run ended; no payload was recorded (legacy row).
-        </p>
+        </div>
       );
     }
     return (
