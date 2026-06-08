@@ -1,9 +1,10 @@
 /**
  * Input validation for `@emploke/workflow`. Pure functions; no I/O.
  *
- * Scope is shape-only: id grammar (UUIDv4 for node ids; UUIDv4 OR the
- * legacy `<date>-<8hex>` shape for workflow ids) and enum-set
- * membership for the entity layer's round-trip checks.
+ * Scope is shape-only: id grammar (UUIDv4 for node ids; `<YYYYMMDD>-
+ * <8hex>` for new workflow ids with UUIDv4 still accepted on read for
+ * pre-existing workflows) and enum-set membership for the entity
+ * layer's round-trip checks.
  *
  * Cross-kind contracts (e.g. "a worker's `agent` must appear in caller
  * coord's `dependencies.agents`") live in the kind runners, not
@@ -17,7 +18,7 @@
  * TypeScript's `asserts ... is string` narrowing.
  */
 
-import { randomUUID } from "node:crypto";
+import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
 import {
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
@@ -28,23 +29,26 @@ import type { NodeKind, WorkflowNodeStatus, WorkflowStatus } from "./types.js";
 
 // ─── Id grammars ────────────────────────────────────────────────────
 
-// UUID v4. Same shape `crypto.randomUUID()` produces.
+// UUID v4. Same shape `crypto.randomUUID()` produces. Read-side
+// accepted for workflow ids so pre-v2.2 rows still round-trip; new
+// workflow ids are always emitted in the `<YYYYMMDD>-<8 hex>` shape
+// by `generateWorkflowId`. Node ids remain UUIDv4 only.
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-// Legacy `<YYYYMMDD>-<8 hex>` shape carried over from `@emploke/task`
-// for workflow ids only. Read-side accepts these so pre-existing
-// workflows continue to round-trip; the substrate's id generator
-// (`generateWorkflowId`) always emits UUIDv4 for new rows. Node ids
-// never appear in `ls` output (they live inside their workflow dir,
-// not at top-level), so the date-prefix's at-a-glance grouping
-// benefit doesn't apply there — node ids are UUIDv4 only.
+// `<YYYYMMDD>-<8 hex>` shape mirrored from `@emploke/task` for
+// workflow ids. Both the read-side grammar AND `generateWorkflowId`
+// produce this shape for new rows. Lowercase hex only — the regex
+// has no `/i` flag — matching `@emploke/task`'s `TASK_ID_RE`. Node
+// ids never appear in `ls` output (they live inside their workflow
+// dir, not at top-level), so the date-prefix's at-a-glance grouping
+// benefit doesn't apply there — node ids stay UUIDv4 only.
 const LEGACY_DATED_HEX_RE = /^\d{8}-[0-9a-f]{8}$/;
 
 /**
- * Workflow id grammar — UUIDv4 OR the legacy `<date>-<8 hex>` shape.
- * Both are accepted for read APIs so pre-existing workflows continue
- * to round-trip; new workflows MUST be created with UUIDv4 ids
- * (`generateWorkflowId` returns one).
+ * Workflow id grammar — `<YYYYMMDD>-<8 hex>` OR UUIDv4. Both are
+ * accepted for read APIs so pre-v2.2 workflows continue to round-trip;
+ * new workflows are always created with the dated-hex shape
+ * (`generateWorkflowId` emits that form).
  */
 export function assertValidWorkflowId(id: unknown): asserts id is string {
   if (typeof id !== "string" || (!UUID_V4_RE.test(id) && !LEGACY_DATED_HEX_RE.test(id))) {
@@ -53,7 +57,7 @@ export function assertValidWorkflowId(id: unknown): asserts id is string {
 }
 
 /**
- * Workflow node id grammar — UUIDv4 only. No legacy shape support:
+ * Workflow node id grammar — UUIDv4 only. No dated-hex shape support:
  * see the file-level note on why node ids don't need a date prefix.
  */
 export function assertValidWorkflowNodeId(id: unknown): asserts id is string {
@@ -63,16 +67,36 @@ export function assertValidWorkflowNodeId(id: unknown): asserts id is string {
 }
 
 /**
- * UUIDv4 generator with an injectable seam so tests can produce
- * deterministic ids by passing a stub.
+ * Workflow id generator. Returns `<YYYYMMDD>-<8 lowercase hex>` — UTC
+ * date prefix for at-a-glance grouping in `ls` output, ~4B-id-per-day
+ * collision space from the 4 random bytes. Mirrors
+ * `@emploke/task`'s `generateTaskId` so operators see a consistent
+ * id pattern across both surfaces.
+ *
+ * `now` and `randomBytes` are injectable seams so tests can produce
+ * deterministic ids by stubbing both.
  */
-export function generateWorkflowId(randomUUIDFn: () => string = randomUUID): string {
-  return randomUUIDFn();
+export function generateWorkflowId(
+  now: () => Date = () => new Date(),
+  randomBytes: (n: number) => Buffer = cryptoRandomBytes,
+): string {
+  const d = now();
+  const date = pad4(d.getUTCFullYear()) + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCDate());
+  const suffix = randomBytes(4).toString("hex");
+  return `${date}-${suffix}`;
 }
 
 /** UUIDv4 generator for new workflow nodes. */
 export function generateWorkflowNodeId(randomUUIDFn: () => string = randomUUID): string {
   return randomUUIDFn();
+}
+
+function pad2(n: number): string {
+  return n.toString().padStart(2, "0");
+}
+
+function pad4(n: number): string {
+  return n.toString().padStart(4, "0");
 }
 
 // ─── Enum-set checks (used by entity round-trip; throw on miss) ─────

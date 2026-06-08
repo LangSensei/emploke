@@ -1,4 +1,4 @@
-import { randomUUID as nodeRandomUUID } from "node:crypto";
+import { randomBytes as nodeRandomBytes, randomUUID as nodeRandomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
@@ -81,6 +81,13 @@ export interface WorkflowServiceOpts {
   readonly logger?: Logger;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
+  /**
+   * Injectable seam for `generateWorkflowId` — workflow ids carry a
+   * UTC date prefix + 4 random bytes (mirroring `generateTaskId`).
+   * Tests stub this to produce deterministic ids; production callers
+   * leave it unset to use `node:crypto.randomBytes`.
+   */
+  readonly randomBytes?: (n: number) => Buffer;
   /**
    * TEST ONLY — see {@link WorkflowModuleOptions.trustedCallerForTesting}.
    * When `true`, the auth-gate steps inside `addNode` / `addEdge` /
@@ -258,6 +265,7 @@ export class WorkflowService {
   private readonly logger: Logger;
   private readonly now: () => Date;
   private readonly randomUUID: () => string;
+  private readonly randomBytes: (n: number) => Buffer;
   private readonly runners: WorkflowRunners;
   private readonly trustedCallerForTesting: boolean;
   private engine: WorkflowEngineLike | null;
@@ -270,6 +278,7 @@ export class WorkflowService {
     this.logger = opts.logger ?? silentLogger;
     this.now = opts.now ?? (() => new Date());
     this.randomUUID = opts.randomUUID ?? (() => nodeRandomUUID());
+    this.randomBytes = opts.randomBytes ?? ((n: number) => nodeRandomBytes(n));
     this.trustedCallerForTesting = opts.trustedCallerForTesting === true;
     this.engine = null;
   }
@@ -450,7 +459,7 @@ export class WorkflowService {
     }
 
     const runner = this.runnerFor(COORDINATOR_KIND);
-    const workflowId = generateWorkflowId(this.randomUUID);
+    const workflowId = generateWorkflowId(this.now, this.randomBytes);
     const initialCoordNodeId = generateWorkflowNodeId(this.randomUUID);
     const nowIso = this.now().toISOString();
     const coordSpec: { readonly agent: string } = { agent: args.coordinatorAgent };
