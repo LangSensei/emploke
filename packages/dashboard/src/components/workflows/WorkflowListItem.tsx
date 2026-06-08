@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { WorkflowHeaderWire } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
-import { formatAbsolute, formatRelative } from "../../utils/time";
+import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
 import { MoreHorizontalIcon } from "../Icons";
 import { WorkflowStatusBadge } from "./WorkflowStatusBadge";
 
@@ -59,21 +59,14 @@ export interface WorkflowListItemProps {
 }
 
 /**
- * One row of the workflow list. Selection is a real `<button>` so the
- * keyboard contract is unambiguous; the `<li>` itself carries the
- * `aria-posinset` / `aria-setsize` cues that Safari + VoiceOver need
- * to announce row position. The `⋯` action menu lives as a sibling
- * button so the two never nest (no `button button` shape, which would
- * be invalid HTML and confuse assistive tech). Structurally mirrors
- * `components/schedules/ScheduleListItem.tsx` 1:1 — same `⋯` trigger,
- * same controlled popover, same flip-and-size measurement, same
- * keyboard handlers, same focus-restore mechanic — so users moving
- * between Tasks / Schedules / Workflows don't have to re-learn the
- * interaction.
- *
- * Row meta line carries: id (short) · coordinator agent · "Started X"
- * relative time. The v2.1 `iter N` chip was removed in v2.2 — phase
- * depth is shown in the detail-pane `WorkflowMetaChips` instead.
+ * Row meta line carries: coordinator agent · smart relative time
+ * ("running for X" / "ran X · ended X ago" / "created X ago"). The
+ * full workflow id is rendered on its own row 4 (muted mono),
+ * matching the Tasks row pattern verbatim — list rows are an at-a-
+ * glance surface, so the id stays out of the wrapping meta sentence
+ * and lives in its own demoted slot. The v2.1 `iter N` chip was
+ * removed in v2.2 — phase depth is shown in the detail-pane
+ * `WorkflowMetaChips` instead.
  *
  * Menuitems for v2.2:
  *   - "Cancel workflow" — `aria-disabled="true"` when status is
@@ -90,10 +83,6 @@ export function WorkflowListItem({
   posinset,
   setsize,
 }: WorkflowListItemProps) {
-  const shortId = workflow.id.slice(0, 8);
-  const startedLabel = formatRelative(workflow.createdAt);
-  const startedTitle = formatAbsolute(workflow.createdAt);
-
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const refs = useMemo(() => [triggerRef, panelRef], []);
@@ -103,11 +92,12 @@ export function WorkflowListItem({
   // the workflow brief, once), and its accessible DESCRIPTION comes
   // from `aria-describedby` chaining these IDs in DOM order. Without
   // the chain, screen-reader users hear only the brief on focus and
-  // lose the status + id + agent + started context entirely, because
+  // lose the status + agent + time + id context entirely, because
   // `aria-labelledby` REPLACES (not augments) descendant-text
   // concatenation in the accessibility tree.
   const statusId = useId();
   const metaId = useId();
+  const idId = useId();
 
   const closeMenu = useCallback(
     (reason: CloseReason) => {
@@ -273,7 +263,7 @@ export function WorkflowListItem({
         className="task-list__item-select"
         aria-current={selected ? "true" : undefined}
         aria-labelledby={headlineId}
-        aria-describedby={`${statusId} ${metaId}`}
+        aria-describedby={`${statusId} ${metaId} ${idId}`}
         onClick={onSelect}
       >
         <span id={statusId} className="task-list__item-head">
@@ -287,18 +277,15 @@ export function WorkflowListItem({
           {workflow.brief}
         </span>
         <span id={metaId} className="task-list__item-meta muted">
-          <code className="task-list__id" title={`Workflow id: ${workflow.id}`}>
-            {shortId}
-          </code>
-          <span className="task-list__sep">·</span>
           <span title={`Coordinator: ${workflow.coordinatorAgent}`}>
             {workflow.coordinatorAgent}
           </span>
           <span className="task-list__sep">·</span>
-          <span className="muted" title={startedTitle}>
-            Started {startedLabel}
-          </span>
+          <WorkflowRelativeTime workflow={workflow} />
         </span>
+        <code id={idId} className="task-list__id task-list__id--muted" title={workflow.id}>
+          {workflow.id}
+        </code>
       </button>
       <div className="task-list__item-menu">
         <button
@@ -362,5 +349,41 @@ export function WorkflowListItem({
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * Smart relative-time line for a workflow row — mirrors
+ * `TaskRelativeTime`. Shows the most informative timestamp for each
+ * lifecycle stage:
+ *   - running with `startedAt`: "running for 1m 23s" (live elapsed
+ *     from start)
+ *   - terminal with `startedAt` + `endedAt`: "ran 5m 12s · ended 2h
+ *     ago"
+ *   - any other shape (queued, terminal-without-start, etc.):
+ *     "created X ago" against `createdAt` — the only timestamp every
+ *     workflow is guaranteed to carry.
+ * Tooltip carries the absolute timestamp for forensic precision.
+ */
+function WorkflowRelativeTime({ workflow }: { workflow: WorkflowHeaderWire }) {
+  if (workflow.status === "running" && workflow.startedAt) {
+    return (
+      <span className="muted" title={formatAbsolute(workflow.startedAt)}>
+        running for {formatDuration(workflow.startedAt, null)}
+      </span>
+    );
+  }
+  if (workflow.endedAt && workflow.startedAt) {
+    return (
+      <span className="muted" title={formatAbsolute(workflow.endedAt)}>
+        ran {formatDuration(workflow.startedAt, workflow.endedAt)} · ended{" "}
+        {formatRelative(workflow.endedAt)}
+      </span>
+    );
+  }
+  return (
+    <span className="muted" title={formatAbsolute(workflow.createdAt)}>
+      created {formatRelative(workflow.createdAt)}
+    </span>
   );
 }

@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useRef, useState } from "react";
 import type { WorkflowDagWire, WorkflowHeaderWire, WorkflowNodeWire } from "../../api";
+import { CopyButton } from "../../components/tasks/TaskDetail/CopyButton";
 import { WorkflowMetaChips } from "../../components/workflows/WorkflowMetaChips";
 import { WorkflowStatusBadge } from "../../components/workflows/WorkflowStatusBadge";
 import { ArtifactsTab } from "./ArtifactsTab";
@@ -113,26 +114,34 @@ export function WorkflowView({
 
   return (
     <aside className="tasks-pane__detail workflow-detail" data-testid="workflow-detail">
-      <header className="workflow-detail__header">
-        <div className="workflow-detail__header-row">
-          <WorkflowStatusBadge status={workflow.status} />
-          <h2 className="workflow-detail__title" title={workflow.brief}>
+      <header className="task-detail__head workflow-detail__header">
+        <div className="task-detail__title-row">
+          <h2 className="task-detail__title workflow-detail__title" title={workflow.brief}>
             {workflow.brief}
           </h2>
           {headerTrailing !== undefined ? (
-            <div className="workflow-detail__header-trailing">{headerTrailing}</div>
+            <div className="task-detail__title-actions">{headerTrailing}</div>
           ) : null}
         </div>
-        <div className="workflow-detail__meta muted">
-          <code
-            className="task-list__id"
-            title={`Workflow id: ${workflow.id}`}
-            data-testid="workflow-detail-id"
+        <div className="task-detail__meta-row">
+          <WorkflowStatusBadge status={workflow.status} />
+          <span
+            className="task-detail__meta-chip"
+            title={`Coordinator agent: ${workflow.coordinatorAgent}`}
           >
-            {workflow.id}
-          </code>
+            {workflow.coordinatorAgent}
+          </span>
         </div>
         <WorkflowMetaChips workflow={workflow} dag={dag} />
+        <div className="task-detail__statbar">
+          <span className="task-detail__statbar-id">
+            <span className="task-detail__statbar-key">Workflow ID</span>{" "}
+            <code title={`Workflow id: ${workflow.id}`} data-testid="workflow-detail-id">
+              {workflow.id}
+            </code>
+            <CopyButton text={workflow.id} label="Copy workflow id" />
+          </span>
+        </div>
       </header>
 
       <div

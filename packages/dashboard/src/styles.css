@@ -5493,16 +5493,6 @@ button {
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-border);
 }
-.workflow-detail__header-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.workflow-detail__header-trailing {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-}
 .workflow-detail__title {
   margin: 0;
   font-size: 16px;
@@ -5513,15 +5503,8 @@ button {
   flex: 1 1 auto;
   min-width: 0;
 }
-.workflow-detail__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-wrap: wrap;
-  font-size: 12px;
-}
 
-/* Meta-chip row — `Created · Ended · Duration · Coordinator · Phases`. */
+/* Meta-chip row — `Created · Ended · Duration · Phases`. */
 .workflow-meta-chips {
   display: flex;
   flex-wrap: wrap;

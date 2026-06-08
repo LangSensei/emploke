@@ -13,7 +13,12 @@ export interface WorkflowMetaChipsProps {
 
 /**
  * Compact horizontal meta-chip row for the workflow header:
- * `Created · Ended · Duration · Coordinator · Phases`.
+ * `Created · Ended · Duration · Phases`.
+ *
+ * The coordinator agent moved out of the chip row in v2.3 — it lives
+ * in the header `meta-row` alongside the status badge (mirroring the
+ * Tasks header pattern of `status + agent-chip`), so duplicating it
+ * here would be redundant.
  *
  * "Phases" is derived from the DAG's max `phase + 1` — the real
  * structural depth of the workflow, replacing the v2.1 `iterationCount`
@@ -47,12 +52,6 @@ export function WorkflowMetaChips({ workflow, dag }: WorkflowMetaChipsProps) {
       <div className="workflow-meta-chips__chip">
         <dt>Duration</dt>
         <dd>{durationLabel}</dd>
-      </div>
-      <div className="workflow-meta-chips__chip">
-        <dt>Coordinator</dt>
-        <dd title={`Coordinator agent: ${workflow.coordinatorAgent}`}>
-          {workflow.coordinatorAgent}
-        </dd>
       </div>
       {phaseCount !== null ? (
         <div className="workflow-meta-chips__chip">

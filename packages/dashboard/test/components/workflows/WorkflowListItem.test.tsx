@@ -72,17 +72,42 @@ describe("WorkflowListItem — selection + click", () => {
 });
 
 describe("WorkflowListItem — meta rendering", () => {
-  it("renders the short (8-char) id", () => {
+  it("renders the full workflow id on its own row (matches Tasks row-4 pattern)", () => {
+    // v2.3: the row carries the full workflow id (mono, muted) on its
+    // own line below the meta sentence — same shape as TaskListItem's
+    // row-4 `<code class="task-list__id task-list__id--muted">`. The
+    // v2.2 shortened (8-char) id in the meta sentence was removed.
     const { wf } = renderRow({ id: "wf-thisismorethan8chars" });
     const row = screen.getByTestId(`workflow-row-${wf.id}`);
-    expect(row.textContent).toContain("wf-thisi");
-    expect(row.textContent).not.toContain("wf-thisismorethan8chars");
+    const idCode = row.querySelector("code.task-list__id");
+    expect(idCode?.textContent).toBe("wf-thisismorethan8chars");
   });
 
   it("renders the coordinator agent in the row meta", () => {
     const { wf } = renderRow({ coordinatorAgent: "emploke/review" });
     const row = screen.getByTestId(`workflow-row-${wf.id}`);
     expect(row.textContent).toContain("emploke/review");
+  });
+
+  it("renders smart relative time (running → 'running for X') in the row meta", () => {
+    // v2.3: row time uses TaskRelativeTime-style branching:
+    // running with `startedAt` → "running for X" (live elapsed),
+    // not the v2.2 "Started X ago" against createdAt.
+    const { wf } = renderRow({
+      status: "running",
+      startedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+    const row = screen.getByTestId(`workflow-row-${wf.id}`);
+    expect(row.textContent).toMatch(/running for/);
+    expect(row.textContent).not.toMatch(/Started /);
+  });
+
+  it("renders smart relative time (terminal → 'ran X · ended Y ago') in the row meta", () => {
+    const start = new Date(Date.now() - 10 * 60_000).toISOString();
+    const end = new Date(Date.now() - 60_000).toISOString();
+    const { wf } = renderRow({ status: "succeeded", startedAt: start, endedAt: end });
+    const row = screen.getByTestId(`workflow-row-${wf.id}`);
+    expect(row.textContent).toMatch(/ran .* · ended /);
   });
 
   it("does NOT render an iteration-count chip in the row meta (v2.2)", () => {
