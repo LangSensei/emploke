@@ -195,3 +195,146 @@ export interface CreateWorkflowBody {
 export interface WorkflowListQuery {
   readonly status?: WorkflowStatusWire;
 }
+
+// ─── Mutation primitives — wire-shape DTOs ────────────────────────
+//
+// One body shape per substrate mutation primitive. Each mirrors the
+// corresponding `WorkflowService.<method>(args)` shape 1:1, with one
+// boundary translation: `workflowId` lives in the URL path, not the
+// body. Wire shapes are JSON-safe — plain literal-union strings (no
+// `Date`, `Map`, `Set`, `Symbol`).
+//
+// Auth is substrate-derived: the unique `kind='coordinator' AND
+// status='running'` row in the workflow IS the caller. HTTP routes
+// forward `workflowId` from the path; they do NOT accept a
+// `callerCoordNodeId` body field, header, or query param. A request
+// from outside any coord task gets `WorkflowMutationUnauthorizedError`
+// → 403.
+
+/**
+ * Per-node kind discriminator on every mutation body that allocates a
+ * new node. Mirrors `NodeKind` in `@emploke/workflow`. Listed as a
+ * literal-union string here so this pkg has no runtime dep on the
+ * substrate.
+ */
+export type WorkflowNodeKindWire = "coordinator" | "worker";
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/:wfid/nodes`.
+ * Mirrors `WorkflowService.addNode` args minus `workflowId` (in path).
+ *
+ * `spec` is forwarded verbatim to the substrate — the per-kind runner
+ * is the validator. `parents` MUST have ≥1 entry; an empty array is
+ * rejected by the substrate with `EmptyParentsError` → 400.
+ */
+export interface AddNodeBody {
+  readonly kind: WorkflowNodeKindWire;
+  readonly spec: unknown;
+  readonly parents: readonly string[];
+}
+
+/**
+ * Response of `POST /workspaces/:id/workflows/:wfid/nodes`. Mirrors
+ * `AddNodeResult` from the substrate.
+ */
+export interface AddNodeResultWire {
+  readonly nodeId: string;
+  readonly phase: number;
+}
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/:wfid/edges`.
+ * Mirrors `WorkflowService.addEdge` args minus `workflowId`.
+ */
+export interface AddEdgeBody {
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+}
+
+/**
+ * Response of `POST /workspaces/:id/workflows/:wfid/edges`. Echoes the
+ * pair back so the caller has a self-contained record of the inserted
+ * edge without re-fetching the DAG.
+ */
+export interface AddEdgeResultWire {
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+}
+
+/**
+ * Wire-shape projection of the substrate's `NodeRef` discriminated
+ * union. The substrate spells it `{ kind: "existing", id }` /
+ * `{ kind: "temp", tempId }`; on the wire we drop the explicit
+ * discriminator and rely on the presence of `nodeId` vs `tempId` —
+ * each arm has exactly one own field, so the union is unambiguous in
+ * JSON. The route boundary translates one shape to the other before
+ * calling the substrate.
+ */
+export type NodeRefWire = { readonly nodeId: string } | { readonly tempId: string };
+
+/**
+ * One declared temp node in an `addSubgraph` batch. Mirrors
+ * `AddSubgraphNodeInput` from the substrate. `existingParents` is
+ * optional and defaults to `[]` (the substrate normalizes); intra-
+ * batch parent edges go in {@link AddSubgraphBody.edges}.
+ */
+export interface AddSubgraphNodeInputWire {
+  readonly tempId: string;
+  readonly kind: WorkflowNodeKindWire;
+  readonly spec: unknown;
+  readonly existingParents?: readonly string[];
+}
+
+/** One declared edge in an `addSubgraph` batch. */
+export interface AddSubgraphEdgeInputWire {
+  readonly from: NodeRefWire;
+  readonly to: NodeRefWire;
+}
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/:wfid/subgraph`.
+ * Mirrors `WorkflowService.addSubgraph` args minus `workflowId`.
+ *
+ * `nodes.length ≥ 1` is required; the substrate rejects an empty
+ * batch with `WorkflowSubgraphEmptyError` → 400.
+ */
+export interface AddSubgraphBody {
+  readonly nodes: readonly AddSubgraphNodeInputWire[];
+  readonly edges: readonly AddSubgraphEdgeInputWire[];
+}
+
+/**
+ * Per-inserted-node entry on `AddSubgraphResultWire`. Echoes the
+ * caller-supplied `tempId` alongside the substrate-allocated `nodeId`
+ * + computed `phase` so the caller can map results back to its batch.
+ */
+export interface AddSubgraphInsertedNodeWire {
+  readonly tempId: string;
+  readonly nodeId: string;
+  readonly phase: number;
+}
+
+/** Response of `POST /workspaces/:id/workflows/:wfid/subgraph`. */
+export interface AddSubgraphResultWire {
+  readonly insertedNodes: readonly AddSubgraphInsertedNodeWire[];
+}
+
+/**
+ * Request body for `PATCH /workspaces/:id/workflows/:wfid/nodes/:nid/spec`.
+ * `newSpec` is forwarded verbatim — the per-kind runner re-validates
+ * with the same rules used at insert time.
+ */
+export interface ReplaceNodeSpecBody {
+  readonly newSpec: unknown;
+}
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/:wfid/finish`.
+ * `outcome` MUST be `"succeeded"` or `"failed"`; the substrate
+ * rejects any other value at the boundary (`WorkflowError` → 400).
+ * Workflow-level cancellation is a separate route
+ * (`POST .../cancel`).
+ */
+export interface FinishWorkflowBody {
+  readonly outcome: "succeeded" | "failed";
+}

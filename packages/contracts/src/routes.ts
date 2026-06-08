@@ -52,10 +52,19 @@ import type { RuntimeInfo } from "./runtimes.js";
 import type { ScheduleWireTarget } from "./schedules.js";
 import type { ServerConfig } from "./server-config.js";
 import type {
+  AddEdgeBody,
+  AddEdgeResultWire,
+  AddNodeBody,
+  AddNodeResultWire,
+  AddSubgraphBody,
+  AddSubgraphResultWire,
   CreateWorkflowBody,
+  FinishWorkflowBody,
+  ReplaceNodeSpecBody,
   WorkflowDagWire,
   WorkflowHeaderWire,
   WorkflowListQuery,
+  WorkflowNodeWire,
 } from "./workflows.js";
 
 // ──────────────────────────────────────────────────────────────────────
@@ -514,6 +523,23 @@ export interface WorkflowPathParams {
   readonly id: string;
   readonly wfid: string;
 }
+/**
+ * Workflow-node-scoped path params (cancel-node / remove-node /
+ * replace-spec). Extends {@link WorkflowPathParams} with the node id
+ * segment.
+ */
+export interface WorkflowNodePathParams extends WorkflowPathParams {
+  readonly nid: string;
+}
+/**
+ * Workflow-edge-scoped path params (remove-edge). Extends
+ * {@link WorkflowPathParams} with the (from, to) endpoint pair that
+ * uniquely identifies a live edge in the workflow's DAG.
+ */
+export interface WorkflowEdgePathParams extends WorkflowPathParams {
+  readonly from: string;
+  readonly to: string;
+}
 /** Catalog-resource path params (skills / agents / mcps). `name` may contain slashes. */
 export interface CatalogResourcePathParams {
   readonly id: string;
@@ -744,6 +770,80 @@ export const ROUTES = {
     "POST",
     "/api/workspaces/:id/workflows/:wfid/cancel",
   ),
+
+  // ── workflow coord-callback mutation surface (M2.5) ────────────────
+  //
+  // Eight routes that expose the substrate's full mutation surface
+  // (every primitive on `WorkflowService` except `cancelWorkflow`, which
+  // is the external-operator route above). Auth is substrate-derived:
+  // the unique `kind='coordinator' AND status='running'` row in the
+  // workflow IS the caller; none of these handlers accept a
+  // `callerCoordNodeId` body/header/query — a request from outside any
+  // coord task gets `WorkflowMutationUnauthorizedError` → 403. Order
+  // here is alphabetical for diff legibility; the server's mount order
+  // is governed by Hono's route matching (more-specific paths win).
+  "workflows.addEdge": defineRoute<
+    { params: WorkflowPathParams; body: AddEdgeBody },
+    AddEdgeResultWire
+  >("POST", "/api/workspaces/:id/workflows/:wfid/edges"),
+  "workflows.addNode": defineRoute<
+    { params: WorkflowPathParams; body: AddNodeBody },
+    AddNodeResultWire
+  >("POST", "/api/workspaces/:id/workflows/:wfid/nodes"),
+  "workflows.addSubgraph": defineRoute<
+    { params: WorkflowPathParams; body: AddSubgraphBody },
+    AddSubgraphResultWire
+  >("POST", "/api/workspaces/:id/workflows/:wfid/subgraph"),
+  /**
+   * Cancel a single worker-kind node. Coord-kind cancellation is
+   * deferred — cancel the workflow instead via the external
+   * `workflows.cancel` route. The substrate rejects coord-kind targets
+   * with `WorkflowNodeNotMutableError` → 409.
+   */
+  "workflows.cancelNode": defineRoute<{ params: WorkflowNodePathParams }, WorkflowNodeWire>(
+    "POST",
+    "/api/workspaces/:id/workflows/:wfid/nodes/:nid/cancel",
+  ),
+  /**
+   * Last act of a coord task: flip the workflow terminal. `outcome`
+   * MUST be `succeeded` or `failed`. Substrate enforces "no other
+   * running nodes" (the caller coord is excluded); a running worker
+   * fails with `WorkflowMutationUnauthorizedError` /
+   * `WorkflowAlreadyTerminalError` depending on race shape.
+   */
+  "workflows.finish": defineRoute<
+    { params: WorkflowPathParams; body: FinishWorkflowBody },
+    WorkflowHeaderWire
+  >("POST", "/api/workspaces/:id/workflows/:wfid/finish"),
+  /**
+   * Delete a single edge `(from, to)`. Endpoints live in the path,
+   * not the body, so the route is RESTful: `DELETE` on the edge's
+   * canonical address. The to-node must be `not_started` and would
+   * retain ≥1 parent after the delete.
+   */
+  "workflows.removeEdge": defineRoute<{ params: WorkflowEdgePathParams }, void>(
+    "DELETE",
+    "/api/workspaces/:id/workflows/:wfid/edges/:from/:to",
+  ),
+  /**
+   * Delete a single node. Status must be `not_started` (sealing
+   * rule); no orphaned children remain. All adjacent edges are
+   * deleted in the same tx.
+   */
+  "workflows.removeNode": defineRoute<{ params: WorkflowNodePathParams }, void>(
+    "DELETE",
+    "/api/workspaces/:id/workflows/:wfid/nodes/:nid",
+  ),
+  /**
+   * Re-validate + replace a node's opaque `spec` payload. Kind cannot
+   * change (no `newKind` arg). The per-kind runner's `validate` runs
+   * with the new spec; rejections bubble out as `WorkflowNodeSpecError`
+   * / kind-specific subclasses.
+   */
+  "workflows.replaceNodeSpec": defineRoute<
+    { params: WorkflowNodePathParams; body: ReplaceNodeSpecBody },
+    WorkflowNodeWire
+  >("PATCH", "/api/workspaces/:id/workflows/:wfid/nodes/:nid/spec"),
 
   "tasks.dispatch": defineRoute<{ params: WorkspacePathParams; body: TaskDispatchBody }, Task>(
     "POST",

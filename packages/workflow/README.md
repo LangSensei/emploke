@@ -91,3 +91,59 @@ const workflowModule = await composeWorkflowModule({
 
 Both runners live in `packages/api/src/wiring/` because they bridge
 `@emploke/workflow`, `@emploke/task`, and `@emploke/catalog`.
+
+## Coord-callback API
+
+The 8 mutation primitives on `WorkflowService` are exposed over HTTP
+on `/api/workspaces/:id/workflows/:wfid/*` so a coordinator agent's
+task can grow / shrink the DAG from its own process. The auth gate
+is substrate-derived (the unique `kind='coordinator' AND
+status='running'` row in this workflow IS the caller) — HTTP routes
+forward `workflowId` from the URL path and nothing else; there is
+no `callerCoordNodeId` body / header / query slot. A request from
+outside any coord task gets `WorkflowMutationUnauthorizedError` →
+HTTP 403.
+
+| Verb     | Path                                       | Service method     | Body                                                                                                          | Response                                       |
+| -------- | ------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `POST`   | `/:wfid/nodes`                             | `addNode`          | `{ kind, spec, parents[] }`                                                                                   | `{ nodeId, phase }`                            |
+| `POST`   | `/:wfid/edges`                             | `addEdge`          | `{ fromNodeId, toNodeId }`                                                                                    | `{ fromNodeId, toNodeId }`                     |
+| `POST`   | `/:wfid/subgraph`                          | `addSubgraph`      | `{ nodes:[{tempId,kind,spec,existingParents?}], edges:[{from,to}] }` — `from`/`to` are `{nodeId}` or `{tempId}` | `{ insertedNodes:[{tempId,nodeId,phase}] }`    |
+| `POST`   | `/:wfid/nodes/:nid/cancel`                 | `cancelNode`       | _none_                                                                                                        | `WorkflowNodeWire` (post-cancel projection)    |
+| `POST`   | `/:wfid/finish`                            | `finishWorkflow`   | `{ outcome: "succeeded" \| "failed" }`                                                                        | `WorkflowHeaderWire` (post-finish projection)  |
+| `DELETE` | `/:wfid/nodes/:nid`                        | `removeNode`       | _none_                                                                                                        | `204 No Content`                               |
+| `DELETE` | `/:wfid/edges/:from/:to`                   | `removeEdge`       | _none_                                                                                                        | `204 No Content`                               |
+| `PATCH`  | `/:wfid/nodes/:nid/spec`                   | `replaceNodeSpec`  | `{ newSpec }`                                                                                                 | `WorkflowNodeWire` (post-replace projection)   |
+
+`NodeRefWire` on the wire is a structural-discriminator union — exactly
+one of `{nodeId}` (resolve to an existing node) or `{tempId}` (resolve
+to a temp node declared in the same `addSubgraph` batch). The route
+boundary translates each shape to the substrate's tag-discriminated
+`NodeRef` (`{kind:"existing",id}` / `{kind:"temp",tempId}`) before
+calling the service.
+
+### Error policy
+
+| Substrate class                          | HTTP | Why                                                            |
+| ---------------------------------------- | ---- | -------------------------------------------------------------- |
+| `WorkflowNotFoundError`                  | 404  | addressing miss                                                |
+| `WorkflowNodeNotFoundError`              | 404  | addressing miss                                                |
+| `WorkflowEdgeNotFoundError`              | 404  | addressing miss                                                |
+| `WorkflowMutationUnauthorizedError`      | 403  | caller is not the running coord in this workflow               |
+| `InvalidWorkflowIdError` / id grammar    | 400  | caller-fixable structural validation                           |
+| `WorkflowNodeSpecError` (per-kind)       | 400  | caller-fixable spec validation                                 |
+| `EmptyParentsError`                      | 400  | mutation body empty                                            |
+| `WorkflowSubgraph*Error`                 | 400/409 | structural batch rules                                      |
+| `WorkflowNodeKindUnknownError` etc.      | 400  | enum/kind guards (see `_error-policies/workflows.ts` doc)      |
+| `WorkflowAlreadyTerminalError`           | 409  | CAS conflict — workflow is already terminal                    |
+| `WorkflowNodeNotMutableError`            | 409  | sealing rule — status disallows the verb                       |
+| `WorkflowEdgeCycleError`                 | 409  | DAG cycle would close                                          |
+| `WorkflowRemoveNodeOrphansChildError`    | 409  | delete would orphan a child                                    |
+| `WorkflowRemoveEdgeOrphansChildError`    | 409  | delete would orphan the to-node                                |
+
+The CLI surface mirrors the HTTP surface 1:1 — every route has a
+`emploke workflow <verb>` subcommand (`add-node`, `add-edge`,
+`add-subgraph`, `remove-node`, `remove-edge`, `replace-spec`,
+`cancel-node`, `finish`). Spec payloads are read from `--spec-file
+<path>` so multi-line JSON survives shell quoting. See
+`packages/cli/src/commands/workflow.ts` for the per-flag rationale.
