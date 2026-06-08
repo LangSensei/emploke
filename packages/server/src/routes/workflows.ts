@@ -424,7 +424,23 @@ function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkfl
   };
 }
 
-function validateCancelWorkflowBody(raw: unknown): ValidationResult<CancelWorkflowBody> {
+/**
+ * Internal narrowed body shape used by the cancel-route handler.
+ * Mirrors {@link CancelWorkflowBody} but with `kind` widened from
+ * optional `"user"?` to required `"user"`, reflecting the
+ * normalization the validator performs (omitted -> "user"). Keeping
+ * the wire contract optional is correct (callers can elide it) but
+ * narrowing the post-validation value lets downstream code drop the
+ * stale `?? "user"` defense at the call site.
+ */
+interface ValidatedCancelWorkflowBody {
+  readonly cancellation: {
+    readonly kind: "user";
+    readonly message: string;
+  };
+}
+
+function validateCancelWorkflowBody(raw: unknown): ValidationResult<ValidatedCancelWorkflowBody> {
   if (!isPlainObject(raw)) return { ok: false, error: "request body must be an object" };
   // Pre-v2.2 callers used `{ reason }` — reject explicitly so the
   // boundary failure is loud rather than silently dropped.
@@ -596,7 +612,7 @@ export function workflowsRoutes(
     try {
       await resolve(c).cancelWorkflow({
         workflowId: wfid,
-        cancellation: { kind: cancellation.kind ?? "user", message: cancellation.message },
+        cancellation: { kind: cancellation.kind, message: cancellation.message },
       });
       const dag = await resolve(c).getDag(wfid);
       const iter = iterationCountForNodes(dag.nodes);

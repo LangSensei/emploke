@@ -395,9 +395,42 @@ describe("workflowsRoutes — cancel", () => {
     expect(body.id).toBe(WID);
     expect(body.status).toBe("cancelled");
     expect(body.endedAt).toBe("2026-06-07T01:00:00.000Z");
+    // Regression guard for v2.3: the validator now normalizes the
+    // omitted `kind` slot to "user" once at the boundary, and the
+    // route hands the validated value to the service unchanged (no
+    // second `?? "user"` defense at the call site). This case proves
+    // the validator-side normalization is the single source of
+    // truth, so omitted-kind requests still reach the service as
+    // `{ kind: "user", ... }`.
     expect(cancelWorkflow).toHaveBeenCalledWith({
       workflowId: WID,
       cancellation: { kind: "user", message: "operator stopped" },
+    });
+  });
+
+  it("POST /:wfid/cancel passes an explicit { kind: 'user' } through unchanged", async () => {
+    // Pair to the omitted-kind test above. Explicit `kind: "user"`
+    // is the only legal value the validator accepts (line 453: any
+    // other value is a 400). This test pins that semantic — both
+    // the explicit and the implicit case land at the service as
+    // `{ kind: "user", message }`.
+    const cancelWorkflow = vi.fn(async () => {});
+    const cancelledDag: WorkflowDagSnapshot = {
+      workflow: makeHeader({ status: "cancelled", endedAt: "2026-06-07T01:00:00.000Z" }),
+      nodes: [makeCoord()],
+      edges: [],
+    };
+    const getDag = vi.fn(async () => cancelledDag);
+    const svc = stubService({ cancelWorkflow, getDag });
+    const res = await mountRoutes(svc).request(`/${WID}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancellation: { kind: "user", message: "boss said stop" } }),
+    });
+    expect(res.status).toBe(200);
+    expect(cancelWorkflow).toHaveBeenCalledWith({
+      workflowId: WID,
+      cancellation: { kind: "user", message: "boss said stop" },
     });
   });
 
