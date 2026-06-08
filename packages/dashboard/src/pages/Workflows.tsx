@@ -1,7 +1,12 @@
 import type { AgentEntry } from "@emploke/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { cancelWorkflow, type WorkflowHeaderWire } from "../api";
+import {
+  cancelWorkflow,
+  type ServerConfig,
+  type WorkflowHeaderWire,
+  type WorkflowNodeWire,
+} from "../api";
 import { HeaderActions } from "../components/HeaderActions";
 import { PlusIcon } from "../components/Icons";
 import { CreateWorkflowModal } from "../components/workflows/CreateWorkflowModal";
@@ -13,51 +18,75 @@ import { useUrlSearchValue } from "../hooks/useUrlState";
 import { useWorkflowDetail } from "../hooks/useWorkflowDetail";
 import { useWorkflows } from "../hooks/useWorkflows";
 import { WorkflowDetail } from "./workflows/WorkflowDetail";
+import { WorkflowNodeTaskPane } from "./workflows/WorkflowNodeTaskPane";
 
 export interface WorkflowsPageProps {
   agents: AgentEntry[];
   /** UUID of the workspace currently in scope (from the URL); null = no workspace. */
   currentWorkspaceId: string | null;
+  /**
+   * Server-supplied config; null while still being fetched. Used to
+   * source the Mode B per-task poll interval so the value matches the
+   * Tasks page (`config.tasks.pollIntervalMs`) instead of drifting on
+   * a Workflows-local constant.
+   */
+  config?: ServerConfig | null;
 }
+
+const DEFAULT_NODE_TASK_POLL_INTERVAL_MS = 4000;
 
 /**
  * Workflows page — workspace-scoped master-detail view for the
- * `@emploke/workflow` substrate. Filtered list on the left, detail
- * panel on the right driven by `?workflowId=` in the URL.
+ * `@emploke/workflow` substrate.
  *
- * URL-driven state (mirrors the Schedules page pattern):
+ * URL-driven state machine (mirrors the Schedules page's atomic
+ * `setMasterDetailUrl` pattern):
  *
  *   - `?status=running|succeeded|failed|cancelled|all` — list filter
  *     (default `all`, encoded as the {@link ALL_STATUS} sentinel)
  *   - `?workflowId=<wfid>` — master-detail selection
+ *   - `?nodeTaskId=<taskId>` — Mode B drill-down (right pane swaps
+ *     from the {@link WorkflowDetail} tab host to the full
+ *     {@link WorkflowNodeTaskPane})
  *
- * The detail pane re-mounts (via `key={effectiveSelectedId}`) on
- * selection change so each workflow's polling effect starts clean.
+ * When `nodeTaskId` is present, the right pane is the node-task drill
+ * (with a header pill walking the workflow's nodes in execution
+ * order). When it's absent, the right pane is the standard 3-tab
+ * `WorkflowDetail`. Tab state is component-local and does NOT
+ * round-trip through the URL.
  */
-export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps) {
+export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsPageProps) {
+  const nodeTaskPollIntervalMs =
+    config?.tasks?.pollIntervalMs ?? DEFAULT_NODE_TASK_POLL_INTERVAL_MS;
   const navigate = useNavigate();
   const location = useLocation();
   const [statusFilterRaw, setStatusFilterRaw] = useUrlSearchValue("status", ALL_STATUS);
   const [selectedIdRaw] = useUrlSearchValue("workflowId", "");
+  const [nodeTaskIdRaw] = useUrlSearchValue("nodeTaskId", "");
   const statusFilter = coerceStatusFilter(statusFilterRaw);
   const setStatusFilter = useCallback(
     (v: StatusFilter) => setStatusFilterRaw(v),
     [setStatusFilterRaw],
   );
   const selectedId = selectedIdRaw === "" ? null : selectedIdRaw;
+  const nodeTaskId = nodeTaskIdRaw === "" ? null : nodeTaskIdRaw;
 
-  const { workflows, loaded, error, setError, refresh } = useWorkflows({
-    currentWorkspaceId,
-    statusFilter,
-  });
-
-  const visible = workflows;
-
-  const setSelectedUrl = useCallback(
-    (id: string | null) => {
+  // Atomic URL writer: updates `workflowId` and `nodeTaskId` in a
+  // single `navigate()` call so two sequential single-key setters
+  // can't race via stale `location.search` snapshots. Pass
+  // `undefined` to leave a key untouched, empty string / null to
+  // delete it.
+  const setMasterDetailUrl = useCallback(
+    (next: { workflowId?: string | null; nodeTaskId?: string | null }) => {
       const params = new URLSearchParams(location.search);
-      if (id === null || id === "") params.delete("workflowId");
-      else params.set("workflowId", id);
+      if (next.workflowId !== undefined) {
+        if (next.workflowId === null || next.workflowId === "") params.delete("workflowId");
+        else params.set("workflowId", next.workflowId);
+      }
+      if (next.nodeTaskId !== undefined) {
+        if (next.nodeTaskId === null || next.nodeTaskId === "") params.delete("nodeTaskId");
+        else params.set("nodeTaskId", next.nodeTaskId);
+      }
       const search = params.toString();
       navigate(`${location.pathname}${search === "" ? "" : `?${search}`}${location.hash}`, {
         replace: true,
@@ -65,6 +94,13 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
     },
     [navigate, location.pathname, location.search, location.hash],
   );
+
+  const { workflows, loaded, error, setError, refresh } = useWorkflows({
+    currentWorkspaceId,
+    statusFilter,
+  });
+
+  const visible = workflows;
 
   const effectiveSelectedId =
     selectedId !== null && visible.some((w) => w.id === selectedId)
@@ -75,6 +111,49 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
 
   const detail = useWorkflowDetail(effectiveSelectedId);
 
+  // Compute the selected node id for the Graph tab's highlight. When
+  // Mode B is active (`nodeTaskId` set), map it back to a node id via
+  // the dag — the selected node is "the node whose taskId matches the
+  // URL." A dag that hasn't loaded yet keeps the selection null so
+  // the chip just renders un-styled.
+  const selectedNodeId =
+    nodeTaskId !== null && detail.dag !== null
+      ? (detail.dag.nodes.find((n) => n.taskId === nodeTaskId)?.id ?? null)
+      : null;
+
+  // Master selection write: clears any in-flight Mode B at the same
+  // time so the right pane never falls into the inconsistent state
+  // "workflow A's header + workflow B's nodeTaskId."
+  const onSelectWorkflow = useCallback(
+    (id: string | null) => {
+      setMasterDetailUrl({ workflowId: id, nodeTaskId: null });
+    },
+    [setMasterDetailUrl],
+  );
+
+  // Mode B entry: parent renders the node-task pane on the right.
+  // Nodes without a `taskId` (transient: dispatched but not yet
+  // recorded) are silently skipped — the Graph tab's button is also
+  // `aria-disabled` in that case so this branch is defence in depth.
+  const onSelectNode = useCallback(
+    (node: WorkflowNodeWire) => {
+      if (node.taskId === undefined) return;
+      setMasterDetailUrl({ nodeTaskId: node.taskId });
+    },
+    [setMasterDetailUrl],
+  );
+
+  const onBackToWorkflow = useCallback(() => {
+    setMasterDetailUrl({ nodeTaskId: null });
+  }, [setMasterDetailUrl]);
+
+  const onNavigateNode = useCallback(
+    (nextTaskId: string) => {
+      setMasterDetailUrl({ nodeTaskId: nextTaskId });
+    },
+    [setMasterDetailUrl],
+  );
+
   const mounted = useMounted();
   const [createOpen, setCreateOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<WorkflowHeaderWire | null>(null);
@@ -84,7 +163,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
   const handleCreated = useCallback(
     (created: WorkflowHeaderWire) => {
       setError(null);
-      setSelectedUrl(created.id);
+      setMasterDetailUrl({ workflowId: created.id, nodeTaskId: null });
       // If the active status filter would hide the new row (its
       // initial status is always `running`), reset the filter so the
       // user sees the freshly-dispatched workflow.
@@ -95,7 +174,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
       // the server rather than synthesised on the client.
       void refresh();
     },
-    [refresh, setError, setSelectedUrl, statusFilter, setStatusFilter],
+    [refresh, setError, setMasterDetailUrl, statusFilter, setStatusFilter],
   );
 
   const handleConfirmCancel = useCallback(
@@ -125,7 +204,6 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
   useEffect(() => {
     if (detail.workflow === null) return;
     if (detail.workflow.status === "running") return;
-    // Snapshot the freshly-terminal header into the list optimistically.
     if (visible.some((w) => w.id === detail.workflow?.id && w.status !== detail.workflow.status)) {
       void refresh();
     }
@@ -141,6 +219,8 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
   }
 
   const filtersActive = statusFilter !== ALL_STATUS;
+  const detailWorkflow = detail.workflow;
+  const showNodeTaskPane = nodeTaskId !== null && effectiveSelectedId !== null;
 
   return (
     <>
@@ -201,14 +281,26 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
                   <WorkflowList
                     workflows={visible}
                     selectedId={effectiveSelectedId}
-                    onSelect={setSelectedUrl}
+                    onSelect={onSelectWorkflow}
                   />
                 )}
               </div>
             </div>
 
             {(() => {
-              const detailWorkflow = detail.workflow;
+              if (showNodeTaskPane && detailWorkflow !== null) {
+                return (
+                  <WorkflowNodeTaskPane
+                    key={`${effectiveSelectedId}:${nodeTaskId}`}
+                    workflow={detailWorkflow}
+                    dag={detail.dag}
+                    nodeTaskId={nodeTaskId as string}
+                    pollIntervalMs={nodeTaskPollIntervalMs}
+                    onBack={onBackToWorkflow}
+                    onNavigate={onNavigateNode}
+                  />
+                );
+              }
               if (effectiveSelectedId !== null && detailWorkflow !== null) {
                 return (
                   <WorkflowDetail
@@ -218,6 +310,8 @@ export function WorkflowsPage({ agents, currentWorkspaceId }: WorkflowsPageProps
                     dagError={detail.dagError}
                     cancelBusy={cancelBusy && cancelTarget?.id === detailWorkflow.id}
                     onCancel={() => setCancelTarget(detailWorkflow)}
+                    selectedNodeId={selectedNodeId}
+                    onSelectNode={onSelectNode}
                   />
                 );
               }

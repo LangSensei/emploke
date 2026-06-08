@@ -1,5 +1,5 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowDagWire, WorkflowNodeWire } from "../../../src/api";
 import { WorkflowDagView } from "../../../src/pages/workflows/WorkflowDagView";
 
@@ -120,5 +120,93 @@ describe("WorkflowDagView — kind-driven styling and content", () => {
     expect(task.className).toContain("dag-node--task");
     expect(coord.textContent).toContain("emploke/dev");
     expect(task.textContent).toContain("emploke/review");
+  });
+});
+
+describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
+  it("renders nodes as <button> when onSelectNode is provided and fires the callback on click", () => {
+    const onSelectNode = vi.fn();
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-a",
+            phase: 0,
+            taskId: "task-a",
+            spec: { kind: "task", agent: "emploke/dev", brief: "a" },
+          }),
+        ])}
+        onSelectNode={onSelectNode}
+      />,
+    );
+    const node = screen.getByTestId("dag-node-n-a");
+    expect(node.tagName).toBe("BUTTON");
+    fireEvent.click(node);
+    expect(onSelectNode).toHaveBeenCalledTimes(1);
+    expect(onSelectNode.mock.calls[0]?.[0]?.id).toBe("n-a");
+  });
+
+  it("does not fire onSelectNode when the node has no taskId (aria-disabled)", () => {
+    const onSelectNode = vi.fn();
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-no-task",
+            phase: 0,
+            spec: { kind: "task", agent: "emploke/dev", brief: "x" },
+          }),
+        ])}
+        onSelectNode={onSelectNode}
+      />,
+    );
+    const node = screen.getByTestId("dag-node-n-no-task");
+    expect(node.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(node);
+    expect(onSelectNode).not.toHaveBeenCalled();
+  });
+
+  it("paints the matching node with aria-current='true' + .dag-node--selected when selectedNodeId is set", () => {
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-a",
+            phase: 0,
+            taskId: "task-a",
+            spec: { kind: "task", agent: "emploke/dev", brief: "a" },
+          }),
+          makeNode({
+            id: "n-b",
+            phase: 0,
+            createdAt: "2026-05-28T00:01:00.000Z",
+            taskId: "task-b",
+            spec: { kind: "task", agent: "emploke/dev", brief: "b" },
+          }),
+        ])}
+        selectedNodeId="n-b"
+        onSelectNode={() => {}}
+      />,
+    );
+    const selected = screen.getByTestId("dag-node-n-b");
+    const other = screen.getByTestId("dag-node-n-a");
+    expect(selected.getAttribute("aria-current")).toBe("true");
+    expect(selected.className).toContain("dag-node--selected");
+    expect(other.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("renders SVG overlay with an arrow marker when the dag has edges", () => {
+    render(
+      <WorkflowDagView
+        dag={{
+          ...makeDag([makeNode({ id: "n-a", phase: 0 }), makeNode({ id: "n-b", phase: 1 })]),
+          edges: [{ from: "n-a", to: "n-b" }],
+        }}
+      />,
+    );
+    const container = screen.getByTestId("workflow-dag");
+    const svg = container.querySelector("svg.workflow-dag__edges");
+    expect(svg).toBeTruthy();
+    expect(svg?.querySelector("marker")).toBeTruthy();
   });
 });

@@ -910,9 +910,9 @@ function RuntimeSchedulesRoute() {
  * the Tasks / Schedules `?taskId=` / `?scheduleId=` patterns.
  */
 function RuntimeWorkflowsRoute() {
-  const { wsId, data } = useWorkspaceShell();
+  const { wsId, data, config } = useWorkspaceShell();
   useBreadcrumb("Workflows", ["Runtime", "Workflows"]);
-  return <WorkflowsPage agents={data.agents} currentWorkspaceId={wsId} />;
+  return <WorkflowsPage agents={data.agents} currentWorkspaceId={wsId} config={config} />;
 }
 
 function capitalize(s: string): string {

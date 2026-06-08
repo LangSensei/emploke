@@ -33,6 +33,7 @@ import {
   fixtureSchedules,
   fixtureSessions,
   fixtureTasks,
+  fixtureWorkflowArtifacts,
   fixtureWorkflowDags,
   fixtureWorkflows,
   fixtureWorkspaces,
@@ -518,6 +519,68 @@ export const handlers = [
       );
     }
     return HttpResponse.json(cancelled);
+  }),
+  // ── Workflow artifacts (list + bytes) ────────────────────────────
+  http.get(`/api/workspaces/${W}/workflows/:wfid/artifacts`, ({ params }) => {
+    const wfid = String(params.wfid);
+    if (!workflowsState.some((w) => w.id === wfid)) {
+      return notFound("workflow not found");
+    }
+    const list = fixtureWorkflowArtifacts.get(wfid) ?? [];
+    return HttpResponse.json({ artifacts: list });
+  }),
+  http.get(`/api/workspaces/${W}/workflows/:wfid/artifacts/:encodedPath`, ({ params }) => {
+    const wfid = String(params.wfid);
+    const encodedPath = String(params.encodedPath);
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(encodedPath);
+    } catch {
+      return HttpResponse.json({ error: "bad encoding" }, { status: 400 });
+    }
+    if (decoded.includes("..") || decoded.includes("\0")) {
+      return HttpResponse.json({ error: "traversal" }, { status: 400 });
+    }
+    // Designer mode serves a tiny stub blob keyed on extension so
+    // the Artifacts tab can render markdown / image / generic
+    // previews end-to-end without wiring real fixture bytes.
+    const list = fixtureWorkflowArtifacts.get(wfid);
+    const exists = (list ?? []).some((a) => {
+      if (decoded.startsWith("summary/")) {
+        return a.kind === "workflow-summary" && a.path === decoded.slice("summary/".length);
+      }
+      if (decoded.startsWith("nodes/")) {
+        const tail = decoded.slice("nodes/".length);
+        const sep = tail.indexOf("/");
+        if (sep <= 0) return false;
+        const nodeId = tail.slice(0, sep);
+        const restPath = tail.slice(sep + 1);
+        return a.kind === "node" && a.nodeId === nodeId && a.path === restPath;
+      }
+      return false;
+    });
+    if (!exists) return HttpResponse.json({ error: "artifact not found" }, { status: 404 });
+    const ext = decoded.slice(decoded.lastIndexOf(".") + 1).toLowerCase();
+    if (ext === "md") {
+      return new HttpResponse(
+        `# Designer mode placeholder\n\nWorkflow \`${wfid}\` artifact \`${decoded}\`.\n`,
+        { headers: { "Content-Type": "text/markdown; charset=utf-8" } },
+      );
+    }
+    if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp") {
+      // Same 1x1 transparent PNG (RFC-compliant) used for designer-mode previews.
+      const pngBytes = Uint8Array.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+      ]);
+      return new HttpResponse(pngBytes, { headers: { "Content-Type": "image/png" } });
+    }
+    return new HttpResponse(`Designer-mode artifact stub: ${decoded}\n`, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
   }),
 
   // ── catch-all: 501 mutations + pass-through unknown GETs ─────

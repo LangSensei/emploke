@@ -24,6 +24,7 @@ export { fixtureAgents } from "./agents.js";
 export { fixtureSchedules } from "./schedules.js";
 export { fixtureSessions } from "./sessions.js";
 export { fixtureTasks } from "./tasks.js";
+export { fixtureWorkflowArtifacts } from "./workflow-artifacts.js";
 export { fixtureWorkflowDags, fixtureWorkflows } from "./workflows.js";
 export { fixtureActiveWorkspaceId, fixtureWorkspaces } from "./workspaces.js";
 

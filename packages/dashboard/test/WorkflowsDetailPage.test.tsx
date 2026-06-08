@@ -108,7 +108,8 @@ describe("WorkflowsPage — detail header", () => {
     const detail = screen.getByTestId("workflow-detail");
     expect(detail.textContent).toContain("Headline brief");
     expect(detail.textContent).toContain("emploke/dev");
-    expect(detail.textContent).toContain("iter 7");
+    expect(detail.textContent).toContain("Iterations");
+    expect(detail.textContent).toContain("7");
     expect(detail.querySelector("[data-testid='workflow-status-badge-running']")).toBeTruthy();
   });
 
