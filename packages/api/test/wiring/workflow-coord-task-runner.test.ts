@@ -53,7 +53,7 @@ function fakeTaskRow(overrides: Partial<{ id: string; status: string }> = {}): a
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: minimal WorkflowEntity stub; full entity has more fields the runner does not read.
-function fakeWorkflowRow(overrides: { brief?: string; details?: string } = {}): any {
+function fakeWorkflowRow(overrides: { brief?: string; details?: string | undefined } = {}): any {
   return {
     id: "wf-id",
     brief: overrides.brief ?? "wf brief",

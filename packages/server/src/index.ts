@@ -34,6 +34,7 @@ import { scheduledTasksRoutes } from "./routes/scheduled-tasks.js";
 import { schedulesRoutes } from "./routes/schedules.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { tasksRoutes } from "./routes/tasks.js";
+import { workflowsRoutes } from "./routes/workflows.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
 import { buildSubprocessEnvBase, SUBPROCESS_ENV_SCRUB_KEYS } from "./subprocess-env.js";
 
@@ -309,6 +310,18 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
     schedulesRoutes((c) => c.get("workspaceContext").schedules),
   );
   app.route("/api/workspaces", schedulesApp);
+
+  // Workflow read + lifecycle surface. The substrate is kind-agnostic
+  // and stores nodes as `{ kind, spec: unknown }`; the wire-layer
+  // projection in `routes/_workflow-projection.ts` flattens the
+  // per-kind shapes for the dashboard / CLI.
+  const workflowsApp = new Hono<{ Variables: WorkspaceVars }>();
+  workflowsApp.use("/:id/workflows/*", workspaceContextMiddleware(application));
+  workflowsApp.route(
+    "/:id/workflows",
+    workflowsRoutes((c) => c.get("workspaceContext").workflows),
+  );
+  app.route("/api/workspaces", workflowsApp);
 
   const catalogApp = new Hono<{ Variables: WorkspaceVars }>();
   catalogApp.use("/:id/catalog/*", workspaceContextMiddleware(application));

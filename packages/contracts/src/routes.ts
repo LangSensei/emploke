@@ -51,6 +51,12 @@ import type { ResolveManifest } from "./plan-to-manifest.js";
 import type { RuntimeInfo } from "./runtimes.js";
 import type { ScheduleWireTarget } from "./schedules.js";
 import type { ServerConfig } from "./server-config.js";
+import type {
+  CreateWorkflowBody,
+  WorkflowDagWire,
+  WorkflowHeaderWire,
+  WorkflowListQuery,
+} from "./workflows.js";
 
 // ──────────────────────────────────────────────────────────────────────
 // Route spec primitives
@@ -503,6 +509,11 @@ export interface TaskPathParams {
   readonly id: string;
   readonly tid: string;
 }
+/** Workflow-scoped path params (header / dag / cancel). */
+export interface WorkflowPathParams {
+  readonly id: string;
+  readonly wfid: string;
+}
 /** Catalog-resource path params (skills / agents / mcps). `name` may contain slashes. */
 export interface CatalogResourcePathParams {
   readonly id: string;
@@ -681,6 +692,59 @@ export const ROUTES = {
     { params: WorkspacePathParams; query: SchedulePreviewCronQuery },
     PreviewResult
   >("GET", "/api/workspaces/:id/schedules/preview-cron"),
+
+  // ── workflows (workspace-scoped) ───────────────────────────────────
+  /**
+   * List workflows in this workspace, newest-first by `created_at`.
+   * Optional `?status=` narrows to one lifecycle status; an unknown
+   * value yields HTTP 400 at the route boundary (the substrate would
+   * silently return `[]` otherwise).
+   *
+   * `iterationCount` on the response items is reported as `0` on
+   * list responses to keep the endpoint O(workflows): computing the
+   * true value would require N+1 node-count queries. Callers that
+   * need an accurate count fetch the workflow header
+   * (`workflows.get`) which derives it from a single per-workflow
+   * node count.
+   */
+  "workflows.list": defineRoute<
+    { params: WorkspacePathParams; query: WorkflowListQuery },
+    readonly WorkflowHeaderWire[]
+  >("GET", "/api/workspaces/:id/workflows"),
+  /**
+   * Seed a new workflow + its initial coordinator node. Body mirrors
+   * `WorkflowService.createWorkflow` args.
+   */
+  "workflows.create": defineRoute<
+    { params: WorkspacePathParams; body: CreateWorkflowBody },
+    WorkflowHeaderWire
+  >("POST", "/api/workspaces/:id/workflows"),
+  /**
+   * Workflow header lookup. `iterationCount` is computed exactly
+   * from a single per-workflow node-list query (counts coord-kind
+   * nodes; silent-retry coords count too).
+   */
+  "workflows.get": defineRoute<{ params: WorkflowPathParams }, WorkflowHeaderWire>(
+    "GET",
+    "/api/workspaces/:id/workflows/:wfid",
+  ),
+  /** Full DAG snapshot (header + nodes + edges) in a single fetch. */
+  "workflows.dag": defineRoute<{ params: WorkflowPathParams }, WorkflowDagWire>(
+    "GET",
+    "/api/workspaces/:id/workflows/:wfid/dag",
+  ),
+  /**
+   * External cancel — flips the workflow to `cancelled` and
+   * reconciles every non-terminal node. The route takes no request
+   * body (the substrate's `CancelWorkflowArgs` has no `reason`
+   * field). Returns the updated workflow header so callers see the
+   * post-cancel `endedAt` / `status` without a second round-trip.
+   */
+  "workflows.cancel": defineRoute<{ params: WorkflowPathParams }, WorkflowHeaderWire>(
+    "POST",
+    "/api/workspaces/:id/workflows/:wfid/cancel",
+  ),
+
   "tasks.dispatch": defineRoute<{ params: WorkspacePathParams; body: TaskDispatchBody }, Task>(
     "POST",
     "/api/workspaces/:id/tasks",

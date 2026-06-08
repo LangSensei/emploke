@@ -59,6 +59,29 @@ export class WorkflowRepository {
     return row === undefined ? null : WorkflowEntity.fromRow(row);
   }
 
+  /**
+   * Unbounded list of workflow header rows ordered by `created_at`
+   * descending (newest first). When `status` is supplied, narrows to
+   * rows whose `status` column equals that value; otherwise returns
+   * every row. Per-workspace volume is small enough that pagination is
+   * not yet needed — mirrors `ScheduleService.list` / `TaskService.list`
+   * which are also unbounded on the same per-workspace scope.
+   */
+  async listWorkflows(opts?: {
+    readonly status?: WorkflowStatus;
+  }): Promise<readonly WorkflowEntity[]> {
+    const rows =
+      opts?.status !== undefined
+        ? this.db
+            .select()
+            .from(workflows)
+            .where(eq(workflows.status, opts.status))
+            .orderBy(desc(workflows.createdAt))
+            .all()
+        : this.db.select().from(workflows).orderBy(desc(workflows.createdAt)).all();
+    return rows.map((row) => WorkflowEntity.fromRow(row));
+  }
+
   insertWorkflow(tx: Db, entity: WorkflowEntity): void {
     const row = entity.toRow();
     assertValidWorkflowId(row.id);
