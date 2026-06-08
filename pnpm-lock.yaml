@@ -350,6 +350,9 @@ importers:
       '@emploke/task':
         specifier: workspace:*
         version: link:../task
+      '@emploke/workflow':
+        specifier: workspace:*
+        version: link:../workflow
       '@emploke/workspace':
         specifier: workspace:*
         version: link:../workspace

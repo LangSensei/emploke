@@ -46,6 +46,7 @@
     "@emploke/schedule": "workspace:*",
     "@emploke/session": "workspace:*",
     "@emploke/task": "workspace:*",
+    "@emploke/workflow": "workspace:*",
     "@emploke/workspace": "workspace:*",
     "@hono/node-server": "^1.14.1",
     "hono": "^4.7.11",

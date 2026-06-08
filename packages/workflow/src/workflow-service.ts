@@ -50,6 +50,7 @@ import type {
   WorkflowNodeTerminalResult,
   WorkflowNodeValidateCtx,
   WorkflowRunners,
+  WorkflowStatus,
 } from "./types.js";
 import { generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
 import type { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
@@ -369,6 +370,23 @@ export class WorkflowService {
     const wf = await this.repo.readWorkflow(workflowId);
     if (wf === null) throw new WorkflowNotFoundError(workflowId);
     return wf;
+  }
+
+  /**
+   * Unbounded list of workflow headers in this workspace, ordered by
+   * `created_at` descending (newest first). Optional `status` narrows
+   * to one terminal/non-terminal value. Unknown `status` values fall
+   * through to the SQL `WHERE status = '<bogus>'` predicate and
+   * silently return `[]` — caller-facing validation lives at the
+   * route boundary (the substrate stays kind-agnostic about wire-shape
+   * vocabularies).
+   *
+   * Per-workspace volume is small enough that pagination is not yet
+   * needed — same shape as `ScheduleService.list` /
+   * `TaskService.list`.
+   */
+  async list(opts?: { readonly status?: WorkflowStatus }): Promise<readonly WorkflowEntity[]> {
+    return this.repo.listWorkflows(opts);
   }
 
   async getDag(workflowId: string): Promise<WorkflowDagSnapshot> {

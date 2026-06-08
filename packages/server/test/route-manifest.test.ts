@@ -36,6 +36,7 @@ import { CopilotRuntime, RuntimeRegistry } from "@emploke/runtime";
 import type { ScheduleService } from "@emploke/schedule";
 import type { SessionService } from "@emploke/session";
 import type { TaskService } from "@emploke/task";
+import type { WorkflowService } from "@emploke/workflow";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { catalogRoutes } from "../src/routes/catalog/index.js";
@@ -46,6 +47,7 @@ import { scheduledTasksRoutes } from "../src/routes/scheduled-tasks.js";
 import { schedulesRoutes } from "../src/routes/schedules.js";
 import { sessionsRoutes } from "../src/routes/sessions.js";
 import { tasksRoutes } from "../src/routes/tasks.js";
+import { workflowsRoutes } from "../src/routes/workflows.js";
 import { workspacesRoutes } from "../src/routes/workspaces.js";
 
 /**
@@ -113,6 +115,13 @@ function buildAppForTest(): Hono {
   );
   app.route("/api/workspaces", schedulesApp);
 
+  const workflowsApp = new Hono();
+  workflowsApp.route(
+    "/:id/workflows",
+    workflowsRoutes(() => stubWorkflowService()),
+  );
+  app.route("/api/workspaces", workflowsApp);
+
   const catalogApp = new Hono();
   catalogApp.route(
     "/:id/catalog",
@@ -153,7 +162,7 @@ describe("route manifest", () => {
     // and forces a deliberate ++N here, which surfaces in code review.
     // Historical bumps are reachable via `git log -p`; the running
     // total is the only fact a reader needs today.
-    expect(listRoutes()).toHaveLength(65);
+    expect(listRoutes()).toHaveLength(70);
   });
 });
 
@@ -222,6 +231,14 @@ function stubScheduleService(): ScheduleService {
   return new Proxy({} as ScheduleService, {
     get() {
       throw new Error("stubScheduleService: not callable");
+    },
+  });
+}
+
+function stubWorkflowService(): WorkflowService {
+  return new Proxy({} as WorkflowService, {
+    get() {
+      throw new Error("stubWorkflowService: not callable");
     },
   });
 }

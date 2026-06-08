@@ -91,3 +91,107 @@ export type WorkflowNodeWireSpec =
   | WorkflowTaskNodeSpecWire
   | WorkflowCoordinatorNodeSpecWire
   | { readonly kind: string; readonly spec: unknown };
+
+// ─── HTTP wire-shape DTOs ─────────────────────────────────────────
+
+/**
+ * Workflow lifecycle status, mirrored from `@emploke/workflow`'s
+ * `WorkflowStatus`. Duplicated as a literal-union string here so the
+ * contracts package stays free of a runtime dep on `@emploke/workflow`.
+ */
+export type WorkflowStatusWire = "running" | "succeeded" | "failed" | "cancelled";
+
+/**
+ * Workflow node lifecycle status, mirrored from `@emploke/workflow`'s
+ * `WorkflowNodeStatus`. Duplicated as a literal-union string here so
+ * the contracts package stays free of a runtime dep on
+ * `@emploke/workflow`.
+ */
+export type WorkflowNodeStatusWire =
+  | "not_started"
+  | "ready"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+/**
+ * Wire projection of a workflow header. Field set mirrors the
+ * persisted `WorkflowEntity` shape verbatim — timestamps are ISO 8601
+ * strings (already stored that way), optional `endedAt` is absent on
+ * non-terminal rows. `iterationCount` is computed by the server from
+ * the workflow's coord-node count (silent-retry coords are counted
+ * too — a retry IS another iteration from the user's perspective);
+ * see `deriveIterationCount` in `@emploke/workflow`.
+ */
+export interface WorkflowHeaderWire {
+  readonly id: string;
+  readonly brief: string;
+  readonly details?: string;
+  readonly coordinatorAgent: string;
+  readonly status: WorkflowStatusWire;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly iterationCount: number;
+  readonly createdAt: string;
+  readonly startedAt?: string;
+  readonly endedAt?: string;
+}
+
+/**
+ * Wire projection of a single workflow node. Per-kind `spec` is
+ * projected flat via {@link WorkflowNodeWireSpec}. Lifecycle
+ * timestamps mirror the persisted `WorkflowNodeEntity` shape —
+ * `readyAt` / `runningAt` / `endedAt` are present once the node has
+ * reached that state.
+ */
+export interface WorkflowNodeWire {
+  readonly id: string;
+  readonly workflowId: string;
+  readonly phase: number;
+  readonly status: WorkflowNodeStatusWire;
+  readonly spec: WorkflowNodeWireSpec;
+  readonly createdAt: string;
+  readonly readyAt?: string;
+  readonly runningAt?: string;
+  readonly endedAt?: string;
+}
+
+/** Wire projection of one DAG edge — parent / child node ids only. */
+export interface WorkflowEdgeWire {
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Wire projection of the full DAG snapshot returned by
+ * `GET /workspaces/:id/workflows/:wfid/dag`. The header is denormed
+ * onto the snapshot for client convenience (so a single fetch yields
+ * everything the dashboard needs to render the graph).
+ */
+export interface WorkflowDagWire {
+  readonly workflow: WorkflowHeaderWire;
+  readonly nodes: readonly WorkflowNodeWire[];
+  readonly edges: readonly WorkflowEdgeWire[];
+}
+
+/**
+ * Request body for `POST /workspaces/:id/workflows`. Mirrors
+ * `WorkflowService.createWorkflow` args. `metadata` is opaque and
+ * forwarded verbatim to the substrate.
+ */
+export interface CreateWorkflowBody {
+  readonly brief: string;
+  readonly details?: string;
+  readonly coordinatorAgent: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Query string for `GET /workspaces/:id/workflows`. When `status` is
+ * supplied, the server narrows the list to that lifecycle status;
+ * otherwise every workflow is returned. Unknown `status` values are
+ * rejected at the route boundary with HTTP 400.
+ */
+export interface WorkflowListQuery {
+  readonly status?: WorkflowStatusWire;
+}

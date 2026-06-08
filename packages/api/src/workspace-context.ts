@@ -5,9 +5,12 @@ import type { RuntimeRegistry } from "@emploke/runtime";
 import { composeScheduleModule, type ScheduleService } from "@emploke/schedule";
 import { composeSessionModule, type SessionService, type SpawnFn } from "@emploke/session";
 import { composeTaskModule, type TaskService } from "@emploke/task";
+import { composeWorkflowModule, type WorkflowService } from "@emploke/workflow";
 import type { Workspace, WorkspaceService } from "@emploke/workspace";
 import pino, { type Logger } from "pino";
 import { makeTaskKindHandler } from "./wiring/schedule-task-handler.js";
+import { makeCoordNodeRunner } from "./wiring/workflow-coord-task-runner.js";
+import { makeWorkerNodeRunner } from "./wiring/workflow-task-runner.js";
 
 const silentLogger: Logger = pino({ level: "silent" });
 
@@ -47,6 +50,17 @@ export interface WorkspaceContext {
    * doesn't race a closed `TaskService`.
    */
   readonly schedules: ScheduleService;
+  /**
+   * Per-workspace DAG-orchestration substrate. Hands the
+   * coordinator-kind dispatch path a `TaskService`-backed runner via
+   * a two-phase `getService` thunk (the runner needs a ref to the
+   * `WorkflowService` it sits inside), and the worker-kind
+   * dispatch path a sibling runner over the same `TaskService`.
+   * Closed FIRST in `close()` so the engine's drain step (which
+   * calls into `tasks.cancel` for any live nodes) still has a live
+   * `TaskService` to talk to.
+   */
+  readonly workflows: WorkflowService;
   /** Closes all backing connections. Idempotent. */
   close(): Promise<void>;
 }
@@ -221,6 +235,23 @@ export class WorkspaceContextRegistry {
     let sessionModule: Awaited<ReturnType<typeof composeSessionModule>>;
     let taskModule: Awaited<ReturnType<typeof composeTaskModule>>;
     let scheduleModule: Awaited<ReturnType<typeof composeScheduleModule>>;
+    let workflowModule: Awaited<ReturnType<typeof composeWorkflowModule>>;
+    // Two-phase init seam: the coord runner needs a ref to the
+    // `WorkflowService` it lives inside (to read header `brief` /
+    // `details` at dispatch time), but the service is constructed
+    // by `composeWorkflowModule` which itself requires the runner.
+    // The thunk lets us build the runner first, call compose, then
+    // assign the ref. Mirrors the engine ↔ service two-phase init
+    // at `packages/workflow/src/compose.ts:113`.
+    let workflowSvc: WorkflowService | null = null;
+    const getWorkflowService = (): WorkflowService => {
+      if (workflowSvc === null) {
+        throw new Error(
+          "workspace-context: workflow service accessed before composeWorkflowModule completed",
+        );
+      }
+      return workflowSvc;
+    };
     try {
       catalogModule = await composeCatalogModule({
         dbFile,
@@ -277,6 +308,32 @@ export class WorkspaceContextRegistry {
         }),
       );
       await scheduleModule.service.recover();
+
+      // Workflow substrate composed LAST so its coord runner can
+      // bridge to a live `TaskService` (for dispatch) and the
+      // catalog (for `validate` agent existence). Build runners
+      // first — `composeWorkflowModule` requires them in its
+      // options — and capture the workflow service ref via the
+      // `getWorkflowService` thunk for the coord runner.
+      const coordRunner = makeCoordNodeRunner({
+        tasks: taskModule.service,
+        catalog: catalogModule.service,
+        getService: getWorkflowService,
+        logger: this.logger,
+      });
+      const workerRunner = makeWorkerNodeRunner({
+        tasks: taskModule.service,
+        catalog: catalogModule.service,
+        logger: this.logger,
+      });
+      workflowModule = await composeWorkflowModule({
+        dbFile,
+        workspaceDir: workspace.workspaceDir,
+        logger: this.logger,
+        runners: { coordinator: coordRunner, worker: workerRunner },
+      });
+      workflowSvc = workflowModule.service;
+      cleanup.push(() => workflowModule.close());
     } catch (err) {
       await teardown();
       throw err;
@@ -289,6 +346,7 @@ export class WorkspaceContextRegistry {
       sessions: sessionModule.service,
       tasks: taskModule.service,
       schedules: scheduleModule.service,
+      workflows: workflowModule.service,
       async close() {
         // Per-module try/catch: a throw from one module's close()
         // must NOT skip the others. Without per-module catches a
@@ -296,16 +354,26 @@ export class WorkspaceContextRegistry {
         // catalog SQLite handles. Same all-or-nothing disposal
         // idiom as load()'s cleanup stack.
         //
-        // Ordering: schedule FIRST (reverse of compose). schedule's
-        // close() awaits `service.shutdown()`, which clears the
-        // in-flight setTimeout queue; closing it before tasks means
-        // no new fires can land on a torn-down TaskService.
+        // Ordering: workflow FIRST, then schedule, then task /
+        // session / catalog (reverse of compose). workflow's
+        // close() awaits `engine.stop()` which drains in-flight
+        // ticks; those ticks dispatch through `TaskService`, so
+        // tasks must still be alive while workflow drains.
+        // schedule's close() likewise awaits `service.shutdown()`
+        // which clears the in-flight setTimeout queue; closing it
+        // before tasks means no new fires can land on a torn-down
+        // TaskService.
         //
         // Multi-error handling: the FIRST error is re-thrown so the
         // caller sees something; LATER errors are logged via the
         // pkg's `silentLogger`-or-injected logger so a wedged 2nd
         // module isn't lost.
         const errors: unknown[] = [];
+        try {
+          await workflowModule.close();
+        } catch (err) {
+          errors.push(err);
+        }
         try {
           await scheduleModule.close();
         } catch (err) {
