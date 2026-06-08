@@ -90,6 +90,16 @@ const ALLOWED_FLAT_EXCEPTIONS: readonly FlatException[] = [
   },
   // cli
   // dashboard
+  {
+    file: "packages/dashboard/test/hooks/useWorkflowArtifacts.test.ts",
+    rationale:
+      "subdirected by area (hooks/); imports span hooks/ + api sibling subdirs of src/ — rule says flat. Mirrors src/hooks/useWorkflowArtifacts.ts; co-location with the source aids editor navigation, retained.",
+  },
+  {
+    file: "packages/dashboard/test/pages/workflows/ArtifactsTab.test.tsx",
+    rationale:
+      "subdirected by area (pages/workflows/); imports span pages/workflows/ + api sibling subdirs of src/ — rule says flat. Mirrors src/pages/workflows/ArtifactsTab.tsx; co-location with the source aids editor navigation, retained.",
+  },
   // e2e
   {
     file: "packages/e2e/test/architecture/inter-service-imports.test.ts",
