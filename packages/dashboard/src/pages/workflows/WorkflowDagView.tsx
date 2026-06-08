@@ -52,24 +52,27 @@ export function WorkflowDagView({ dag }: WorkflowDagViewProps) {
         >
           <div className="workflow-dag__phase-header muted">Phase {phase}</div>
           <div className="workflow-dag__phase-nodes">
-            {nodes.map((node) => (
-              <div
-                key={node.id}
-                className={`dag-node dag-node--${node.kind} dag-node--${node.status}`}
-                data-node-id={node.id}
-                data-testid={`dag-node-${node.id}`}
-                title={JSON.stringify(node.spec, null, 2)}
-              >
-                <span className="dag-node__kind-icon" aria-hidden="true">
-                  {node.kind === "coordinator" ? "🧠" : "⚙"}
-                </span>
-                <span className="dag-node__id">{node.id.slice(0, 8)}</span>
-                <span className="dag-node__agent">{extractAgent(node)}</span>
-                <span className={`dag-node__status dag-node__status--${node.status}`}>
-                  {node.status}
-                </span>
-              </div>
-            ))}
+            {nodes.map((node) => {
+              const kind = nodeKind(node);
+              return (
+                <div
+                  key={node.id}
+                  className={`dag-node dag-node--${kind} dag-node--${node.status}`}
+                  data-node-id={node.id}
+                  data-testid={`dag-node-${node.id}`}
+                  title={JSON.stringify(node.spec, null, 2)}
+                >
+                  <span className="dag-node__kind-icon" aria-hidden="true">
+                    {kind === "coordinator" ? "🧠" : "⚙"}
+                  </span>
+                  <span className="dag-node__id">{node.id.slice(0, 8)}</span>
+                  <span className="dag-node__agent">{extractAgent(node)}</span>
+                  <span className={`dag-node__status dag-node__status--${node.status}`}>
+                    {node.status}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </li>
       ))}
@@ -116,4 +119,15 @@ function extractAgent(node: WorkflowNodeWire): string {
     return spec.agent;
   }
   return "—";
+}
+
+/**
+ * Project the node spec's discriminator down to the dashboard's
+ * styling vocabulary. The contracts wire shape carries kind ONLY on
+ * `spec.kind` (the substrate's opaque envelope is flattened by the
+ * server-side projection); unknown / future kinds fall back to
+ * `"task"` so the visual still renders a recognisable node.
+ */
+function nodeKind(node: WorkflowNodeWire): "coordinator" | "task" {
+  return node.spec.kind === "coordinator" ? "coordinator" : "task";
 }

@@ -15,11 +15,11 @@ export interface CancelWorkflowModalProps {
  * destructive-confirm shape used by
  * `components/schedules/ScheduleConfirmModals.tsx` (footer with a
  * Cancel + a danger primary button, error banner above the body). The
- * optional reason textarea lets the user attach a short audit trail
- * note that becomes the workflow's `outcomeReason` once the engine
- * settles the run into `cancelled`. The server treats `reason` as
- * optional — sending an empty/whitespace-only string omits the field
- * entirely so the engine writes its own default.
+ * optional reason textarea is forwarded to the server today as a
+ * forward-compat hint — the wire `CancelWorkflowBody` keeps the field
+ * so once the substrate surfaces a cancel reason (#334 follow-up) the
+ * UI does not have to round-trip through another wire change.
+ * The server discards the reason in M2 and writes its own default.
  */
 export function CancelWorkflowModal({
   target,

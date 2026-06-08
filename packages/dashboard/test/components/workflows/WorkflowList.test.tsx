@@ -9,8 +9,8 @@ function makeWorkflow(overrides: Partial<WorkflowHeaderWire> = {}): WorkflowHead
     brief: "Default workflow",
     status: "running",
     coordinatorAgent: "emploke/dev",
+    metadata: {},
     createdAt: "2026-05-28T00:00:00.000Z",
-    updatedAt: "2026-05-28T00:00:00.000Z",
     iterationCount: 0,
     ...overrides,
   };

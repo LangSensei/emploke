@@ -68,10 +68,10 @@ let synthFireSeq = 0;
  * `workflowsState`, DAGs in `dagsState` keyed by workflow id. Both
  * reset on browser refresh — designer mode is non-persistent. Headers
  * are stored as mutable copies of the readonly fixtures so the cancel
- * handler can flip status/endedAt/outcomeReason in place. The DAG
- * shape uses a local mutable mirror of the wire type so the cancel
- * handler can re-attach the updated header and re-write the node
- * array without colliding with the wire-type's `readonly` modifiers.
+ * handler can flip status / endedAt in place. The DAG shape uses a
+ * local mutable mirror of the wire type so the cancel handler can
+ * re-attach the updated header and re-write the node array without
+ * colliding with the wire-type's `readonly` modifiers.
  */
 interface MutableWorkflowDag {
   workflow: WorkflowHeaderWire;
@@ -447,21 +447,21 @@ export const handlers = [
         : {}),
       status: "running",
       coordinatorAgent: body.coordinatorAgent,
+      metadata: body.metadata ?? {},
       createdAt: now,
-      updatedAt: now,
+      startedAt: now,
       iterationCount: 0,
     };
     workflowsState.unshift(created);
     const coordNode: WorkflowNodeWire = {
       id: `wfn-${cryptoRandom8()}`,
       workflowId: id,
-      kind: "coordinator",
       status: "running",
       phase: 0,
       spec: { kind: "coordinator", agent: body.coordinatorAgent },
       createdAt: now,
-      updatedAt: now,
-      startedAt: now,
+      readyAt: now,
+      runningAt: now,
     };
     dagsState.set(id, {
       workflow: { ...created },
@@ -491,17 +491,17 @@ export const handlers = [
         { status: 409 },
       );
     }
-    const body = (await request.json().catch(() => ({}))) as { reason?: string };
+    // M2's cancel route is body-less per #331 spec line 328 — we
+    // still parse + tolerate the body so a forward-compat client
+    // (sending the dashboard's `CancelWorkflowBody.reason`) doesn't
+    // 400. The reason is dropped because the contracts shape has no
+    // `outcomeReason` slot yet (#334 substrate gap).
+    await request.json().catch(() => ({}));
     const now = new Date().toISOString();
     const cancelled: WorkflowHeaderWire = {
       ...current,
       status: "cancelled",
-      updatedAt: now,
       endedAt: now,
-      outcomeReason:
-        typeof body.reason === "string" && body.reason.trim() !== ""
-          ? body.reason.trim()
-          : "Manually cancelled",
     };
     workflowsState[idx] = cancelled;
     const dag = dagsState.get(cancelled.id);
@@ -512,9 +512,7 @@ export const handlers = [
           ? {
               ...n,
               status: "cancelled",
-              updatedAt: now,
               endedAt: now,
-              outcomeReason: "Cancelled with parent workflow",
             }
           : n,
       );

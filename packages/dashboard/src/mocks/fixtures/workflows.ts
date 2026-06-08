@@ -17,10 +17,11 @@ import type { WorkflowDagWire, WorkflowHeaderWire } from "../../api";
  *     coordinator wake at phase 2 chasing the worker that completed
  *     in phase 1 (the canonical "engine just woke me" shape).
  *   - workflow-succeeded-simple    — succeeded, full 2-phase DAG.
- *   - workflow-failed-early        — failed, single-worker DAG plus
- *     an outcomeReason so the detail pane renders the failure banner.
- *   - workflow-cancelled-late      — cancelled mid-run; outcomeReason
- *     captures the manual cancel.
+ *   - workflow-failed-early        — failed, single-worker DAG; the
+ *     detail pane renders the substrate-gap outcome placeholder
+ *     (`#334`) on the failed status alone.
+ *   - workflow-cancelled-late      — cancelled mid-run; same
+ *     substrate-gap placeholder applies.
  */
 const EPOCH = Date.parse("2026-05-28T00:00:00.000Z");
 
@@ -36,8 +37,9 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
       "Replace the legacy session middleware with OAuth, then run a sweep to confirm no caller relied on the old session cookie. Coordinator should choose between scoped tests and a full suite once the migration patch lands.",
     status: "running",
     coordinatorAgent: "emploke/dev",
+    metadata: {},
     createdAt: iso(-180),
-    updatedAt: iso(-10),
+    startedAt: iso(-180),
     iterationCount: 3,
   },
   {
@@ -47,10 +49,10 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
       "Move all `console.log` calls in packages/catalog to the structured logger and add one happy-path test per repository module.",
     status: "succeeded",
     coordinatorAgent: "emploke/review",
+    metadata: {},
     createdAt: iso(-1440),
-    updatedAt: iso(-1320),
+    startedAt: iso(-1440),
     endedAt: iso(-1320),
-    outcomeReason: "All planned nodes succeeded",
     iterationCount: 2,
   },
   {
@@ -59,10 +61,10 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
     details: "Bump the version, run typecheck, then surface any breaking imports.",
     status: "failed",
     coordinatorAgent: "emploke/dev",
+    metadata: {},
     createdAt: iso(-2880),
-    updatedAt: iso(-2820),
+    startedAt: iso(-2880),
     endedAt: iso(-2820),
-    outcomeReason: "Coordinator planning failed — agent returned malformed plan JSON",
     iterationCount: 1,
   },
   {
@@ -72,10 +74,10 @@ export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
       "Coordinator turned out to be on the wrong agent; cancelled before phase 2 was scheduled.",
     status: "cancelled",
     coordinatorAgent: "emploke/designer",
+    metadata: {},
     createdAt: iso(-4320),
-    updatedAt: iso(-4200),
+    startedAt: iso(-4320),
     endedAt: iso(-4200),
-    outcomeReason: "Manually cancelled — wrong coordinator agent",
     iterationCount: 2,
   },
 ];
@@ -86,19 +88,17 @@ const dagRunningMultistage: WorkflowDagWire = {
     {
       id: "wfn-mig-coord-0",
       workflowId: "wf-running-multistage",
-      kind: "coordinator",
       status: "succeeded",
       phase: 0,
       spec: { kind: "coordinator", agent: "emploke/dev" },
       createdAt: iso(-180),
-      updatedAt: iso(-160),
-      startedAt: iso(-180),
+      readyAt: iso(-180),
+      runningAt: iso(-180),
       endedAt: iso(-160),
     },
     {
       id: "wfn-mig-task-1a",
       workflowId: "wf-running-multistage",
-      kind: "task",
       status: "succeeded",
       phase: 1,
       spec: {
@@ -108,26 +108,24 @@ const dagRunningMultistage: WorkflowDagWire = {
         runtime: "copilot",
       },
       createdAt: iso(-159),
-      updatedAt: iso(-90),
-      startedAt: iso(-158),
+      readyAt: iso(-159),
+      runningAt: iso(-158),
       endedAt: iso(-90),
     },
     {
       id: "wfn-mig-coord-2",
       workflowId: "wf-running-multistage",
-      kind: "coordinator",
       status: "succeeded",
       phase: 2,
       spec: { kind: "coordinator", agent: "emploke/dev" },
       createdAt: iso(-89),
-      updatedAt: iso(-70),
-      startedAt: iso(-89),
+      readyAt: iso(-89),
+      runningAt: iso(-89),
       endedAt: iso(-70),
     },
     {
       id: "wfn-mig-task-3a",
       workflowId: "wf-running-multistage",
-      kind: "task",
       status: "running",
       phase: 3,
       spec: {
@@ -137,8 +135,8 @@ const dagRunningMultistage: WorkflowDagWire = {
         runtime: "claude",
       },
       createdAt: iso(-69),
-      updatedAt: iso(-10),
-      startedAt: iso(-68),
+      readyAt: iso(-69),
+      runningAt: iso(-68),
     },
   ],
   edges: [
@@ -154,19 +152,17 @@ const dagSucceededSimple: WorkflowDagWire = {
     {
       id: "wfn-log-coord-0",
       workflowId: "wf-succeeded-simple",
-      kind: "coordinator",
       status: "succeeded",
       phase: 0,
       spec: { kind: "coordinator", agent: "emploke/review" },
       createdAt: iso(-1440),
-      updatedAt: iso(-1430),
-      startedAt: iso(-1440),
+      readyAt: iso(-1440),
+      runningAt: iso(-1440),
       endedAt: iso(-1430),
     },
     {
       id: "wfn-log-task-1a",
       workflowId: "wf-succeeded-simple",
-      kind: "task",
       status: "succeeded",
       phase: 1,
       spec: {
@@ -175,14 +171,13 @@ const dagSucceededSimple: WorkflowDagWire = {
         brief: "Replace console.log calls in packages/catalog",
       },
       createdAt: iso(-1429),
-      updatedAt: iso(-1330),
-      startedAt: iso(-1428),
+      readyAt: iso(-1429),
+      runningAt: iso(-1428),
       endedAt: iso(-1330),
     },
     {
       id: "wfn-log-task-1b",
       workflowId: "wf-succeeded-simple",
-      kind: "task",
       status: "succeeded",
       phase: 1,
       spec: {
@@ -191,8 +186,8 @@ const dagSucceededSimple: WorkflowDagWire = {
         brief: "Add structured-logger happy-path tests",
       },
       createdAt: iso(-1428),
-      updatedAt: iso(-1325),
-      startedAt: iso(-1427),
+      readyAt: iso(-1428),
+      runningAt: iso(-1427),
       endedAt: iso(-1325),
     },
   ],
@@ -208,15 +203,13 @@ const dagFailedEarly: WorkflowDagWire = {
     {
       id: "wfn-bump-coord-0",
       workflowId: "wf-failed-early",
-      kind: "coordinator",
       status: "failed",
       phase: 0,
       spec: { kind: "coordinator", agent: "emploke/dev" },
       createdAt: iso(-2880),
-      updatedAt: iso(-2820),
-      startedAt: iso(-2880),
+      readyAt: iso(-2880),
+      runningAt: iso(-2880),
       endedAt: iso(-2820),
-      outcomeReason: "Coordinator returned malformed plan JSON",
     },
   ],
   edges: [],
@@ -228,19 +221,17 @@ const dagCancelledLate: WorkflowDagWire = {
     {
       id: "wfn-brand-coord-0",
       workflowId: "wf-cancelled-late",
-      kind: "coordinator",
       status: "succeeded",
       phase: 0,
       spec: { kind: "coordinator", agent: "emploke/designer" },
       createdAt: iso(-4320),
-      updatedAt: iso(-4300),
-      startedAt: iso(-4320),
+      readyAt: iso(-4320),
+      runningAt: iso(-4320),
       endedAt: iso(-4300),
     },
     {
       id: "wfn-brand-task-1a",
       workflowId: "wf-cancelled-late",
-      kind: "task",
       status: "cancelled",
       phase: 1,
       spec: {
@@ -249,10 +240,9 @@ const dagCancelledLate: WorkflowDagWire = {
         brief: "Draft hero section copy + image layout",
       },
       createdAt: iso(-4299),
-      updatedAt: iso(-4200),
-      startedAt: iso(-4298),
+      readyAt: iso(-4299),
+      runningAt: iso(-4298),
       endedAt: iso(-4200),
-      outcomeReason: "Cancelled with parent workflow",
     },
   ],
   edges: [{ from: "wfn-brand-coord-0", to: "wfn-brand-task-1a" }],

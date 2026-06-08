@@ -7,12 +7,10 @@ function makeNode(overrides: Partial<WorkflowNodeWire> = {}): WorkflowNodeWire {
   return {
     id: "n-default",
     workflowId: "wf-1",
-    kind: "task",
     status: "running",
     phase: 0,
     spec: { kind: "task", agent: "emploke/dev", brief: "default brief" },
     createdAt: "2026-05-28T00:00:00.000Z",
-    updatedAt: "2026-05-28T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -24,8 +22,8 @@ function makeDag(nodes: WorkflowNodeWire[]): WorkflowDagWire {
       brief: "Wrapped header",
       status: "running",
       coordinatorAgent: "emploke/dev",
+      metadata: {},
       createdAt: "2026-05-28T00:00:00.000Z",
-      updatedAt: "2026-05-28T00:00:00.000Z",
       iterationCount: 0,
     },
     nodes,
@@ -50,19 +48,16 @@ describe("WorkflowDagView — phase grouping", () => {
           makeNode({
             id: "n-phase2",
             phase: 2,
-            kind: "task",
             spec: { kind: "task", agent: "emploke/review", brief: "b2" },
           }),
           makeNode({
             id: "n-phase0",
             phase: 0,
-            kind: "coordinator",
             spec: { kind: "coordinator", agent: "emploke/dev" },
           }),
           makeNode({
             id: "n-phase1",
             phase: 1,
-            kind: "task",
             spec: { kind: "task", agent: "emploke/dev", brief: "b1" },
           }),
         ])}
@@ -108,13 +103,11 @@ describe("WorkflowDagView — kind-driven styling and content", () => {
         dag={makeDag([
           makeNode({
             id: "n-coord",
-            kind: "coordinator",
             phase: 0,
             spec: { kind: "coordinator", agent: "emploke/dev" },
           }),
           makeNode({
             id: "n-task",
-            kind: "task",
             phase: 1,
             spec: { kind: "task", agent: "emploke/review", brief: "x" },
           }),

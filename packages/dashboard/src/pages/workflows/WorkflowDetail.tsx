@@ -80,13 +80,13 @@ export function WorkflowDetail({
             <span>{durationLabel}</span>
           </div>
         </div>
-        {workflow.outcomeReason !== undefined && workflow.outcomeReason !== "" ? (
+        {workflow.status === "failed" || workflow.status === "cancelled" ? (
           <div
             className="alert alert--info"
             style={{ marginTop: 8 }}
             data-testid="workflow-detail-outcome"
           >
-            <strong>Outcome:</strong> {workflow.outcomeReason}
+            <strong>Outcome:</strong> Reason unavailable — substrate gap tracked in #334.
           </div>
         ) : null}
         {canCancel ? (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type ListWorkflowsOpts, listWorkflows, type WorkflowHeaderWire } from "../api";
+import { listWorkflows, type WorkflowHeaderWire, type WorkflowListQuery } from "../api";
 import {
   ALL_STATUS,
   type StatusFilter,
@@ -50,7 +50,7 @@ export function useWorkflows({
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const opts: ListWorkflowsOpts = statusFilter !== ALL_STATUS ? { status: statusFilter } : {};
+      const opts: WorkflowListQuery = statusFilter !== ALL_STATUS ? { status: statusFilter } : {};
       const next = await listWorkflows(opts);
       if (!mounted.current) return;
       setWorkflows(sortByCreatedDesc(next));

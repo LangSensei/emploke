@@ -30,8 +30,8 @@ function makeWorkflow(): WorkflowHeaderWire {
     brief: "from-server",
     status: "running",
     coordinatorAgent: "emploke/dev",
+    metadata: {},
     createdAt: "2026-05-28T00:00:00.000Z",
-    updatedAt: "2026-05-28T00:00:00.000Z",
     iterationCount: 0,
   };
 }
