@@ -1,0 +1,578 @@
+/**
+ * `emploke workflow …` — per-subcommand tests covering the 5 verbs
+ * (list / create / show / dag / cancel) shipped by the M2.3 CLI.
+ *
+ * Shape mirrors `schedule-patch.test.ts`: vi.spyOn the global
+ * `fetch`, drive the command's pure function directly, assert on the
+ * URL / method / body / exit code / stdout. Where the verb routes
+ * through commander (`runCli`) it's documented inline.
+ *
+ * Each subcommand block covers:
+ *  - happy path (200 → exit 0 with the expected stdout shape)
+ *  - input validation where applicable (missing required arg → exit 2,
+ *    no fetch)
+ *  - server-error envelope (4xx with `error` + `code` → exit 4, typed
+ *    code surfaces in stderr via `formatError`)
+ */
+
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  workflowCancel,
+  workflowCreate,
+  workflowDag,
+  workflowList,
+  workflowShow,
+} from "../../src/commands/workflow.js";
+import { runCli } from "../_helpers/run-cli.js";
+
+const SERVER_URL = "http://stub.local";
+const WSID = "ws-abc";
+const WFID = "20260601-aaaaaaaa";
+
+let home: string;
+
+beforeAll(async () => {
+  home = await mkdtemp(path.join(tmpdir(), "emploke-cli-workflow-"));
+});
+afterAll(async () => {
+  await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+interface Call {
+  url: string;
+  method: string;
+  body: unknown;
+}
+
+interface MockResponse {
+  status: number;
+  body: string;
+  contentType?: string;
+}
+
+function stubFetchMulti(responses: readonly MockResponse[]): { calls: Call[] } {
+  const calls: Call[] = [];
+  let i = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const r = responses[i];
+    i += 1;
+    const rawBody = init?.body;
+    let parsed: unknown;
+    if (typeof rawBody === "string" && rawBody.length > 0) {
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch {
+        parsed = rawBody;
+      }
+    }
+    calls.push({
+      url: String(input),
+      method: String(init?.method ?? "GET"),
+      body: parsed,
+    });
+    if (r === undefined) {
+      return new Response(`unexpected request #${i}: ${String(input)}`, { status: 500 });
+    }
+    return new Response(r.body, {
+      status: r.status,
+      headers: { "content-type": r.contentType ?? "application/json" },
+    });
+  });
+  return { calls };
+}
+
+function commonOpts() {
+  return { workspace: WSID, server: SERVER_URL, home };
+}
+
+const sampleHeader = {
+  id: WFID,
+  brief: "design the parser",
+  coordinatorAgent: "emploke/coordinator",
+  status: "running" as const,
+  metadata: {},
+  iterationCount: 1,
+  createdAt: "2026-06-01T00:00:00.000Z",
+  startedAt: "2026-06-01T00:00:01.000Z",
+};
+
+const cancelledHeader = {
+  ...sampleHeader,
+  status: "cancelled" as const,
+  endedAt: "2026-06-01T00:05:00.000Z",
+};
+
+const LIST_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows`;
+const CREATE_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows`;
+const GET_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}`;
+const DAG_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/dag`;
+const CANCEL_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/cancel`;
+
+// ─── list ──────────────────────────────────────────────────────────────
+
+describe("workflowList — happy path", () => {
+  it("GETs /workflows and renders a table by default", async () => {
+    const { calls } = stubFetchMulti([
+      {
+        status: 200,
+        body: JSON.stringify([sampleHeader, { ...sampleHeader, id: "wf-2", status: "succeeded" }]),
+      },
+    ]);
+    const r = await workflowList(commonOpts());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(LIST_URL);
+    // Header row + 2 data rows.
+    expect(r.stdout).toContain("ID");
+    expect(r.stdout).toContain("BRIEF");
+    expect(r.stdout).toContain("COORDINATORAGENT");
+    expect(r.stdout).toContain("STATUS");
+    expect(r.stdout).toContain(WFID);
+    expect(r.stdout).toContain("wf-2");
+    expect(r.stdout).toContain("running");
+    expect(r.stdout).toContain("succeeded");
+  });
+
+  it("--status forwards as query param", async () => {
+    const { calls } = stubFetchMulti([
+      { status: 200, body: JSON.stringify([{ ...sampleHeader, status: "succeeded" }]) },
+    ]);
+    const r = await workflowList({ ...commonOpts(), status: "succeeded" });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.url).toBe(`${LIST_URL}?status=succeeded`);
+  });
+
+  it("--json emits the array as formatted JSON", async () => {
+    stubFetchMulti([{ status: 200, body: JSON.stringify([sampleHeader]) }]);
+    const r = await workflowList({ ...commonOpts(), json: true });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout ?? "") as ReadonlyArray<{ id: string }>;
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.id).toBe(WFID);
+  });
+});
+
+describe("workflowList — validation", () => {
+  it("rejects unknown --status with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowList({ ...commonOpts(), status: "pending" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/running, succeeded, failed, cancelled/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowList — server error envelope", () => {
+  it("400 with typed code surfaces via formatError (exit 4)", async () => {
+    stubFetchMulti([
+      {
+        status: 400,
+        body: JSON.stringify({ error: "bad status", code: "WorkflowError" }),
+      },
+    ]);
+    const r = await workflowList(commonOpts());
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toMatch(/WorkflowError/);
+    expect(r.stderr).toMatch(/HTTP 400/);
+  });
+});
+
+// ─── create ────────────────────────────────────────────────────────────
+
+describe("workflowCreate — happy path", () => {
+  it("POSTs /workflows with the full body", async () => {
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "design the parser",
+      coordAgent: "emploke/coordinator",
+      details: "Build a streaming JSON parser",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(CREATE_URL);
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+      details: "Build a streaming JSON parser",
+    });
+    // Default output: formatted record of the created header.
+    expect(r.stdout).toContain("ID");
+    expect(r.stdout).toContain(WFID);
+    expect(r.stdout).toContain("BRIEF");
+  });
+
+  it("omits --details from the body when absent", async () => {
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "design the parser",
+      coordAgent: "emploke/coordinator",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+    });
+  });
+
+  it("--json emits the header as formatted JSON", async () => {
+    stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "design the parser",
+      coordAgent: "emploke/coordinator",
+      json: true,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout ?? "") as { id: string };
+    expect(parsed.id).toBe(WFID);
+  });
+});
+
+describe("workflowCreate — validation (no fetch)", () => {
+  it("missing --brief → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "",
+      coordAgent: "emploke/coordinator",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--brief/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("missing --coord-agent → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowCreate({ ...commonOpts(), brief: "do thing", coordAgent: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--coord-agent/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("whitespace-only --brief → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "   ",
+      coordAgent: "emploke/coordinator",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowCreate — server error envelope", () => {
+  it("400 ValidationError surfaces via formatError (exit 4)", async () => {
+    stubFetchMulti([
+      {
+        status: 400,
+        body: JSON.stringify({
+          error: "coordinatorAgent must declare emploke/coordinator",
+          code: "CoordinatorAgentInvalidError",
+        }),
+      },
+    ]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "do thing",
+      coordAgent: "emploke/dev",
+    });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toMatch(/CoordinatorAgentInvalidError/);
+    expect(r.stderr).toMatch(/HTTP 400/);
+  });
+});
+
+// ─── show ──────────────────────────────────────────────────────────────
+
+describe("workflowShow — happy path", () => {
+  it("GETs /workflows/:wfid and formats the header as a record", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowShow({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(GET_URL);
+    expect(r.stdout).toContain(WFID);
+    expect(r.stdout).toContain("COORDINATORAGENT");
+    expect(r.stdout).toContain("emploke/coordinator");
+  });
+
+  it("--json emits the header as formatted JSON", async () => {
+    stubFetchMulti([{ status: 200, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowShow({ ...commonOpts(), wfid: WFID, json: true });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout ?? "") as { id: string };
+    expect(parsed.id).toBe(WFID);
+  });
+});
+
+describe("workflowShow — validation (no fetch)", () => {
+  it("empty --wfid → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowShow({ ...commonOpts(), wfid: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--wfid/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowShow — server error envelope", () => {
+  it("404 WorkflowNotFoundError surfaces via formatError (exit 4)", async () => {
+    stubFetchMulti([
+      {
+        status: 404,
+        body: JSON.stringify({
+          error: `workflow "${WFID}" not found`,
+          code: "WorkflowNotFoundError",
+        }),
+      },
+    ]);
+    const r = await workflowShow({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toMatch(/WorkflowNotFoundError/);
+    expect(r.stderr).toMatch(/HTTP 404/);
+  });
+});
+
+// ─── dag ───────────────────────────────────────────────────────────────
+
+const sampleDag = {
+  workflow: sampleHeader,
+  nodes: [
+    {
+      id: "node-coord-1",
+      workflowId: WFID,
+      phase: 0,
+      status: "succeeded",
+      spec: { kind: "coordinator", agent: "emploke/coordinator" },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      endedAt: "2026-06-01T00:00:10.000Z",
+    },
+    {
+      id: "node-task-1",
+      workflowId: WFID,
+      phase: 1,
+      status: "running",
+      spec: {
+        kind: "task",
+        agent: "emploke/dev",
+        brief: "implement parser",
+      },
+      createdAt: "2026-06-01T00:00:11.000Z",
+      runningAt: "2026-06-01T00:00:12.000Z",
+    },
+  ],
+  edges: [{ from: "node-coord-1", to: "node-task-1" }],
+};
+
+describe("workflowDag — happy path", () => {
+  it("GETs /workflows/:wfid/dag and renders nodes + edges", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleDag) }]);
+    const r = await workflowDag({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(DAG_URL);
+    // Node table headers + one row per node.
+    expect(r.stdout).toContain("PHASE");
+    expect(r.stdout).toContain("NODEID");
+    expect(r.stdout).toContain("KIND");
+    expect(r.stdout).toContain("AGENT");
+    expect(r.stdout).toContain("node-coord-1");
+    expect(r.stdout).toContain("node-task-1");
+    expect(r.stdout).toContain("emploke/coordinator");
+    expect(r.stdout).toContain("emploke/dev");
+    // Edges section.
+    expect(r.stdout).toContain("edges:");
+    expect(r.stdout).toContain("node-coord-1 → node-task-1");
+  });
+
+  it("zero edges → '(no edges)' placeholder", async () => {
+    const dagNoEdges = { ...sampleDag, edges: [] };
+    stubFetchMulti([{ status: 200, body: JSON.stringify(dagNoEdges) }]);
+    const r = await workflowDag({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain("(no edges)");
+  });
+
+  it("--json emits the full DAG snapshot as formatted JSON", async () => {
+    stubFetchMulti([{ status: 200, body: JSON.stringify(sampleDag) }]);
+    const r = await workflowDag({ ...commonOpts(), wfid: WFID, json: true });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout ?? "") as {
+      workflow: { id: string };
+      nodes: ReadonlyArray<unknown>;
+      edges: ReadonlyArray<unknown>;
+    };
+    expect(parsed.workflow.id).toBe(WFID);
+    expect(parsed.nodes).toHaveLength(2);
+    expect(parsed.edges).toHaveLength(1);
+  });
+});
+
+describe("workflowDag — validation (no fetch)", () => {
+  it("empty --wfid → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowDag({ ...commonOpts(), wfid: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--wfid/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowDag — server error envelope", () => {
+  it("404 WorkflowNotFoundError surfaces via formatError (exit 4)", async () => {
+    stubFetchMulti([
+      {
+        status: 404,
+        body: JSON.stringify({
+          error: `workflow "${WFID}" not found`,
+          code: "WorkflowNotFoundError",
+        }),
+      },
+    ]);
+    const r = await workflowDag({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toMatch(/WorkflowNotFoundError/);
+  });
+});
+
+// ─── cancel ────────────────────────────────────────────────────────────
+
+describe("workflowCancel — happy path", () => {
+  it("POSTs /workflows/:wfid/cancel with no body (route contract has no body slot)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(CANCEL_URL);
+    // Critical forward-compat assertion: even with --reason omitted,
+    // no request body is sent. See `workflows.cancel` route doc.
+    expect(calls[0]?.body).toBeUndefined();
+    expect(r.stdout).toContain(`workflow ${WFID} cancelled`);
+    expect(r.stdout).toContain("STATUS");
+    expect(r.stdout).toContain("cancelled");
+  });
+
+  it("--reason is accepted but NOT sent on the wire (forward-compat with #334)", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID, reason: "user pressed stop" });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    // Today the route's contract has no `body` slot — the CLI parses
+    // --reason but discards it. Pin the wire shape so a contract
+    // upgrade is a deliberate change, not silent drift.
+    expect(calls[0]?.body).toBeUndefined();
+  });
+
+  it("--json emits the post-cancel header as formatted JSON (no confirmation line)", async () => {
+    stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID, json: true });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout ?? "") as { id: string; status: string };
+    expect(parsed.id).toBe(WFID);
+    expect(parsed.status).toBe("cancelled");
+    // Confirmation prose is suppressed in JSON mode to keep the
+    // output a clean parseable object.
+    expect(r.stdout).not.toContain(`workflow ${WFID} cancelled`);
+  });
+});
+
+describe("workflowCancel — validation (no fetch)", () => {
+  it("empty --wfid → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowCancel({ ...commonOpts(), wfid: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--wfid/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowCancel — server error envelope", () => {
+  it("409 InvalidTransition surfaces via formatError (exit 4)", async () => {
+    stubFetchMulti([
+      {
+        status: 409,
+        body: JSON.stringify({
+          error: "workflow already terminal",
+          code: "InvalidTransition",
+        }),
+      },
+    ]);
+    const r = await workflowCancel({ ...commonOpts(), wfid: WFID });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toMatch(/InvalidTransition/);
+    expect(r.stderr).toMatch(/HTTP 409/);
+  });
+});
+
+// ─── commander wiring (argv → action) ──────────────────────────────────
+
+describe("`emploke workflow …` commander wiring (argv → action)", () => {
+  function env(): Record<string, string | undefined> {
+    return {
+      EMPLOKE_HOME: home,
+      EMPLOKE_SERVER: SERVER_URL,
+      EMPLOKE_WORKSPACE: undefined,
+    };
+  }
+
+  it("`workflow list --workspace …` routes through commander to a GET", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([sampleHeader]) }]);
+    const r = await runCli(["workflow", "list", "--workspace", WSID], env());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(LIST_URL);
+  });
+
+  it("`workflow create --brief --coord-agent` routes through commander to a POST with mapped body", async () => {
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "design the parser",
+        "--coord-agent",
+        "emploke/coordinator",
+      ],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+    });
+  });
+
+  it("`workflow cancel --wfid --reason` routes through commander; --reason is discarded on the wire", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(cancelledHeader) }]);
+    const r = await runCli(
+      ["workflow", "cancel", "--workspace", WSID, "--wfid", WFID, "--reason", "user pressed stop"],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(CANCEL_URL);
+    expect(calls[0]?.body).toBeUndefined();
+  });
+});
