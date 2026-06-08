@@ -366,7 +366,11 @@ function groupEntries(entries: readonly Entry[]): { group: string; entries: Entr
 }
 
 function nodeGroupLabel(nodeId: string, dag: WorkflowDagWire | null): string {
-  const short = nodeId.slice(0, 8);
+  // Trim trailing dashes from the short id so labels read cleanly
+  // when the 8-char window happens to land on a separator
+  // (e.g. `wf-1234-` would otherwise render as `agent · wf-1234-`
+  // with a dangling dash).
+  const short = nodeId.slice(0, 8).replace(/-+$/, "");
   if (dag === null) return `Node ${short}`;
   const node = dag.nodes.find((n) => n.id === nodeId);
   if (node === undefined) return `Node ${short}`;

@@ -107,6 +107,38 @@ describe("ArtifactsTab — dropdown UX", () => {
     expect(labels[1]).toMatch(/^Node n-a/);
   });
 
+  it("v2.3: trims trailing dashes from the 8-char short id in the node group label", async () => {
+    // Regression guard for v2.3. When a nodeId's 8-char window
+    // lands on a `-` separator (e.g. `n-12345-extra` -> short
+    // `n-12345-`), the dangling dash made the label read as
+    // `Node n-12345-` with no visible character after it. Trim
+    // trailing dashes off the short slice so the label always ends
+    // on a glyph.
+    mockListWorkflowArtifacts.mockResolvedValue({
+      artifacts: [
+        {
+          kind: "node",
+          nodeId: "n-12345-extra-bytes-here",
+          taskId: "t-x",
+          path: "logs.txt",
+          size: 200,
+          modifiedAt: "2026-05-28T00:00:00.000Z",
+          mimeBucket: "text",
+        },
+      ],
+    } as WorkflowArtifactsResponse);
+
+    render(<ArtifactsTab workflow={makeWf()} dag={null} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-artifacts-selector")).toBeTruthy();
+    });
+    const select = screen.getByTestId("workflow-artifacts-selector") as HTMLSelectElement;
+    const optgroup = select.querySelector("optgroup");
+    const label = optgroup?.getAttribute("label") ?? "";
+    expect(label).toBe("Node n-12345");
+    expect(label.endsWith("-")).toBe(false);
+  });
+
   it("auto-selects the first artifact on mount and renders a download link to it", async () => {
     mockListWorkflowArtifacts.mockResolvedValue({
       artifacts: [
