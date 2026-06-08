@@ -16,8 +16,16 @@ function makeWorkflow(overrides: Partial<WorkflowHeaderWire> = {}): WorkflowHead
   };
 }
 
-function renderRow(overrides: Partial<WorkflowHeaderWire> = {}, selected = false) {
+interface RenderOpts {
+  selected?: boolean;
+  menuOpen?: boolean;
+}
+
+function renderRow(overrides: Partial<WorkflowHeaderWire> = {}, opts: RenderOpts = {}) {
+  const { selected = false, menuOpen = false } = opts;
   const onSelect = vi.fn();
+  const onCancel = vi.fn();
+  const onMenuOpenChange = vi.fn();
   const wf = makeWorkflow(overrides);
   render(
     <ul>
@@ -25,36 +33,41 @@ function renderRow(overrides: Partial<WorkflowHeaderWire> = {}, selected = false
         workflow={wf}
         selected={selected}
         onSelect={onSelect}
+        onCancel={onCancel}
+        menuOpen={menuOpen}
+        onMenuOpenChange={onMenuOpenChange}
         posinset={1}
         setsize={1}
       />
     </ul>,
   );
-  return { wf, onSelect };
+  return { wf, onSelect, onCancel, onMenuOpenChange };
 }
 
 afterEach(() => cleanup());
 
 describe("WorkflowListItem — selection + click", () => {
-  it("invokes onSelect when the row button is clicked", () => {
+  it("invokes onSelect when the row select button is clicked", () => {
     const { wf, onSelect } = renderRow();
-    fireEvent.click(screen.getByTestId(`workflow-row-${wf.id}`).querySelector("button")!);
+    fireEvent.click(
+      screen.getByTestId(`workflow-row-${wf.id}`).querySelector(".task-list__item-select")!,
+    );
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it("adds the selected modifier class + aria-current when selected", () => {
-    const { wf } = renderRow({}, true);
+    const { wf } = renderRow({}, { selected: true });
     const row = screen.getByTestId(`workflow-row-${wf.id}`);
     expect(row.className).toContain("task-list__item--selected");
-    const btn = row.querySelector("button");
+    const btn = row.querySelector(".task-list__item-select");
     expect(btn?.getAttribute("aria-current")).toBe("true");
   });
 
   it("does not add the selected class when not selected", () => {
-    const { wf } = renderRow({}, false);
+    const { wf } = renderRow({}, { selected: false });
     const row = screen.getByTestId(`workflow-row-${wf.id}`);
     expect(row.className).not.toContain("task-list__item--selected");
-    expect(row.querySelector("button")?.getAttribute("aria-current")).toBeNull();
+    expect(row.querySelector(".task-list__item-select")?.getAttribute("aria-current")).toBeNull();
   });
 });
 
@@ -66,10 +79,151 @@ describe("WorkflowListItem — meta rendering", () => {
     expect(row.textContent).not.toContain("wf-thisismorethan8chars");
   });
 
-  it("renders the coordinator agent and iteration count", () => {
-    const { wf } = renderRow({ coordinatorAgent: "emploke/review", iterationCount: 7 });
+  it("renders the coordinator agent in the row meta", () => {
+    const { wf } = renderRow({ coordinatorAgent: "emploke/review" });
     const row = screen.getByTestId(`workflow-row-${wf.id}`);
     expect(row.textContent).toContain("emploke/review");
-    expect(row.textContent).toContain("iter 7");
+  });
+
+  it("does NOT render an iteration-count chip in the row meta (v2.2)", () => {
+    // Iter chip was removed in v2.2. Phase depth lives in the detail
+    // pane's WorkflowMetaChips now. Guarding here prevents a future
+    // regression that reintroduces the row-level chip.
+    const { wf } = renderRow({ iterationCount: 7 });
+    const row = screen.getByTestId(`workflow-row-${wf.id}`);
+    expect(row.textContent).not.toContain("iter 7");
+    expect(row.textContent).not.toContain("iter ");
+  });
+});
+
+describe("WorkflowListItem — row `⋯` menu", () => {
+  it("clicking the trigger toggles menuOpen via onMenuOpenChange(true)", () => {
+    const { wf, onMenuOpenChange } = renderRow();
+    fireEvent.click(screen.getByTestId(`workflow-row-menu-trigger-${wf.id}`));
+    expect(onMenuOpenChange).toHaveBeenCalledTimes(1);
+    expect(onMenuOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it("does NOT bubble the trigger click into onSelect (stopPropagation)", () => {
+    const { wf, onSelect } = renderRow();
+    fireEvent.click(screen.getByTestId(`workflow-row-menu-trigger-${wf.id}`));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("menuOpen=false → panel is absent", () => {
+    const { wf } = renderRow({}, { menuOpen: false });
+    expect(screen.queryByTestId(`workflow-row-menu-${wf.id}`)).toBeNull();
+  });
+
+  it("menuOpen=true → panel + Cancel + Copy ID menuitems are rendered", () => {
+    const { wf } = renderRow({ status: "running" }, { menuOpen: true });
+    expect(screen.getByTestId(`workflow-row-menu-${wf.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`workflow-row-menu-copy-id-${wf.id}`)).toBeTruthy();
+  });
+
+  it("Cancel menuitem fires onCancel(workflow) when status is running", () => {
+    const { wf, onCancel, onMenuOpenChange } = renderRow({ status: "running" }, { menuOpen: true });
+    fireEvent.click(screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledWith(wf);
+    // Menu also closes after a menuitem activation.
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("Cancel menuitem is aria-disabled + no-op for terminal workflows", () => {
+    const { wf, onCancel, onMenuOpenChange } = renderRow(
+      { status: "succeeded" },
+      { menuOpen: true },
+    );
+    const cancel = screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`);
+    expect(cancel.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(cancel);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onMenuOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("Copy ID writes the workflow id to the clipboard and closes the menu", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      const { wf, onMenuOpenChange } = renderRow({}, { menuOpen: true });
+      fireEvent.click(screen.getByTestId(`workflow-row-menu-copy-id-${wf.id}`));
+      // Wait for the awaited writeText to settle.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(writeText).toHaveBeenCalledWith(wf.id);
+      expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
+  });
+
+  it("Escape closes the menu via onMenuOpenChange(false)", () => {
+    const { wf, onMenuOpenChange } = renderRow({}, { menuOpen: true });
+    expect(screen.getByTestId(`workflow-row-menu-${wf.id}`)).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("clicking outside both the trigger and panel closes the menu", () => {
+    const { wf, onMenuOpenChange } = renderRow({}, { menuOpen: true });
+    expect(screen.getByTestId(`workflow-row-menu-${wf.id}`)).toBeTruthy();
+    // useClickOutside listens on `pointerdown` (capture phase) so the
+    // dismissal lands before any inner button's `click` would.
+    fireEvent.pointerDown(document.body);
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("trigger exposes aria-haspopup='menu' and reflects menuOpen via aria-expanded", () => {
+    const { wf, rerender } = (() => {
+      const onSelect = vi.fn();
+      const onCancel = vi.fn();
+      const onMenuOpenChange = vi.fn();
+      const wf = makeWorkflow();
+      const result = render(
+        <ul>
+          <WorkflowListItem
+            workflow={wf}
+            selected={false}
+            onSelect={onSelect}
+            onCancel={onCancel}
+            menuOpen={false}
+            onMenuOpenChange={onMenuOpenChange}
+            posinset={1}
+            setsize={1}
+          />
+        </ul>,
+      );
+      return { wf, rerender: result.rerender };
+    })();
+    const trigger = screen.getByTestId(`workflow-row-menu-trigger-${wf.id}`);
+    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    rerender(
+      <ul>
+        <WorkflowListItem
+          workflow={wf}
+          selected={false}
+          onSelect={vi.fn()}
+          onCancel={vi.fn()}
+          menuOpen={true}
+          onMenuOpenChange={vi.fn()}
+          posinset={1}
+          setsize={1}
+        />
+      </ul>,
+    );
+    expect(
+      screen.getByTestId(`workflow-row-menu-trigger-${wf.id}`).getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });

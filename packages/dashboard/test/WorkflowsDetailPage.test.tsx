@@ -94,11 +94,33 @@ afterEach(() => cleanup());
 describe("WorkflowsPage — detail header", () => {
   const agents = [makeAgent("emploke/dev")];
 
-  it("renders the header (brief, status badge, coordinator, iter) for the selected workflow", async () => {
+  it("renders the header (brief, status badge, coordinator, phases) for the selected workflow", async () => {
     const wf = makeWorkflow({ id: "wf-1", brief: "Headline brief", iterationCount: 7 });
     mockListWorkflows.mockResolvedValue([wf]);
     mockGetWorkflow.mockResolvedValue(wf);
-    mockGetWorkflowDag.mockResolvedValue(makeDag(wf));
+    // DAG with two distinct phases so we can assert the "2" badge.
+    mockGetWorkflowDag.mockResolvedValue({
+      workflow: wf,
+      nodes: [
+        {
+          id: "node-1",
+          workflowId: wf.id,
+          status: "running",
+          phase: 0,
+          spec: { kind: "coordinator", agent: wf.coordinatorAgent },
+          createdAt: wf.createdAt,
+        },
+        {
+          id: "node-2",
+          workflowId: wf.id,
+          status: "running",
+          phase: 1,
+          spec: { kind: "task", agent: "emploke/dev", brief: "x" },
+          createdAt: wf.createdAt,
+        },
+      ],
+      edges: [],
+    });
 
     renderWorkflows("/workspaces/ws-1/runtime/workflows?workflowId=wf-1", agents);
 
@@ -108,43 +130,28 @@ describe("WorkflowsPage — detail header", () => {
     const detail = screen.getByTestId("workflow-detail");
     expect(detail.textContent).toContain("Headline brief");
     expect(detail.textContent).toContain("emploke/dev");
-    expect(detail.textContent).toContain("Iterations");
-    expect(detail.textContent).toContain("7");
+    // v2.2: chip relabeled Iterations → Phases (DAG-derived).
+    expect(detail.textContent).toContain("Phases");
+    expect(detail.textContent).toContain("2");
+    // v2.2: iter chip no longer rendered anywhere in the detail pane.
+    expect(detail.textContent).not.toContain("Iterations");
     expect(detail.querySelector("[data-testid='workflow-status-badge-running']")).toBeTruthy();
   });
 
-  it("renders the Cancel CTA when status=running and hides it when terminal", async () => {
+  it("does NOT render a Cancel CTA on the detail page (v2.2 — row menu owns Cancel)", async () => {
     const wf = makeWorkflow({ id: "wf-running", status: "running" });
     mockListWorkflows.mockResolvedValue([wf]);
     mockGetWorkflow.mockResolvedValue(wf);
     mockGetWorkflowDag.mockResolvedValue(makeDag(wf));
 
-    const { unmount } = renderWorkflows(
-      "/workspaces/ws-1/runtime/workflows?workflowId=wf-running",
-      agents,
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-detail-cancel")).toBeTruthy();
-    });
-    unmount();
-
-    const wfTerm = makeWorkflow({
-      id: "wf-done",
-      status: "succeeded",
-      endedAt: "2026-05-28T01:00:00.000Z",
-    });
-    mockListWorkflows.mockResolvedValue([wfTerm]);
-    mockGetWorkflow.mockResolvedValue(wfTerm);
-    mockGetWorkflowDag.mockResolvedValue(makeDag(wfTerm));
-
-    renderWorkflows("/workspaces/ws-1/runtime/workflows?workflowId=wf-done", agents);
+    renderWorkflows("/workspaces/ws-1/runtime/workflows?workflowId=wf-running", agents);
     await waitFor(() => {
       expect(screen.getByTestId("workflow-detail")).toBeTruthy();
     });
     expect(screen.queryByTestId("workflow-detail-cancel")).toBeNull();
   });
 
-  it("opens the cancel modal and dispatches cancelWorkflow with the entered reason", async () => {
+  it("row `⋯` menu opens the cancel modal and dispatches cancelWorkflow with the entered reason", async () => {
     const wf = makeWorkflow({ id: "wf-running", status: "running" });
     mockListWorkflows.mockResolvedValue([wf]);
     mockGetWorkflow.mockResolvedValue(wf);
@@ -153,9 +160,14 @@ describe("WorkflowsPage — detail header", () => {
 
     renderWorkflows("/workspaces/ws-1/runtime/workflows?workflowId=wf-running", agents);
     await waitFor(() => {
-      expect(screen.getByTestId("workflow-detail-cancel")).toBeTruthy();
+      expect(screen.getByTestId(`workflow-row-menu-trigger-${wf.id}`)).toBeTruthy();
     });
-    fireEvent.click(screen.getByTestId("workflow-detail-cancel"));
+    // Open the row menu, then click the Cancel menuitem.
+    fireEvent.click(screen.getByTestId(`workflow-row-menu-trigger-${wf.id}`));
+    await waitFor(() => {
+      expect(screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`)).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`));
 
     await waitFor(() => {
       expect(screen.getByTestId("cancel-workflow-confirm")).toBeTruthy();

@@ -20,9 +20,6 @@ export interface WorkflowViewProps {
   workflow: WorkflowHeaderWire;
   dag: WorkflowDagWire | null;
   dagError: string | null;
-  /** Bumped by the parent on Cancel success so the button can re-render. */
-  cancelBusy: boolean;
-  onCancel: () => void;
   /**
    * Currently-selected node id (if any). Forwarded to the Graph tab so
    * the matching chip can paint `aria-current="true"` while the Mode B
@@ -44,8 +41,13 @@ export interface WorkflowViewProps {
 
 /**
  * Three-tab host for a single workflow. The header chrome (badge +
- * brief + meta chips + cancel CTA) is shared across all three tabs;
- * the tab body is the only thing that swaps.
+ * brief + meta chips) is shared across all three tabs; the tab body
+ * is the only thing that swaps.
+ *
+ * Row-level actions (Cancel workflow, Copy ID) moved off the detail
+ * pane in v2.2 — they live on the `WorkflowListItem` `⋯` menu so the
+ * detail pane stays a pure information surface (mirrors Tasks /
+ * Schedules; see the row item for the rationale).
  *
  * Tab state is local — the URL does NOT carry the active tab. The
  * spec calls this out explicitly: switching tabs should not pollute
@@ -66,8 +68,6 @@ export function WorkflowView({
   workflow,
   dag,
   dagError,
-  cancelBusy,
-  onCancel,
   selectedNodeId,
   onSelectNode,
   headerTrailing,
@@ -111,8 +111,6 @@ export function WorkflowView({
     [active, focusTab],
   );
 
-  const canCancel = workflow.status === "running";
-
   return (
     <aside className="tasks-pane__detail workflow-detail" data-testid="workflow-detail">
       <header className="workflow-detail__header">
@@ -134,20 +132,7 @@ export function WorkflowView({
             {workflow.id}
           </code>
         </div>
-        <WorkflowMetaChips workflow={workflow} />
-        {canCancel ? (
-          <div className="workflow-detail__actions">
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={onCancel}
-              disabled={cancelBusy}
-              data-testid="workflow-detail-cancel"
-            >
-              {cancelBusy ? "Cancelling…" : "Cancel workflow"}
-            </button>
-          </div>
-        ) : null}
+        <WorkflowMetaChips workflow={workflow} dag={dag} />
       </header>
 
       <div

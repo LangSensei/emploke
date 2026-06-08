@@ -5520,13 +5520,8 @@ button {
   flex-wrap: wrap;
   font-size: 12px;
 }
-.workflow-detail__actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
 
-/* Meta-chip row — `Created · Ended · Duration · Coordinator · Iter`. */
+/* Meta-chip row — `Created · Ended · Duration · Coordinator · Phases`. */
 .workflow-meta-chips {
   display: flex;
   flex-wrap: wrap;
@@ -5594,37 +5589,10 @@ button {
   outline-offset: 2px;
 }
 
-/* Overview tab */
-.workflow-overview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-.workflow-overview__section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.workflow-overview__h {
-  margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-text-muted);
-}
-.workflow-overview__brief {
-  margin: 0;
-}
-.workflow-overview__details {
-  margin: 0;
-  padding: var(--space-2);
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+/* Overview tab — body lives in shared `.overview-tab` / `.overview-card*`
+ * selectors (defined alongside Task's OverviewTab). The metadata `<dl>`
+ * still wants per-row alignment + a mono value column, so we keep just
+ * the metadata-related shape selectors. */
 .workflow-overview__metadata {
   margin: 0;
   display: flex;
@@ -5651,87 +5619,6 @@ button {
 /* Graph tab — container that hosts WorkflowDagView */
 .workflow-graph {
   display: block;
-}
-
-/* Artifacts tab */
-.workflow-artifacts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-.workflow-artifacts__section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.workflow-artifacts__h {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-.workflow-artifacts__node-id {
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-.workflow-artifacts__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.workflow-artifacts__item {
-  list-style: none;
-}
-.workflow-artifacts__card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
-.workflow-artifacts__card-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  font-size: 12px;
-}
-.workflow-artifacts__filename {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.workflow-artifacts__size {
-  font-size: 11px;
-}
-.workflow-artifacts__download {
-  color: var(--color-accent);
-  text-decoration: none;
-}
-.workflow-artifacts__download:hover {
-  text-decoration: underline;
-}
-.workflow-artifacts__md {
-  padding: var(--space-2);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-}
-.workflow-artifacts__md-loading,
-.workflow-artifacts__md-error {
-  font-size: 12px;
-  padding: var(--space-1);
-}
-.workflow-artifacts__image {
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--radius-sm);
 }
 
 /* Node navigation pill — mirror of .fire-task-nav structurally */

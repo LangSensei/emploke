@@ -159,6 +159,19 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
   const [cancelTarget, setCancelTarget] = useState<WorkflowHeaderWire | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // Single-open coordination for the per-row `⋯` action menus
+  // (mirrors `Schedules.tsx`). At most one row's menu may be open at
+  // a time so the panels don't visually overlap or fight for focus.
+  const [openMenuWorkflowId, setOpenMenuWorkflowId] = useState<string | null>(null);
+
+  const handleRowCancel = useCallback((target: WorkflowHeaderWire) => {
+    // Row menu invokes Cancel: drop the menu, open the modal targeted
+    // at the row's workflow. Doesn't change the master selection —
+    // the user may cancel a non-selected workflow.
+    setOpenMenuWorkflowId(null);
+    setCancelError(null);
+    setCancelTarget(target);
+  }, []);
 
   const handleCreated = useCallback(
     (created: WorkflowHeaderWire) => {
@@ -284,6 +297,9 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
                     workflows={visible}
                     selectedId={effectiveSelectedId}
                     onSelect={onSelectWorkflow}
+                    onCancel={handleRowCancel}
+                    openMenuId={openMenuWorkflowId}
+                    onMenuOpenChange={setOpenMenuWorkflowId}
                   />
                 )}
               </div>
@@ -310,8 +326,6 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
                     workflow={detailWorkflow}
                     dag={detail.dag}
                     dagError={detail.dagError}
-                    cancelBusy={cancelBusy && cancelTarget?.id === detailWorkflow.id}
-                    onCancel={() => setCancelTarget(detailWorkflow)}
                     selectedNodeId={selectedNodeId}
                     onSelectNode={onSelectNode}
                   />

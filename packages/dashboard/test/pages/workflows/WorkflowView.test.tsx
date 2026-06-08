@@ -50,14 +50,7 @@ describe("WorkflowView — tablist", () => {
   it("renders the three tabs and the overview tab is active on mount", () => {
     const wf = makeWf();
     render(
-      <WorkflowView
-        workflow={wf}
-        dag={makeDag(wf)}
-        dagError={null}
-        cancelBusy={false}
-        onCancel={() => {}}
-        onSelectNode={() => {}}
-      />,
+      <WorkflowView workflow={wf} dag={makeDag(wf)} dagError={null} onSelectNode={() => {}} />,
     );
     expect(screen.getByTestId("workflow-tab-overview").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("workflow-tab-graph").getAttribute("aria-selected")).toBe("false");
@@ -70,14 +63,7 @@ describe("WorkflowView — tablist", () => {
   it("swaps the active panel when a tab is clicked", () => {
     const wf = makeWf();
     render(
-      <WorkflowView
-        workflow={wf}
-        dag={makeDag(wf)}
-        dagError={null}
-        cancelBusy={false}
-        onCancel={() => {}}
-        onSelectNode={() => {}}
-      />,
+      <WorkflowView workflow={wf} dag={makeDag(wf)} dagError={null} onSelectNode={() => {}} />,
     );
     fireEvent.click(screen.getByTestId("workflow-tab-graph"));
     expect(screen.getByTestId("workflow-tab-graph").getAttribute("aria-selected")).toBe("true");
@@ -87,14 +73,7 @@ describe("WorkflowView — tablist", () => {
   it("ArrowRight / ArrowLeft cycles through tabs (WAI-ARIA tablist)", () => {
     const wf = makeWf();
     render(
-      <WorkflowView
-        workflow={wf}
-        dag={makeDag(wf)}
-        dagError={null}
-        cancelBusy={false}
-        onCancel={() => {}}
-        onSelectNode={() => {}}
-      />,
+      <WorkflowView workflow={wf} dag={makeDag(wf)} dagError={null} onSelectNode={() => {}} />,
     );
     const overviewTab = screen.getByTestId("workflow-tab-overview");
     overviewTab.focus();
@@ -113,14 +92,7 @@ describe("WorkflowView — tablist", () => {
   it("Home / End jump to first / last tab", () => {
     const wf = makeWf();
     render(
-      <WorkflowView
-        workflow={wf}
-        dag={makeDag(wf)}
-        dagError={null}
-        cancelBusy={false}
-        onCancel={() => {}}
-        onSelectNode={() => {}}
-      />,
+      <WorkflowView workflow={wf} dag={makeDag(wf)} dagError={null} onSelectNode={() => {}} />,
     );
     const overviewTab = screen.getByTestId("workflow-tab-overview");
     fireEvent.keyDown(overviewTab, { key: "End" });
@@ -128,26 +100,31 @@ describe("WorkflowView — tablist", () => {
     fireEvent.keyDown(screen.getByTestId("workflow-tab-artifacts"), { key: "Home" });
     expect(screen.getByTestId("workflow-tab-overview").getAttribute("aria-selected")).toBe("true");
   });
+});
 
-  it("renders the cancel CTA only when status === 'running'", () => {
-    const { rerender } = render(
+describe("WorkflowView — detail-page action surface (v2.2)", () => {
+  it("does NOT render the detail-page Cancel CTA for running workflows", () => {
+    // Regression guard for v2.2: row `⋯` menu owns Cancel; the detail
+    // pane is no longer an action surface for it. A future regression
+    // that wires a Cancel button back onto the detail page would split
+    // the action affordance and confuse users.
+    render(
       <WorkflowView
         workflow={makeWf({ status: "running" })}
         dag={null}
         dagError={null}
-        cancelBusy={false}
-        onCancel={() => {}}
         onSelectNode={() => {}}
       />,
     );
-    expect(screen.queryByTestId("workflow-detail-cancel")).toBeTruthy();
-    rerender(
+    expect(screen.queryByTestId("workflow-detail-cancel")).toBeNull();
+  });
+
+  it("does NOT render the detail-page Cancel CTA for terminal workflows either", () => {
+    render(
       <WorkflowView
         workflow={makeWf({ status: "succeeded" })}
         dag={null}
         dagError={null}
-        cancelBusy={false}
-        onCancel={() => {}}
         onSelectNode={() => {}}
       />,
     );
