@@ -112,7 +112,7 @@ describe("WorkflowListItem — meta rendering", () => {
 
   it("does NOT render an iteration-count chip in the row meta (v2.2)", () => {
     // Iter chip was removed in v2.2. Phase depth lives in the detail
-    // pane's WorkflowMetaChips now. Guarding here prevents a future
+    // pane's WorkflowMetaStats now. Guarding here prevents a future
     // regression that reintroduces the row-level chip.
     const { wf } = renderRow({ iterationCount: 7 });
     const row = screen.getByTestId(`workflow-row-${wf.id}`);

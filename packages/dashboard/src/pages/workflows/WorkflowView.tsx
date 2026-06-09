@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useRef, useState } from "react";
 import type { WorkflowDagWire, WorkflowHeaderWire, WorkflowNodeWire } from "../../api";
 import { CopyButton } from "../../components/tasks/TaskDetail/CopyButton";
-import { WorkflowMetaChips } from "../../components/workflows/WorkflowMetaChips";
+import { WorkflowMetaStats } from "../../components/workflows/WorkflowMetaStats";
 import { WorkflowStatusBadge } from "../../components/workflows/WorkflowStatusBadge";
 import { ArtifactsTab } from "./ArtifactsTab";
 import { GraphTab } from "./GraphTab";
@@ -132,8 +132,8 @@ export function WorkflowView({
             {workflow.coordinatorAgent}
           </span>
         </div>
-        <WorkflowMetaChips workflow={workflow} dag={dag} />
         <div className="task-detail__statbar">
+          <WorkflowMetaStats workflow={workflow} dag={dag} />
           <span className="task-detail__statbar-id">
             <span className="task-detail__statbar-key">Workflow ID</span>{" "}
             <code title={`Workflow id: ${workflow.id}`} data-testid="workflow-detail-id">

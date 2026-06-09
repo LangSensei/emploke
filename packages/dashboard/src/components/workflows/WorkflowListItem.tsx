@@ -66,7 +66,7 @@ export interface WorkflowListItemProps {
  * glance surface, so the id stays out of the wrapping meta sentence
  * and lives in its own demoted slot. The v2.1 `iter N` chip was
  * removed in v2.2 — phase depth is shown in the detail-pane
- * `WorkflowMetaChips` instead.
+ * `WorkflowMetaStats` instead.
  *
  * Menuitems for v2.2:
  *   - "Cancel workflow" — `aria-disabled="true"` when status is
