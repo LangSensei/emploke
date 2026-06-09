@@ -150,6 +150,22 @@ const SAFE_ERROR_NAMES = new Set<string>([
   // Messages echo only caller-supplied values — no host paths, no
   // third-party stack lines.
   "WorkflowNodeKindShapeError",
+  // @emploke/api (workflow coord runner validate-time rejection).
+  // Lives in api/wiring rather than the workflow substrate because
+  // the substrate is kind-agnostic; thrown when a request's
+  // coordinator agent declares an empty `dependencies.agents`
+  // dispatch menu. Message echoes only the caller-supplied agent
+  // FQN — no host paths, no cause interpolation.
+  "WorkflowCoordAgentNotCapableError",
+  // @emploke/api (workflow coord runner strict-shape rejection).
+  // Sibling of `WorkflowCoordAgentNotCapableError`; thrown when the
+  // coord node spec is not an object, has a missing/empty `agent`,
+  // or carries an unknown key. Reachable from `POST /workflows` at
+  // create time AND from DAG-mutation routes (`addNode` /
+  // `addSubgraph` / `replaceNodeSpec`). Messages are safe by
+  // construction — closed enum of three templates with at most one
+  // caller-supplied key name interpolated.
+  "WorkflowCoordSpecError",
 ]);
 
 /**

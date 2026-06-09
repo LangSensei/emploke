@@ -35,6 +35,7 @@ export {
   DEFAULT_COORD_POLL_INTERVAL_MS,
   type MakeCoordNodeRunnerDeps,
   makeCoordNodeRunner,
+  WorkflowCoordAgentNotCapableError,
   WorkflowCoordSpecError,
 } from "./wiring/workflow-coord-task-runner.js";
 export {

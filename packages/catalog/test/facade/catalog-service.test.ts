@@ -582,6 +582,42 @@ describe("CatalogService.install", () => {
     const agent = await mgr.getAgent("public/dep-parent");
     expect(agent!.dependencies?.agents).toEqual([{ fqn: "public/dep-target" }]);
   });
+
+  // AC1: `AgentEntry.coordEligible` is the single source of truth
+  // for the dashboard's coord-agent dropdown. The substrate computes
+  // it from the same `dependencies.agents` predicate the workflow
+  // coord runner enforces at validate time; this test pins the
+  // classification for both sides.
+  it("AgentEntry.coordEligible classifies agents by non-empty dependencies.agents", async () => {
+    fetchers.setAgent("file:/abs/menu-target", {
+      "AGENTS.md": AGENT_ANCHOR("menu-target"),
+    });
+    fetchers.setAgent("file:/abs/eligible-coord", {
+      "AGENTS.md": AGENT_ANCHOR(
+        "eligible-coord",
+        `dependencies:\n  agents:\n    - "file:/abs/menu-target"`,
+      ),
+    });
+    fetchers.setAgent("file:/abs/no-menu-agent", {
+      "AGENTS.md": AGENT_ANCHOR("no-menu-agent"),
+    });
+    await mgr.installAgent("file:/abs/eligible-coord");
+    await mgr.installAgent("file:/abs/no-menu-agent");
+    const entries = await mgr.listAgentEntries();
+    const eligible = entries.find((e) => e.agent.fqn === "public/eligible-coord");
+    const notEligible = entries.find((e) => e.agent.fqn === "public/no-menu-agent");
+    const menuTarget = entries.find((e) => e.agent.fqn === "public/menu-target");
+    expect(eligible?.coordEligible).toBe(true);
+    expect(notEligible?.coordEligible).toBe(false);
+    // menu-target itself has no `dependencies.agents` so it is not
+    // coord-eligible — only the coord that references it is.
+    expect(menuTarget?.coordEligible).toBe(false);
+    // Single-entry projection (`getAgentEntry`) must agree.
+    const singleEligible = await mgr.getAgentEntry("public/eligible-coord");
+    const singleNot = await mgr.getAgentEntry("public/no-menu-agent");
+    expect(singleEligible?.coordEligible).toBe(true);
+    expect(singleNot?.coordEligible).toBe(false);
+  });
 });
 
 // ─── delete with dep protection ─────────────────────

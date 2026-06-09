@@ -140,6 +140,7 @@ describe("@emploke/catalog public API guard", () => {
     expectTypeOf<AgentMetadataPatch>().toHaveProperty("description");
     expectTypeOf<SkillEntry>().toHaveProperty("skill");
     expectTypeOf<AgentEntry>().toHaveProperty("agent");
+    expectTypeOf<AgentEntry>().toHaveProperty("coordEligible");
     expectTypeOf<SkillResolveResult>().toHaveProperty("skill");
     expectTypeOf<AgentResolveResult>().toHaveProperty("agent");
   });

@@ -166,6 +166,16 @@ export interface AgentEntry {
   readonly blockedReason?: BlockedReason;
   /** Convenience flattening of {@link BlockedReason.missingDeps}. */
   readonly missingDeps?: readonly MissingDep[];
+  /**
+   * True iff the agent is eligible to run as a workflow coordinator
+   * (its frontmatter declares a non-empty `dependencies.agents`
+   * dispatch menu). The workflow substrate enforces the same
+   * invariant at validate time inside the coord runner; this flag
+   * lets list-consumers (notably the dashboard "new workflow" modal)
+   * filter the agent list without re-deriving the predicate. Source
+   * of truth lives server-side — clients MUST NOT recompute it.
+   */
+  readonly coordEligible: boolean;
 }
 
 export interface ResolvedSkill {

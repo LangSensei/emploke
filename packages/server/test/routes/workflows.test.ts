@@ -21,6 +21,7 @@
  *     arms reach the substrate as the corresponding `NodeRef` tag
  */
 
+import { WorkflowCoordAgentNotCapableError, WorkflowCoordSpecError } from "@emploke/api";
 import type { WorkflowDagSnapshot } from "@emploke/workflow";
 import {
   WorkflowAlreadyTerminalError,
@@ -286,6 +287,63 @@ describe("workflowsRoutes — create", () => {
       body: JSON.stringify(["hi"]),
     });
     expect(res.status).toBe(400);
+  });
+
+  // AC2: a coord runner WorkflowCoordAgentNotCapableError thrown
+  // inside createWorkflow MUST map to a structured 4xx with a
+  // field-pin envelope, never to a 500. The dashboard renders the
+  // body inline next to the coord-agent select via the `field`
+  // pointer.
+  it("POST / maps WorkflowCoordAgentNotCapableError to a structured 400 (never 500)", async () => {
+    const createWorkflow = vi.fn(async () => {
+      throw new WorkflowCoordAgentNotCapableError("emploke/dev");
+    });
+    const svc = stubService({ createWorkflow });
+    const res = await mountRoutes(svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        brief: "ship feature X",
+        coordinatorAgent: "emploke/dev",
+      }),
+    });
+    expect(res.status).toBe(400);
+    // Regression: a substrate-thrown capability error must never
+    // reach the framework's generic 500 handler.
+    expect(res.status).not.toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("WorkflowCoordAgentNotCapableError");
+    expect(body.field).toBe("coordinatorAgent");
+    expect(body.agent).toBe("emploke/dev");
+    expect(typeof body.error).toBe("string");
+    expect(body.error as string).toContain("emploke/dev");
+    expect(body.error as string).toMatch(/dispatch menu|dependencies\.agents/);
+  });
+
+  // Sibling of the capability-error test above. The strict-shape
+  // guards in the coord runner's `validate` (non-object spec /
+  // missing-or-empty `agent` / unknown key) used to fall through to
+  // the framework's generic 500 — the iter-2 amend admits
+  // `WorkflowCoordSpecError` to the workflows error policy + the
+  // SAFE_ERROR_NAMES allow-list so the message survives.
+  it("POST / maps WorkflowCoordSpecError to a 400 (never 500)", async () => {
+    const createWorkflow = vi.fn(async () => {
+      throw new WorkflowCoordSpecError("Coord node spec requires non-empty agent");
+    });
+    const svc = stubService({ createWorkflow });
+    const res = await mountRoutes(svc).request("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        brief: "ship feature X",
+        coordinatorAgent: "emploke/dev",
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(res.status).not.toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("WorkflowCoordSpecError");
+    expect(body.error).toBe("Coord node spec requires non-empty agent");
   });
 });
 
