@@ -234,7 +234,7 @@ describe("WorkflowService.removeEdge", () => {
       spec: { agent: "w", brief: "b" },
       parents: [initialCoordNodeId, a],
     });
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     await expect(
       h.service.removeEdge({ workflowId, fromNodeId: a, toNodeId: b }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);

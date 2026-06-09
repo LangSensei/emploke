@@ -58,9 +58,11 @@ import type {
   AddNodeResultWire,
   AddSubgraphBody,
   AddSubgraphResultWire,
+  CancelWorkflowBody,
   CreateWorkflowBody,
   FinishWorkflowBody,
   ReplaceNodeSpecBody,
+  WorkflowArtifactsResponse,
   WorkflowDagWire,
   WorkflowHeaderWire,
   WorkflowListQuery,
@@ -540,6 +542,17 @@ export interface WorkflowEdgePathParams extends WorkflowPathParams {
   readonly from: string;
   readonly to: string;
 }
+/**
+ * Path params for the single-artifact static-bytes route. The
+ * `encodedPath` segment carries a `summary/<rest>` or
+ * `nodes/<nodeId>/<rest>` sentinel with `/` percent-encoded as
+ * `%2F` so it fits one Hono path segment.
+ */
+export interface WorkflowArtifactPathParams {
+  readonly id: string;
+  readonly wfid: string;
+  readonly encodedPath: string;
+}
 /** Catalog-resource path params (skills / agents / mcps). `name` may contain slashes. */
 export interface CatalogResourcePathParams {
   readonly id: string;
@@ -761,14 +774,38 @@ export const ROUTES = {
   ),
   /**
    * External cancel — flips the workflow to `cancelled` and
-   * reconciles every non-terminal node. The route takes no request
-   * body (the substrate's `CancelWorkflowArgs` has no `reason`
-   * field). Returns the updated workflow header so callers see the
+   * reconciles every non-terminal node. v2.2 body requires
+   * `cancellation: { kind?: 'user', message }` so the operator's
+   * reason is persisted into the workflow's `cancellation` column.
+   * Returns the updated workflow header so callers see the
    * post-cancel `endedAt` / `status` without a second round-trip.
    */
-  "workflows.cancel": defineRoute<{ params: WorkflowPathParams }, WorkflowHeaderWire>(
-    "POST",
-    "/api/workspaces/:id/workflows/:wfid/cancel",
+  "workflows.cancel": defineRoute<
+    { params: WorkflowPathParams; body: CancelWorkflowBody },
+    WorkflowHeaderWire
+  >("POST", "/api/workspaces/:id/workflows/:wfid/cancel"),
+  /**
+   * List artifacts for a workflow: workflow-summary entries (curated
+   * by the coordinator under `<workflowDir>/artifact/`) followed by
+   * per-node entries (one group per dispatched task). Returns
+   * `{ artifacts: [] }` (200) when neither namespace has anything
+   * curated yet; 404 when the workflow id is unknown.
+   */
+  "workflows.artifacts.list": defineRoute<
+    { params: WorkflowPathParams },
+    WorkflowArtifactsResponse
+  >("GET", "/api/workspaces/:id/workflows/:wfid/artifacts"),
+  /**
+   * Static-bytes for one artifact. `encodedPath` is a single Hono
+   * path segment so multi-segment paths MUST percent-encode `/` as
+   * `%2F`. Two sentinels:
+   *   - `summary/<rest>` — workflow-summary artifact (`no-store`)
+   *   - `nodes/<nodeId>/<rest>` — per-node artifact (`max-age=300`)
+   * 400 on unknown prefix or traversal attempt; 404 on missing file.
+   */
+  "workflows.artifacts.get": defineRoute<{ params: WorkflowArtifactPathParams }, unknown>(
+    "GET",
+    "/api/workspaces/:id/workflows/:wfid/artifacts/:encodedPath",
   ),
 
   // ── workflow coord-callback mutation surface (M2.5) ────────────────

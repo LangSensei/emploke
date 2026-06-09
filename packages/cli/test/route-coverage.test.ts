@@ -50,6 +50,8 @@ const ALLOWED_GAPS: ReadonlySet<RouteKey> = new Set<RouteKey>([
   "workspaces.setCurrent",
   "tasks.artifact", // dashboard-only download endpoint; CLI users have direct fs access to <workspace>/tasks/<tid>/artifact/
   "schedules.previewCron", // dashboard-only live-preview endpoint for the create-schedule modal (#222); CLI uses ScheduleService.preview directly via `emploke schedule create --preview`
+  "workflows.artifacts.list", // dashboard-only artifact-listing endpoint for the Workflow Artifacts tab; CLI users have direct fs access to <workspace>/workflows/<wfid>/artifact/ and per-node task artifact dirs
+  "workflows.artifacts.get", // dashboard-only static-bytes endpoint for the Workflow Artifacts tab (same rationale as `tasks.artifact`); CLI users have direct fs access
 ]);
 
 /**

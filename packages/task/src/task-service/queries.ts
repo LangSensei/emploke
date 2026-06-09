@@ -83,6 +83,21 @@ export async function listInFlightForWorkflowNode(
   return ctx.repository.listInFlightForWorkflowNode(nodeId);
 }
 
+/**
+ * Find the most recent task — terminal or not — for a workflow
+ * node. Used by the wire-shape projector for the workflow `/dag`
+ * route so each `WorkflowNodeWire` can carry its dispatched
+ * `taskId` for dashboard Mode B drill-down. See
+ * {@link TaskRepository.findTaskByWorkflowNode} for the predicate
+ * shape (no terminal filter, ORDER BY createdAt DESC LIMIT 1).
+ */
+export async function findTaskByWorkflowNode(
+  ctx: TaskServiceCtx,
+  nodeId: string,
+): Promise<TaskEntity | null> {
+  return ctx.repository.findTaskByWorkflowNode(nodeId);
+}
+
 export async function getTask(ctx: TaskServiceCtx, id: string): Promise<TaskEntity | null> {
   assertValidTaskId(id);
   const task = await ctx.repository.read(id);

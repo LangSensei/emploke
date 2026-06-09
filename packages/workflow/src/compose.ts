@@ -59,6 +59,11 @@ export type WorkflowModuleOptions = (
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
   /**
+   * Injectable seam for `generateWorkflowId`. See
+   * {@link WorkflowServiceOpts.randomBytes}.
+   */
+  readonly randomBytes?: (n: number) => Buffer;
+  /**
    * TESTING ONLY — bypasses the caller-coord auth gate on
    * `addNode` / `addEdge` / `addSubgraph` so tests can populate
    * workflow graphs without standing up a coord runner. Structural
@@ -104,6 +109,7 @@ export async function composeWorkflowModule(opts: WorkflowModuleOptions): Promis
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
     ...(opts.randomUUID !== undefined ? { randomUUID: opts.randomUUID } : {}),
+    ...(opts.randomBytes !== undefined ? { randomBytes: opts.randomBytes } : {}),
     ...(opts.trustedCallerForTesting === true ? { trustedCallerForTesting: true } : {}),
   });
   const engine = new WorkflowEngine({

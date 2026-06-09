@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WorkflowError } from "../src/errors.js";
 import {
+  fixedRandomBytes,
   fixedRandomUUID,
   makeWorkflowTestHandle,
   VALID_UUIDS,
@@ -11,7 +12,15 @@ describe("WorkflowService.createWorkflow", () => {
   let h: WorkflowTestHandle;
 
   beforeEach(() => {
-    h = makeWorkflowTestHandle({ randomUUID: fixedRandomUUID(VALID_UUIDS) });
+    h = makeWorkflowTestHandle({
+      randomUUID: fixedRandomUUID(VALID_UUIDS),
+      // Deterministic 4-byte hex sequence for workflow ids. Tests
+      // observe `<YYYYMMDD>-<8hex>` shaped ids (the substrate now
+      // mirrors `generateTaskId`).
+      randomBytes: fixedRandomBytes(["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"]),
+      // Pinned date so the dated-id prefix is stable across runs.
+      initialNow: new Date("2026-06-07T00:00:00.000Z"),
+    });
   });
 
   afterEach(() => {
@@ -23,8 +32,11 @@ describe("WorkflowService.createWorkflow", () => {
       brief: "do the thing",
       coordinatorAgent: "coord-a",
     });
-    expect(workflowId).toBe(VALID_UUIDS[0]);
-    expect(initialCoordNodeId).toBe(VALID_UUIDS[1]);
+    // Workflow id is now `<YYYYMMDD>-<8hex>` (mirrors @emploke/task).
+    expect(workflowId).toBe("20260607-aaaaaaaa");
+    // Node ids remain UUIDv4 and continue to come from the
+    // randomUUID seam.
+    expect(initialCoordNodeId).toBe(VALID_UUIDS[0]);
 
     const wf = await h.service.getWorkflow(workflowId);
     expect(wf.brief).toBe("do the thing");

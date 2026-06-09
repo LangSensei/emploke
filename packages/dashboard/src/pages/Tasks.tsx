@@ -7,7 +7,8 @@ import { DispatchModal } from "../components/tasks/DispatchModal";
 import {
   ALL_AGENTS,
   ALL_RUNTIMES,
-  TIME_PRESETS,
+  coerceTimePreset,
+  DEFAULT_TIME_PRESET,
   type TimePreset,
 } from "../components/tasks/shared";
 import { TaskConfirmModalsHost } from "../components/tasks/TaskConfirmModals";
@@ -40,12 +41,6 @@ interface TasksProps {
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
-const DEFAULT_TIME_PRESET: TimePreset = "7d";
-
-function coerceTimePreset(raw: string): TimePreset {
-  const match = TIME_PRESETS.find((p) => p.value === raw);
-  return match ? match.value : DEFAULT_TIME_PRESET;
-}
 
 /**
  * Tasks page — fire-and-forget agent dispatch, autonomous run,

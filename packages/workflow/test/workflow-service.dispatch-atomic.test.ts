@@ -109,7 +109,7 @@ describe("WorkflowService.dispatchAtomic", () => {
       spec: { agent: "w", brief: "x" },
       parents: [initialCoordNodeId],
     });
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     // Cancel reconciliation already flipped the task. dispatchAtomic
     // is a no-op for terminal nodes.
     const before = h.workerRunner.dispatchCalls.length;

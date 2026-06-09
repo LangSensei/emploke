@@ -13,7 +13,9 @@
   --color-accent-hover: #1d4ed8;
   --color-accent-bg: #eef4ff;
   --color-success: #15803d;
+  --color-success-bg: #ecfdf5;
   --color-warn: #b45309;
+  --color-warn-bg: #fef3c7;
   --color-danger: #b91c1c;
   --color-danger-bg: #fef2f2;
 
@@ -5318,4 +5320,296 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+
+/* ─── Workflow DAG (vertical TB layout, spec v2.1) ──────────────────
+   Top-to-bottom by phase: each phase is a row, sibling nodes in a
+   phase lay out left-to-right within that row. An SVG overlay above
+   the grid draws straight bottom-centre → top-centre arrows between
+   parents and children; the .workflow-dag container is the relative
+   positioning context for that overlay.
+
+   Status tone uses the dashboard's theme tokens (--color-accent,
+   --color-success, --color-warn, --color-danger) so the DAG row
+   tint stays in step with the master-list row badges. No rogue
+   color literals here — all tones flow from the :root tokens. */
+.workflow-dag {
+  position: relative;
+  display: block;
+  padding: var(--space-3) var(--space-2);
+  overflow: auto;
+}
+
+.workflow-dag--empty {
+  display: block;
+  padding: var(--space-4);
+}
+
+.workflow-dag__edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 0;
+}
+.workflow-dag__edge {
+  stroke: var(--color-border-strong);
+  stroke-width: 1.5;
+  fill: none;
+}
+.workflow-dag__arrow-head {
+  fill: var(--color-border-strong);
+  stroke: none;
+}
+
+.workflow-dag__phases {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-dag__phase {
+  list-style: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.workflow-dag__phase-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.workflow-dag__phase-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+}
+
+.dag-node {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  min-width: 200px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dag-node[aria-disabled="true"] {
+  cursor: help;
+}
+.dag-node:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.dag-node--selected,
+.dag-node[aria-current="true"] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.dag-node__kind-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.dag-node__id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.dag-node__agent {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dag-node__status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  justify-self: end;
+}
+
+.dag-node--coordinator {
+  border-left-color: var(--color-accent);
+}
+.dag-node--task {
+  border-left-color: var(--color-border-strong);
+}
+
+.dag-node--running {
+  background: var(--color-accent-bg);
+}
+.dag-node--succeeded {
+  background: var(--color-success-bg);
+}
+.dag-node--failed {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger);
+}
+.dag-node--cancelled {
+  background: var(--color-warn-bg);
+}
+
+.dag-node__status--running {
+  color: var(--color-accent);
+}
+.dag-node__status--succeeded {
+  color: var(--color-success);
+}
+.dag-node__status--failed {
+  color: var(--color-danger);
+}
+.dag-node__status--cancelled {
+  color: var(--color-warn);
+}
+.dag-node__status--ready {
+  color: var(--color-text-muted);
+}
+
+/* ─── Workflow detail pane (3-tab chrome, spec v2.1) ───────────── */
+/* Header chrome reuses `.task-detail__head` from the Tasks detail
+ * pane (see the Tasks-detail block). The `.workflow-detail__title`
+ * selector below adds a workflow-specific single-line ellipsis
+ * override on top of the shared title styles. */
+.workflow-detail__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Meta-stats `Created · Ended · Duration · Phases` are rendered as
+ * siblings of the workflow-id span inside the shared
+ * `.task-detail__statbar` flex row (see WorkflowView.tsx). The
+ * dedicated chip selectors that existed in v2.3 were removed in v2.4
+ * to keep visual parity with Tasks' flat statbar. */
+
+/* WAI-ARIA tablist chrome — visuals share `.task-tabs*` (see
+ * `TaskView.tsx`); the workflow tab bar adds the full tablist
+ * semantics (role=tab + aria-selected + aria-controls + roving
+ * tabindex + Arrow/Home/End keys) on top of the same flat
+ * underline visual. Tasks' tab bar uses a simpler `aria-pressed`
+ * pattern, but the CSS chrome is identical, so the visuals are
+ * collapsed onto a single selector and the a11y wiring stays
+ * per-component. */
+
+.workflow-tabpanel {
+  /* Workflows wraps its tab body in an explicit `role="tabpanel"`
+   * element so the WAI-ARIA tablist contract is complete. Tasks
+   * inlines its tab body as a sibling of the tab bar (no panel
+   * wrapper, no panel role), so there is no shared `.task-tabpanel`
+   * selector to fold into — `.workflow-tabpanel` stays as a thin
+   * shape-only selector for the panel padding + focus ring. */
+  padding: var(--space-3) 0;
+}
+.workflow-tabpanel:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Overview tab — body lives in shared `.overview-tab` / `.overview-card*`
+ * selectors (defined alongside Task's OverviewTab). The metadata `<dl>`
+ * still wants per-row alignment + a mono value column, so we keep just
+ * the metadata-related shape selectors. */
+.workflow-overview__metadata {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.workflow-overview__meta-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+.workflow-overview__meta-row dt {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+.workflow-overview__meta-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+/* Graph tab — container that hosts WorkflowDagView */
+.workflow-graph {
+  display: block;
+}
+
+/* Node navigation pill — mirror of .fire-task-nav structurally */
+.workflow-node-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+}
+.workflow-node-nav--fallback {
+  display: flex;
+  padding: var(--space-2);
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: transparent;
+}
+.workflow-node-nav__back,
+.workflow-node-nav__step {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.workflow-node-nav__back:hover,
+.workflow-node-nav__step:hover {
+  background: var(--color-surface-hover);
+}
+.workflow-node-nav__step[disabled] {
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
+}
+.workflow-node-nav__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
+}
+.workflow-node-nav__pos {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  min-width: 32px;
+  text-align: center;
 }

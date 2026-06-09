@@ -49,7 +49,10 @@ describe("WorkflowService.cancelWorkflow", () => {
       spec: { agent: "w", brief: "y" },
       parents: [parentTaskId],
     });
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({
+      workflowId,
+      cancellation: { kind: "user", message: "operator stopped run" },
+    });
     const wf = await h.service.getWorkflow(workflowId);
     expect(wf.status).toBe("cancelled");
     // Every non-terminal node, INCLUDING the initial coord, is cancelled.
@@ -58,20 +61,32 @@ describe("WorkflowService.cancelWorkflow", () => {
     expect((await h.service.getNode(pending)).status).toBe("cancelled");
     expect((await h.service.getNode(running)).status).toBe("cancelled");
     expect(h.workerRunner.cancelCalls).toContain(running);
+    // Cancellation payload is persisted in the same tx as the
+    // status flip — the next read sees both.
+    expect(wf.cancellation).toEqual({ kind: "user", message: "operator stopped run" });
   });
 
   it("CAS once-only: a second call throws WorkflowAlreadyTerminalError", async () => {
     const { workflowId } = await bootstrap(h);
-    await h.service.cancelWorkflow({ workflowId });
-    await expect(h.service.cancelWorkflow({ workflowId })).rejects.toBeInstanceOf(
-      WorkflowAlreadyTerminalError,
-    );
+    await h.service.cancelWorkflow({
+      workflowId,
+      cancellation: { kind: "user", message: "first" },
+    });
+    await expect(
+      h.service.cancelWorkflow({
+        workflowId,
+        cancellation: { kind: "user", message: "second" },
+      }),
+    ).rejects.toBeInstanceOf(WorkflowAlreadyTerminalError);
   });
 
   it("throws WorkflowNotFoundError on an unknown workflow", async () => {
-    await expect(h.service.cancelWorkflow({ workflowId: VALID_UUIDS[15]! })).rejects.toBeInstanceOf(
-      WorkflowNotFoundError,
-    );
+    await expect(
+      h.service.cancelWorkflow({
+        workflowId: VALID_UUIDS[15]!,
+        cancellation: { kind: "user", message: "" },
+      }),
+    ).rejects.toBeInstanceOf(WorkflowNotFoundError);
   });
 
   it("does NOT call runner.cancel for not_started / not-yet-running nodes", async () => {
@@ -83,7 +98,10 @@ describe("WorkflowService.cancelWorkflow", () => {
       parents: [initialCoordNodeId],
     });
     expect((await h.service.getNode(pending)).status).toBe("not_started");
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({
+      workflowId,
+      cancellation: { kind: "user", message: "" },
+    });
     // The pending task was cancelled by reconciliation but its
     // handler was never running — no abort call is needed.
     expect(h.workerRunner.cancelCalls).not.toContain(pending);
@@ -92,8 +110,11 @@ describe("WorkflowService.cancelWorkflow", () => {
   it("idempotent: succeeded → cancelWorkflow is rejected (workflow already terminal)", async () => {
     const { workflowId } = await bootstrap(h);
     await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
-    await expect(h.service.cancelWorkflow({ workflowId })).rejects.toBeInstanceOf(
-      WorkflowAlreadyTerminalError,
-    );
+    await expect(
+      h.service.cancelWorkflow({
+        workflowId,
+        cancellation: { kind: "user", message: "" },
+      }),
+    ).rejects.toBeInstanceOf(WorkflowAlreadyTerminalError);
   });
 });

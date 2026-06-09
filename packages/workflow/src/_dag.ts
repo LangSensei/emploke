@@ -45,6 +45,9 @@ export function workflowEntityFor(args: {
     createdAt: args.nowIso,
     startedAt: args.nowIso,
     endedAt: null,
+    success: null,
+    failure: null,
+    cancellation: null,
   });
 }
 

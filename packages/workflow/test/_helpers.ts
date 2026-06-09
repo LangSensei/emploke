@@ -119,6 +119,7 @@ export function makeWorkflowTestHandle(
   opts: {
     readonly initialNow?: Date;
     readonly randomUUID?: () => string;
+    readonly randomBytes?: (n: number) => Buffer;
     readonly logger?: Logger;
     readonly coordRunner?: StubRunner;
     readonly workerRunner?: StubRunner;
@@ -138,6 +139,7 @@ export function makeWorkflowTestHandle(
     runners,
     now: () => nowRef.value,
     ...(opts.randomUUID !== undefined ? { randomUUID: opts.randomUUID } : {}),
+    ...(opts.randomBytes !== undefined ? { randomBytes: opts.randomBytes } : {}),
     ...(opts.logger !== undefined
       ? { logger: opts.logger }
       : { logger: pino({ level: "silent" }) }),
@@ -176,9 +178,33 @@ export function fixedRandomUUID(ids: readonly string[]): () => string {
 }
 
 /**
+ * Deterministic `randomBytes` stub for `generateWorkflowId`. Returns a
+ * Buffer of the requested length filled with the next byte sequence
+ * from `seqs`. The substrate's id generator asks for 4 bytes per
+ * workflow id, so each seq entry should be a 4-byte hex string (8
+ * lowercase hex chars).
+ */
+export function fixedRandomBytes(seqs: readonly string[]): (n: number) => Buffer {
+  let i = 0;
+  return (n: number) => {
+    const hex = seqs[i];
+    if (hex === undefined) throw new Error("fixedRandomBytes: out of seqs");
+    i++;
+    const buf = Buffer.from(hex, "hex");
+    if (buf.length !== n) {
+      throw new Error(`fixedRandomBytes: seq ${hex} has ${buf.length} bytes, expected ${n}`);
+    }
+    return buf;
+  };
+}
+
+/**
  * A pool of valid UUIDv4 strings used across tests to make
- * assertions readable. Both workflow ids and node ids accept
- * UUIDv4 — the substrate's id generator emits UUIDv4 for both.
+ * assertions readable. Used for workflow NODE ids (always UUIDv4);
+ * pre-v2.2 read-side workflow ids accepted this shape too. New
+ * workflow ids are generated in the `<YYYYMMDD>-<8hex>` shape — use
+ * {@link fixedRandomBytes} to mint deterministic workflow ids in
+ * tests.
  */
 export const VALID_UUIDS: readonly string[] = [
   "550e8400-e29b-41d4-a716-446655440000",

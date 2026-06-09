@@ -119,10 +119,15 @@ export type WorkflowNodeStatusWire =
  * Wire projection of a workflow header. Field set mirrors the
  * persisted `WorkflowEntity` shape verbatim — timestamps are ISO 8601
  * strings (already stored that way), optional `endedAt` is absent on
- * non-terminal rows. `iterationCount` is computed by the server from
- * the workflow's coord-node count (silent-retry coords are counted
- * too — a retry IS another iteration from the user's perspective);
- * see `deriveIterationCount` in `@emploke/workflow`.
+ * non-terminal rows.
+ *
+ * `iterationCount` is kept for forward diagnostics; not rendered
+ * after v2.2.
+ *
+ * `success` / `failure` / `cancellation` are v2.2 terminal payloads —
+ * exactly the one matching `status` is present on terminal rows
+ * (legacy pre-v2.2 terminal rows with no payload column populated
+ * round-trip with all three absent).
  */
 export interface WorkflowHeaderWire {
   readonly id: string;
@@ -131,11 +136,49 @@ export interface WorkflowHeaderWire {
   readonly coordinatorAgent: string;
   readonly status: WorkflowStatusWire;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /** Kept for forward diagnostics; not rendered after v2.2. */
   readonly iterationCount: number;
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly endedAt?: string;
+  readonly success?: WorkflowSuccessWire;
+  readonly failure?: WorkflowFailureWire;
+  readonly cancellation?: WorkflowCancellationWire;
 }
+
+/**
+ * Wire projection of a successful workflow's terminal payload.
+ * `output` is the coordinator's free-form summary (nullable to
+ * support headless coords that finish without a summary).
+ */
+export interface WorkflowSuccessWire {
+  readonly output: string | null;
+}
+
+/**
+ * Wire projection of a failed workflow's terminal payload.
+ * Discriminated on `kind`:
+ *
+ *   - `coord`    — coordinator explicitly called `/finish` with
+ *                  `outcome: 'failed'` and a message.
+ *   - `internal` — substrate self-terminated the workflow (reserved
+ *                  for future use; v2.2 emits only `coord`).
+ */
+export type WorkflowFailureWire =
+  | { readonly kind: "coord"; readonly message: string }
+  | { readonly kind: "internal"; readonly message: string };
+
+/**
+ * Wire projection of a cancelled workflow's terminal payload.
+ * Discriminated on `kind`:
+ *
+ *   - `user`    — operator called `/cancel` from the dashboard / CLI.
+ *   - `cascade` — substrate cancelled this workflow as collateral
+ *                 (reserved for future use; v2.2 emits only `user`).
+ */
+export type WorkflowCancellationWire =
+  | { readonly kind: "user"; readonly message: string }
+  | { readonly kind: "cascade"; readonly message: string };
 
 /**
  * Wire projection of a single workflow node. Per-kind `spec` is
@@ -149,6 +192,18 @@ export interface WorkflowNodeWire {
   readonly workflowId: string;
   readonly phase: number;
   readonly status: WorkflowNodeStatusWire;
+  /**
+   * Dispatched task id for this node. Present iff this node has a
+   * dispatched task — both worker AND coordinator nodes get a
+   * `taskId` because the substrate dispatches coord agents as tasks
+   * too (see `packages/api/src/wiring/workflow-coord-task-runner.ts`).
+   * Absent on a node that has been inserted but not yet dispatched
+   * (a tight window in normal operation). Server-enriched at
+   * projection time via the `task.metadata.workflowNodeId === node.id`
+   * reverse-lookup; see `projectWorkflowNodeWithTaskId` in
+   * `packages/server/src/routes/_workflow-projection.ts`.
+   */
+  readonly taskId?: string;
   readonly spec: WorkflowNodeWireSpec;
   readonly createdAt: string;
   readonly readyAt?: string;
@@ -187,13 +242,26 @@ export interface CreateWorkflowBody {
 }
 
 /**
- * Query string for `GET /workspaces/:id/workflows`. When `status` is
- * supplied, the server narrows the list to that lifecycle status;
- * otherwise every workflow is returned. Unknown `status` values are
- * rejected at the route boundary with HTTP 400.
+ * Query string for `GET /workspaces/:id/workflows`. All three slots
+ * are optional; absent slots widen the result set. The server
+ * forwards the trio to `WorkflowService.list` as-is.
+ *
+ *   - `q`                — case-sensitive substring match on the
+ *     workflow id (escapes SQL `LIKE` metacharacters).
+ *   - `coordinatorAgent` — exact match on the workflow's denormalised
+ *     `coordinator_agent` column.
+ *   - `createdSince`     — ISO 8601 lower bound (inclusive) on
+ *     `created_at`. Mirrors the `?range=` time-preset semantics on
+ *     the Tasks page once the dashboard converts a preset to an ISO
+ *     cutoff.
+ *
+ * v2.3 dropped the prior `status` slot on the wire (workflows are
+ * now grouped client-side into Running/Completed sections).
  */
 export interface WorkflowListQuery {
-  readonly status?: WorkflowStatusWire;
+  readonly q?: string;
+  readonly coordinatorAgent?: string;
+  readonly createdSince?: string;
 }
 
 // ─── Mutation primitives — wire-shape DTOs ────────────────────────
@@ -330,11 +398,100 @@ export interface ReplaceNodeSpecBody {
 
 /**
  * Request body for `POST /workspaces/:id/workflows/:wfid/finish`.
- * `outcome` MUST be `"succeeded"` or `"failed"`; the substrate
- * rejects any other value at the boundary (`WorkflowError` → 400).
+ * Discriminated on `outcome`:
+ *
+ *   - `succeeded` — `success` is optional. When omitted, the server
+ *     defaults the persisted payload to `{ output: null }`.
+ *   - `failed`    — `failure` is REQUIRED. `kind` defaults to
+ *     `"coord"` at the server boundary when omitted; `message` is
+ *     a free-form string (empty allowed).
+ *
  * Workflow-level cancellation is a separate route
- * (`POST .../cancel`).
+ * (`POST .../cancel`) — see {@link CancelWorkflowBody}.
  */
-export interface FinishWorkflowBody {
-  readonly outcome: "succeeded" | "failed";
+export type FinishWorkflowBody =
+  | {
+      readonly outcome: "succeeded";
+      readonly success?: { readonly output?: string | null };
+    }
+  | {
+      readonly outcome: "failed";
+      readonly failure: { readonly kind?: "coord"; readonly message: string };
+    };
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/:wfid/cancel`.
+ * `cancellation.kind` defaults to `"user"` at the server boundary
+ * when omitted; `message` is a free-form string (empty allowed). The
+ * pre-v2.2 `{ reason }` body shape is no longer accepted — callers
+ * MUST switch to `{ cancellation: { message } }`.
+ */
+export interface CancelWorkflowBody {
+  readonly cancellation: {
+    readonly kind?: "user";
+    readonly message: string;
+  };
+}
+
+/**
+ * MIME bucket for a workflow artifact. Hint used by the dashboard's
+ * Artifacts tab to pick an icon (📄 text / 🖼️ image / 📦 archive /
+ * 📎 generic) without doing its own ext sniffing. Server-side
+ * detection lives in `packages/server/src/util/mime-bucket.ts`.
+ */
+export type WorkflowArtifactMimeBucket = "text" | "image" | "archive" | "generic";
+
+/**
+ * Wire projection of a single workflow artifact. Discriminated by
+ * `kind`:
+ *
+ *   - `workflow-summary` — file under `<workflowDir>/artifact/`,
+ *     curated by the coordinator. `path` is relative to that root.
+ *     Coordinator may rewrite at any time (the static-bytes route
+ *     sends `Cache-Control: no-store` for this kind).
+ *   - `node` — file under `<tasks-root>/<taskId>/artifact/`, owned
+ *     by a single worker / coord node. Write-once after the task
+ *     terminates (the static-bytes route sends `Cache-Control:
+ *     max-age=300` for this kind).
+ *
+ * `mimeBucket` is the server's presentation hint — see
+ * {@link WorkflowArtifactMimeBucket}.
+ */
+export type WorkflowArtifactWire =
+  | {
+      readonly kind: "workflow-summary";
+      /** Relative path under `<workflowDir>/artifact/`. */
+      readonly path: string;
+      /** Size in bytes. */
+      readonly size: number;
+      /** RFC3339 mtime. */
+      readonly modifiedAt: string;
+      /** Detected MIME bucket: "text" | "image" | "archive" | "generic". */
+      readonly mimeBucket: WorkflowArtifactMimeBucket;
+    }
+  | {
+      readonly kind: "node";
+      /** The owning node id. */
+      readonly nodeId: string;
+      /** The owning node's task id (from substrate enrichment). */
+      readonly taskId: string;
+      /** Relative path under `<tasks-root>/<taskId>/artifact/`. */
+      readonly path: string;
+      readonly size: number;
+      readonly modifiedAt: string;
+      readonly mimeBucket: WorkflowArtifactMimeBucket;
+    };
+
+/**
+ * Wire response shape for `GET /workspaces/:id/workflows/:wfid/artifacts`.
+ *
+ * Artifacts are listed in two namespaces: `workflow-summary`
+ * artifacts live under `<workflowDir>/artifact/` (curated by the
+ * coordinator); `node` artifacts live under each worker / coord
+ * task's `artifact/` dir. The list route aggregates both,
+ * `workflow-summary` first then `node` groups sorted by `nodeId` for
+ * stability.
+ */
+export interface WorkflowArtifactsResponse {
+  readonly artifacts: readonly WorkflowArtifactWire[];
 }

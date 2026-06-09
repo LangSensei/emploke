@@ -319,7 +319,11 @@ export async function runServer(opts: RunServerOpts = {}): Promise<void> {
   workflowsApp.use("/:id/workflows/*", workspaceContextMiddleware(application));
   workflowsApp.route(
     "/:id/workflows",
-    workflowsRoutes((c) => c.get("workspaceContext").workflows),
+    workflowsRoutes(
+      (c) => c.get("workspaceContext").workflows,
+      (c) => c.get("workspaceContext").tasks,
+      (c) => c.get("workspaceContext").workspace.workspaceDir,
+    ),
   );
   app.route("/api/workspaces", workflowsApp);
 

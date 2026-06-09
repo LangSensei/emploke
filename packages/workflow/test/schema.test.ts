@@ -40,14 +40,17 @@ describe("workflows schema", () => {
     expect(names).toEqual(
       [
         "brief",
+        "cancellation",
         "coordinator_agent",
         "created_at",
         "details",
         "ended_at",
+        "failure",
         "id",
         "metadata",
         "started_at",
         "status",
+        "success",
       ].sort(),
     );
     // `coordinator_agent` is the denorm cache of the current coord
@@ -55,6 +58,14 @@ describe("workflows schema", () => {
     // workflow?" is always answerable with a single-row read.
     const coordCol = cols.find((c) => c.name === "coordinator_agent");
     expect(coordCol?.notnull).toBe(1);
+    // v2.2 terminal payload columns are nullable — they're only
+    // populated on the terminal-status transition. Legacy rows
+    // (terminal status + null payload) are tolerated by the entity
+    // reader for backward compatibility with pre-v2.2 data.
+    for (const name of ["success", "failure", "cancellation"]) {
+      const col = cols.find((c) => c.name === name);
+      expect(col?.notnull, `${name} should be nullable`).toBe(0);
+    }
   });
 
   it("workflow_nodes table has the expected column set", () => {

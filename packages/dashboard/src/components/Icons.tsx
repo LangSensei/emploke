@@ -82,6 +82,18 @@ export const SchedulesIcon = (p: IconProps) =>
     p,
   );
 
+export const WorkflowsIcon = (p: IconProps) =>
+  SVG(
+    <>
+      <circle cx="5" cy="6" r="2.25" />
+      <circle cx="19" cy="6" r="2.25" />
+      <circle cx="12" cy="18" r="2.25" />
+      <path d="M5 8.25v3.5A2.25 2.25 0 0 0 7.25 14h9.5A2.25 2.25 0 0 0 19 11.75v-3.5" />
+      <path d="M12 14v1.75" />
+    </>,
+    p,
+  );
+
 export const SettingsIcon = (p: IconProps) =>
   SVG(
     <>

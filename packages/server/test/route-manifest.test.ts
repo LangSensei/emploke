@@ -118,7 +118,11 @@ function buildAppForTest(): Hono {
   const workflowsApp = new Hono();
   workflowsApp.route(
     "/:id/workflows",
-    workflowsRoutes(() => stubWorkflowService()),
+    workflowsRoutes(
+      () => stubWorkflowService(),
+      () => stubTaskManager(),
+      () => "C:\\stub\\workspace",
+    ),
   );
   app.route("/api/workspaces", workflowsApp);
 
@@ -156,13 +160,13 @@ describe("route manifest", () => {
     expect(missingFromApp, "in ROUTES but not registered (forgot to add handler?)").toEqual([]);
   });
 
-  it("listRoutes returns 78 entries (the current API surface)", () => {
+  it("listRoutes returns 80 entries (the current API surface)", () => {
     // Canary against silent surface drift — updating the manifest AND
     // the handler in a single commit keeps this assertion satisfied
     // and forces a deliberate ++N here, which surfaces in code review.
     // Historical bumps are reachable via `git log -p`; the running
     // total is the only fact a reader needs today.
-    expect(listRoutes()).toHaveLength(78);
+    expect(listRoutes()).toHaveLength(80);
   });
 });
 

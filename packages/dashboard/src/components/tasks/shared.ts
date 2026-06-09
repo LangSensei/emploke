@@ -45,6 +45,20 @@ export const TIME_PRESETS: { value: TimePreset; label: string }[] = [
   { value: "all", label: "All" },
 ];
 
+/** Default `?range=` slot when the URL is unset or holds an unknown value. */
+export const DEFAULT_TIME_PRESET: TimePreset = "7d";
+
+/**
+ * Coerce a raw `?range=` URL value to a {@link TimePreset}. Unknown
+ * values silently fall back to {@link DEFAULT_TIME_PRESET} — same
+ * shape as the page-level `coerce*` helpers that pre-date this lift,
+ * just shared by the Workflows page since v2.3.
+ */
+export function coerceTimePreset(raw: string): TimePreset {
+  const match = TIME_PRESETS.find((p) => p.value === raw);
+  return match ? match.value : DEFAULT_TIME_PRESET;
+}
+
 /**
  * Convert a preset to a millisecond cutoff. Anchored on the server's
  * approximate clock (`serverNow()`) rather than local `Date.now()`,

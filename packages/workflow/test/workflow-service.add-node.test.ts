@@ -253,7 +253,7 @@ describe("WorkflowService.addNode", () => {
 
   it("REJECTS when caller's workflow is no longer running (cancel race)", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     await expect(
       h.service.addNode({
         workflowId,

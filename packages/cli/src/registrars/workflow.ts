@@ -43,14 +43,9 @@ export function registerWorkflowCommands(program: Command, slot: Slot): void {
 
   withWorkspaceFlags(workflowCmd.command("list"))
     .description("List workflows in the current workspace")
-    .option(
-      "--status <status>",
-      "Filter to one lifecycle status (running | succeeded | failed | cancelled)",
-    )
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await workflowList({
         ...parseWorkspaceFlags(opts),
-        ...optionalString(opts, "status"),
       });
     });
 
@@ -97,14 +92,16 @@ export function registerWorkflowCommands(program: Command, slot: Slot): void {
     )
     .requiredOption("--wfid <id>", "Workflow id")
     .option(
-      "--reason <text>",
-      "Free-text reason (forward-compat with M3 outcomeReason in #334; currently parsed but not sent)",
+      "--message <text>",
+      "Free-text operator message persisted into cancellation.message (v2.2; defaults to empty)",
     )
+    .option("--kind <kind>", 'Cancellation kind (v2.2 only emits "user"; defaults to "user")')
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await workflowCancel({
         ...parseWorkspaceFlags(opts),
         wfid: pickString(opts, "wfid") ?? "",
-        ...optionalString(opts, "reason"),
+        ...optionalString(opts, "message"),
+        ...optionalString(opts, "kind"),
       });
     });
 
@@ -218,11 +215,21 @@ export function registerWorkflowCommands(program: Command, slot: Slot): void {
     .description("Coord-only: flip the workflow terminal (outcome: succeeded | failed)")
     .requiredOption("--wfid <id>", "Workflow id")
     .requiredOption("--outcome <outcome>", "Terminal outcome (succeeded | failed)")
+    .option(
+      "--summary <text>",
+      "Coordinator summary persisted into success.output (only with --outcome succeeded)",
+    )
+    .option(
+      "--message <text>",
+      "Failure message persisted into failure.message (required with --outcome failed)",
+    )
     .action(async (opts: Record<string, unknown>) => {
       slot.result = await workflowFinish({
         ...parseWorkspaceFlags(opts),
         wfid: pickString(opts, "wfid") ?? "",
         outcome: pickString(opts, "outcome") ?? "",
+        ...optionalString(opts, "summary"),
+        ...optionalString(opts, "message"),
       });
     });
 }

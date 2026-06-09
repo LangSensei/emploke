@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { WorkflowNodeNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
@@ -61,23 +61,45 @@ export class WorkflowRepository {
 
   /**
    * Unbounded list of workflow header rows ordered by `created_at`
-   * descending (newest first). When `status` is supplied, narrows to
-   * rows whose `status` column equals that value; otherwise returns
-   * every row. Per-workspace volume is small enough that pagination is
-   * not yet needed — mirrors `ScheduleService.list` / `TaskService.list`
+   * descending (newest first). All four filter slots are AND-combined
+   * when supplied; omitted slots widen the result set.
+   *
+   *   - `coordinatorAgent` — exact-match on `coordinator_agent`
+   *     (denorm of the most-recent coord node's `spec.agent`). Uses
+   *     the `workflows_coordinator_agent_idx` index.
+   *   - `createdSince`     — ISO 8601 lower bound (inclusive) on
+   *     `created_at`. Per-workspace volume is small enough that a
+   *     full scan with a `WHERE created_at >= ?` clause is cheap
+   *     enough not to need a dedicated index.
+   *   - `idLike`           — substring match on the workflow id
+   *     (case-sensitive, anchored on `LIKE %x%`). The SQL fragment
+   *     escapes the `LIKE` metacharacters `%` / `_` so a literal id
+   *     fragment from a search box doesn't accidentally widen.
+   *
+   * Per-workspace volume is small enough that pagination is not yet
+   * needed — mirrors `ScheduleService.list` / `TaskService.list`
    * which are also unbounded on the same per-workspace scope.
    */
   async listWorkflows(opts?: {
-    readonly status?: WorkflowStatus;
+    readonly coordinatorAgent?: string;
+    readonly createdSince?: string;
+    readonly idLike?: string;
   }): Promise<readonly WorkflowEntity[]> {
+    const predicates = [];
+    if (opts?.coordinatorAgent !== undefined) {
+      predicates.push(eq(workflows.coordinatorAgent, opts.coordinatorAgent));
+    }
+    if (opts?.createdSince !== undefined) {
+      predicates.push(gte(workflows.createdAt, opts.createdSince));
+    }
+    if (opts?.idLike !== undefined && opts.idLike !== "") {
+      const pattern = `%${escapeLike(opts.idLike)}%`;
+      predicates.push(sql`${workflows.id} LIKE ${pattern} ESCAPE '\\'`);
+    }
+    const where = predicates.length === 0 ? undefined : and(...predicates);
     const rows =
-      opts?.status !== undefined
-        ? this.db
-            .select()
-            .from(workflows)
-            .where(eq(workflows.status, opts.status))
-            .orderBy(desc(workflows.createdAt))
-            .all()
+      where !== undefined
+        ? this.db.select().from(workflows).where(where).orderBy(desc(workflows.createdAt)).all()
         : this.db.select().from(workflows).orderBy(desc(workflows.createdAt)).all();
     return rows.map((row) => WorkflowEntity.fromRow(row));
   }
@@ -93,6 +115,12 @@ export class WorkflowRepository {
    * updated. Used by `finishWorkflow` / `cancelWorkflow` so a
    * second caller can't double-terminate; the 0-row outcome is the
    * canonical signal to throw `WorkflowAlreadyTerminalError`.
+   *
+   * Terminal-payload columns (`success` / `failure` / `cancellation`)
+   * are written in the same UPDATE — exactly one of the three is
+   * supplied by `finishWorkflow` / `cancelWorkflow` per the cross-
+   * field invariant ("status='X' ⇒ X-payload column non-null"). The
+   * service layer is responsible for picking the right one.
    */
   casUpdateWorkflowStatus(
     tx: Db,
@@ -101,12 +129,22 @@ export class WorkflowRepository {
       readonly fromStatus: WorkflowStatus;
       readonly toStatus: WorkflowStatus;
       readonly endedAt: string;
+      readonly successJson?: string;
+      readonly failureJson?: string;
+      readonly cancellationJson?: string;
     },
   ): boolean {
     assertValidWorkflowId(opts.id);
+    const patch: Partial<typeof workflows.$inferInsert> = {
+      status: opts.toStatus,
+      endedAt: opts.endedAt,
+    };
+    if (opts.successJson !== undefined) patch.success = opts.successJson;
+    if (opts.failureJson !== undefined) patch.failure = opts.failureJson;
+    if (opts.cancellationJson !== undefined) patch.cancellation = opts.cancellationJson;
     const result = tx
       .update(workflows)
-      .set({ status: opts.toStatus, endedAt: opts.endedAt })
+      .set(patch)
       .where(and(eq(workflows.id, opts.id), eq(workflows.status, opts.fromStatus)))
       .run();
     return result.changes > 0;
@@ -470,6 +508,25 @@ export class WorkflowRepository {
     const row = tx.select().from(workflowNodes).where(eq(workflowNodes.id, id)).get();
     return row === undefined ? null : WorkflowNodeEntity.fromRow(row);
   }
+}
+
+/**
+ * Escape SQL `LIKE` metacharacters in user-supplied substring search
+ * input so the caller's payload is matched as a literal substring of
+ * the column. SQLite's `LIKE` treats `%` (zero or more chars) and `_`
+ * (single char) as wildcards; to forward them as literals we
+ * pre-escape both (plus the escape character itself) with `\` and
+ * the caller emits an explicit `ESCAPE '\'` clause in the SQL
+ * fragment so the engine honours the escape.
+ *
+ * Effect: a bare `%` or `_` typed into the workflow id search box now
+ * narrows to ids that contain the literal character — it no longer
+ * silently collapses to a wildcard and widens the result set to all
+ * rows. Mirrors the per-workspace search semantics most operators
+ * expect (the search box takes id fragments, not SQL patterns).
+ */
+function escapeLike(input: string): string {
+  return input.replace(/[\\%_]/g, "\\$&");
 }
 
 // Re-export row helpers so the service layer keeps a single import root.

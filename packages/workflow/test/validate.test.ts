@@ -109,6 +109,15 @@ describe("generateWorkflowId / generateWorkflowNodeId round-trips", () => {
     }
   });
 
+  it("generateWorkflowId() emits the `<YYYYMMDD>-<8hex>` shape", () => {
+    // The generator mirrors `@emploke/task`'s `generateTaskId` —
+    // UTC date prefix + 4 random bytes hex-encoded. The grammar
+    // still accepts UUIDv4 on the read side for pre-v2.2 rows;
+    // new ids only ever take this shape.
+    const id = generateWorkflowId();
+    expect(id).toMatch(/^\d{8}-[0-9a-f]{8}$/);
+  });
+
   it("generateWorkflowNodeId() returns a string that passes assertValidWorkflowNodeId", () => {
     for (let i = 0; i < 10; i++) {
       const id = generateWorkflowNodeId();
@@ -116,9 +125,11 @@ describe("generateWorkflowId / generateWorkflowNodeId round-trips", () => {
     }
   });
 
-  it("generateWorkflowId() honors the injected RNG seam", () => {
-    const id = generateWorkflowId(() => UUID_V4_LOWER);
-    expect(id).toBe(UUID_V4_LOWER);
+  it("generateWorkflowId() honors the injected now + randomBytes seams", () => {
+    const now = () => new Date("2026-05-22T10:11:12.000Z");
+    const randomBytes = (n: number) => Buffer.alloc(n, 0xab);
+    const id = generateWorkflowId(now, randomBytes);
+    expect(id).toBe("20260522-abababab");
     expect(() => assertValidWorkflowId(id)).not.toThrow();
   });
 

@@ -18,9 +18,12 @@ import { type DefaultBodyType, HttpResponse, http } from "msw";
 
 import type {
   CreateScheduleBody,
+  CreateWorkflowBody,
   PatchScheduleBody,
   ScheduleDetail,
   ScheduleView,
+  WorkflowHeaderWire,
+  WorkflowNodeWire,
 } from "../api/index.js";
 import {
   artifactBodies,
@@ -30,6 +33,9 @@ import {
   fixtureSchedules,
   fixtureSessions,
   fixtureTasks,
+  fixtureWorkflowArtifacts,
+  fixtureWorkflowDags,
+  fixtureWorkflows,
   fixtureWorkspaces,
 } from "./fixtures/index.js";
 
@@ -59,6 +65,34 @@ const tasksState = fixtureTasks.map((t) => ({ ...t }));
 let synthFireSeq = 0;
 
 /**
+ * Ephemeral workflow mutation slice. Header rows live in
+ * `workflowsState`, DAGs in `dagsState` keyed by workflow id. Both
+ * reset on browser refresh — designer mode is non-persistent. Headers
+ * are stored as mutable copies of the readonly fixtures so the cancel
+ * handler can flip status / endedAt in place. The DAG shape uses a
+ * local mutable mirror of the wire type so the cancel handler can
+ * re-attach the updated header and re-write the node array without
+ * colliding with the wire-type's `readonly` modifiers.
+ */
+interface MutableWorkflowDag {
+  workflow: WorkflowHeaderWire;
+  nodes: WorkflowNodeWire[];
+  edges: { from: string; to: string }[];
+}
+
+const workflowsState: WorkflowHeaderWire[] = fixtureWorkflows.map((w) => ({ ...w }));
+const dagsState: Map<string, MutableWorkflowDag> = new Map(
+  Array.from(fixtureWorkflowDags.entries()).map(([id, dag]) => [
+    id,
+    {
+      workflow: { ...dag.workflow },
+      nodes: dag.nodes.map((n) => ({ ...n })),
+      edges: dag.edges.map((e) => ({ ...e })),
+    },
+  ]),
+);
+
+/**
  * Short, deterministic-enough random id helper for synthesised
  * schedule entities (mock mode only). `crypto.randomUUID()` exists in
  * every modern browser; we slice 8 hex chars off the start for a
@@ -70,6 +104,26 @@ function cryptoRandom8(): string {
     0,
     8,
   );
+}
+
+/**
+ * Full UUIDv4 for mock workflow node ids. Node ids must satisfy
+ * `assertValidWorkflowNodeId`'s UUIDv4 grammar — the 8-char slice
+ * produced by `cryptoRandom8` would throw at the substrate layer.
+ * Falls back to a hand-shaped UUIDv4-like string when `crypto.randomUUID`
+ * is absent (older test runners) so the mock still satisfies the
+ * UUIDv4 regex.
+ */
+function cryptoUuid(): string {
+  const u = globalThis.crypto?.randomUUID?.();
+  if (u !== undefined) return u;
+  const hex = (n: number) =>
+    Math.floor(Math.random() * 16 ** n)
+      .toString(16)
+      .padStart(n, "0");
+  // y in [8,9,a,b] per RFC 4122 §4.4
+  const y = "89ab"[Math.floor(Math.random() * 4)];
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-${y}${hex(3)}-${hex(12)}`;
 }
 
 export const handlers = [
@@ -372,6 +426,184 @@ export const handlers = [
       startedAt: firedAt,
     });
     return HttpResponse.json({ dispatchId });
+  }),
+
+  // ── workflows (workspace-scoped) ─────────────────────────────
+  // List + detail + DAG + create + cancel. Workflow rows live in
+  // `workflowsState` and DAGs in `dagsState`; both reset on browser
+  // refresh, same lifetime as `schedulesState`.
+  http.get(`/api/workspaces/${W}/workflows`, ({ request }) => {
+    const url = new URL(request.url);
+    const q = url.searchParams.get("q") ?? "";
+    const coordinatorAgent = url.searchParams.get("coordinatorAgent") ?? "";
+    const createdSince = url.searchParams.get("createdSince") ?? "";
+    let rows = workflowsState.slice();
+    if (q !== "") rows = rows.filter((w) => w.id.includes(q));
+    if (coordinatorAgent !== "") {
+      rows = rows.filter((w) => w.coordinatorAgent === coordinatorAgent);
+    }
+    if (createdSince !== "") rows = rows.filter((w) => w.createdAt >= createdSince);
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return HttpResponse.json(rows);
+  }),
+  http.post(`/api/workspaces/${W}/workflows`, async ({ request }) => {
+    const body = (await request.json()) as CreateWorkflowBody;
+    if (typeof body.brief !== "string" || body.brief.trim() === "") {
+      return HttpResponse.json({ error: "brief must be a non-empty string" }, { status: 400 });
+    }
+    if (typeof body.coordinatorAgent !== "string" || body.coordinatorAgent.trim() === "") {
+      return HttpResponse.json(
+        { error: "coordinatorAgent must be a non-empty agent FQN" },
+        { status: 400 },
+      );
+    }
+    const id = `wf-${cryptoRandom8()}`;
+    const now = new Date().toISOString();
+    const created: WorkflowHeaderWire = {
+      id,
+      brief: body.brief.trim(),
+      ...(typeof body.details === "string" && body.details.trim() !== ""
+        ? { details: body.details }
+        : {}),
+      status: "running",
+      coordinatorAgent: body.coordinatorAgent,
+      metadata: body.metadata ?? {},
+      createdAt: now,
+      startedAt: now,
+      iterationCount: 0,
+    };
+    workflowsState.unshift(created);
+    const coordNode: WorkflowNodeWire = {
+      id: cryptoUuid(),
+      workflowId: id,
+      status: "running",
+      phase: 0,
+      spec: { kind: "coordinator", agent: body.coordinatorAgent },
+      createdAt: now,
+      readyAt: now,
+      runningAt: now,
+    };
+    dagsState.set(id, {
+      workflow: { ...created },
+      nodes: [coordNode],
+      edges: [],
+    });
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.get(`/api/workspaces/${W}/workflows/:wfid`, ({ params }) => {
+    const row = workflowsState.find((w) => w.id === params.wfid);
+    return row ? HttpResponse.json(row) : notFound("workflow not found");
+  }),
+  http.get(`/api/workspaces/${W}/workflows/:wfid/dag`, ({ params }) => {
+    const dag = dagsState.get(String(params.wfid));
+    if (!dag) return notFound("workflow not found");
+    const row = workflowsState.find((w) => w.id === params.wfid);
+    if (row) dag.workflow = { ...row };
+    return HttpResponse.json(dag);
+  }),
+  http.post(`/api/workspaces/${W}/workflows/:wfid/cancel`, async ({ params, request }) => {
+    const idx = workflowsState.findIndex((w) => w.id === params.wfid);
+    if (idx === -1) return notFound("workflow not found");
+    const current = workflowsState[idx]!;
+    if (current.status !== "running") {
+      return HttpResponse.json(
+        { error: `workflow is already ${current.status}; cancel is a no-op` },
+        { status: 409 },
+      );
+    }
+    // v2.2 wire: `{ cancellation: { kind?: 'user', message } }`. The
+    // mock parses the message into the persisted `cancellation`
+    // payload so the dashboard's optimistic re-render and the post-
+    // cancel header show the operator-supplied reason.
+    const body = (await request.json().catch(() => ({}))) as {
+      cancellation?: { kind?: string; message?: string };
+    };
+    const message =
+      typeof body?.cancellation?.message === "string" ? body.cancellation.message : "";
+    const now = new Date().toISOString();
+    const cancelled: WorkflowHeaderWire = {
+      ...current,
+      status: "cancelled",
+      endedAt: now,
+      cancellation: { kind: "user", message },
+    };
+    workflowsState[idx] = cancelled;
+    const dag = dagsState.get(cancelled.id);
+    if (dag) {
+      dag.workflow = { ...cancelled };
+      dag.nodes = dag.nodes.map((n) =>
+        n.status === "ready" || n.status === "running"
+          ? {
+              ...n,
+              status: "cancelled",
+              endedAt: now,
+            }
+          : n,
+      );
+    }
+    return HttpResponse.json(cancelled);
+  }),
+  // ── Workflow artifacts (list + bytes) ────────────────────────────
+  http.get(`/api/workspaces/${W}/workflows/:wfid/artifacts`, ({ params }) => {
+    const wfid = String(params.wfid);
+    if (!workflowsState.some((w) => w.id === wfid)) {
+      return notFound("workflow not found");
+    }
+    const list = fixtureWorkflowArtifacts.get(wfid) ?? [];
+    return HttpResponse.json({ artifacts: list });
+  }),
+  http.get(`/api/workspaces/${W}/workflows/:wfid/artifacts/:encodedPath`, ({ params }) => {
+    const wfid = String(params.wfid);
+    const encodedPath = String(params.encodedPath);
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(encodedPath);
+    } catch {
+      return HttpResponse.json({ error: "bad encoding" }, { status: 400 });
+    }
+    if (decoded.includes("..") || decoded.includes("\0")) {
+      return HttpResponse.json({ error: "traversal" }, { status: 400 });
+    }
+    // Designer mode serves a tiny stub blob keyed on extension so
+    // the Artifacts tab can render markdown / image / generic
+    // previews end-to-end without wiring real fixture bytes.
+    const list = fixtureWorkflowArtifacts.get(wfid);
+    const exists = (list ?? []).some((a) => {
+      if (decoded.startsWith("summary/")) {
+        return a.kind === "workflow-summary" && a.path === decoded.slice("summary/".length);
+      }
+      if (decoded.startsWith("nodes/")) {
+        const tail = decoded.slice("nodes/".length);
+        const sep = tail.indexOf("/");
+        if (sep <= 0) return false;
+        const nodeId = tail.slice(0, sep);
+        const restPath = tail.slice(sep + 1);
+        return a.kind === "node" && a.nodeId === nodeId && a.path === restPath;
+      }
+      return false;
+    });
+    if (!exists) return HttpResponse.json({ error: "artifact not found" }, { status: 404 });
+    const ext = decoded.slice(decoded.lastIndexOf(".") + 1).toLowerCase();
+    if (ext === "md") {
+      return new HttpResponse(
+        `# Designer mode placeholder\n\nWorkflow \`${wfid}\` artifact \`${decoded}\`.\n`,
+        { headers: { "Content-Type": "text/markdown; charset=utf-8" } },
+      );
+    }
+    if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp") {
+      // Same 1x1 transparent PNG (RFC-compliant) used for designer-mode previews.
+      const pngBytes = Uint8Array.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+      ]);
+      return new HttpResponse(pngBytes, { headers: { "Content-Type": "image/png" } });
+    }
+    return new HttpResponse(`Designer-mode artifact stub: ${decoded}\n`, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
   }),
 
   // ── catch-all: 501 mutations + pass-through unknown GETs ─────

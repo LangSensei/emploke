@@ -261,7 +261,7 @@ describe("WorkflowService.replaceNodeSpec", () => {
       spec: { agent: "w", brief: "v1" },
       parents: [initialCoordNodeId],
     });
-    await h.service.cancelWorkflow({ workflowId });
+    await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     await expect(
       h.service.replaceNodeSpec({
         workflowId,

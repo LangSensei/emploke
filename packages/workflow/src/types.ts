@@ -33,6 +33,60 @@
  */
 export type WorkflowStatus = "running" | "succeeded" | "failed" | "cancelled";
 
+// ─── Terminal payloads ──────────────────────────────────────────────
+
+/**
+ * Payload attached when a workflow transitions to `succeeded`. Set
+ * by the coord's `finishWorkflow({outcome:'succeeded', success})`
+ * call. `output` is the coord's free-text summary of the run — what
+ * gets rendered as the "Summary" card on the dashboard Overview
+ * tab. Coord MAY pass `null` (or omit `output` entirely → defaults
+ * to null) when the workflow has no meaningful summary to show.
+ *
+ * No `artifacts` field — workflow artifacts live durably under
+ * `<workflowDir>/artifact/` and are discovered via the
+ * `/artifacts` listing route. There's no workdir-cleanup concern
+ * the task analog protects against.
+ */
+export interface WorkflowSuccess {
+  readonly output: string | null;
+}
+
+/**
+ * Payload attached when a workflow transitions to `failed`. Set by
+ * the coord's `finishWorkflow({outcome:'failed', failure})` call.
+ *
+ * `kind` is a closed-set discriminator forward-compatible with
+ * future substrate-detected failure modes:
+ *
+ *   - `coord`    — coord explicitly called failWorkflow. v2.2 ships
+ *                  this kind only.
+ *   - `internal` — reserved for future substrate-detected failures
+ *                  (e.g. workflow-engine-restart reconciliation
+ *                  finding an unrecoverable state). Not produced by
+ *                  v2.2 but accepted on the read path so older /
+ *                  newer schema rows round-trip.
+ *
+ * `message` is the human-readable summary the dashboard renders.
+ */
+export type WorkflowFailure =
+  | { readonly kind: "coord"; readonly message: string }
+  | { readonly kind: "internal"; readonly message: string };
+
+/**
+ * Payload attached when a workflow transitions to `cancelled`. Set
+ * by the cancelWorkflow route.
+ *
+ *   - `user`    — operator called cancelWorkflow via dashboard / CLI.
+ *                  v2.2 ships this kind only.
+ *   - `cascade` — reserved for future parent-workflow cancellation.
+ *                  Not produced by v2.2 but accepted on the read
+ *                  path for forward compat.
+ */
+export type WorkflowCancellation =
+  | { readonly kind: "user"; readonly message: string }
+  | { readonly kind: "cascade"; readonly message: string };
+
 /**
  * Per-node FSM. Same vocabulary applies to BOTH worker-kind and
  * coordinator-kind nodes.

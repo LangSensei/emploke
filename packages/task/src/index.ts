@@ -28,7 +28,7 @@ export {
   TASK_FRAMING_PROMPT_COPILOT,
   TASK_TEMP_SUBDIR,
 } from "./framing.js";
-export { safeJoinUnderRoot } from "./paths.js";
+export { safeJoinUnderRoot, tasksRoot } from "./paths.js";
 export type {
   AgentEntry,
   AgentResolverPort,

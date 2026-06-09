@@ -92,7 +92,11 @@ describe("WorkflowService.finishWorkflow", () => {
     });
     expect((await h.service.getNode(runningTask)).status).toBe("running");
 
-    await h.service.finishWorkflow({ workflowId, outcome: "failed" });
+    await h.service.finishWorkflow({
+      workflowId,
+      outcome: "failed",
+      failure: { kind: "coord", message: "ran out of budget" },
+    });
 
     expect(h.workerRunner.cancelCalls).toContain(runningTask);
     expect((await h.service.getNode(runningTask)).status).toBe("cancelled");
@@ -132,11 +136,57 @@ describe("WorkflowService.finishWorkflow", () => {
     const { workflowId } = await bootstrap(h);
     await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
     await expect(
-      h.service.finishWorkflow({ workflowId, outcome: "failed" }),
+      h.service.finishWorkflow({
+        workflowId,
+        outcome: "failed",
+        failure: { kind: "coord", message: "x" },
+      }),
     ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
     // Coverage note: `WorkflowAlreadyTerminalError` is reachable
     // when a future caller bypasses the auth gate, e.g. via
     // `cancelWorkflow` — exercised in `workflow-service.cancel-workflow.test.ts`.
     expect(WorkflowAlreadyTerminalError).toBeDefined();
+  });
+
+  it("persists success.output when supplied with outcome='succeeded'", async () => {
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({
+      workflowId,
+      outcome: "succeeded",
+      success: { output: "All sub-runs converged on green." },
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.success).toEqual({ output: "All sub-runs converged on green." });
+    expect(wf.failure).toBeUndefined();
+    expect(wf.cancellation).toBeUndefined();
+  });
+
+  it("defaults success.output to null when omitted with outcome='succeeded'", async () => {
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({ workflowId, outcome: "succeeded" });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.success).toEqual({ output: null });
+  });
+
+  it("persists failure.message + failure.kind when supplied with outcome='failed'", async () => {
+    const { workflowId } = await bootstrap(h);
+    await h.service.finishWorkflow({
+      workflowId,
+      outcome: "failed",
+      failure: { kind: "coord", message: "budget exhausted" },
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.failure).toEqual({ kind: "coord", message: "budget exhausted" });
+    expect(wf.success).toBeUndefined();
+  });
+
+  it("REJECTS outcome='failed' with no failure payload", async () => {
+    const { workflowId } = await bootstrap(h);
+    await expect(
+      h.service.finishWorkflow({
+        workflowId,
+        outcome: "failed",
+      } as unknown as Parameters<typeof h.service.finishWorkflow>[0]),
+    ).rejects.toBeInstanceOf(WorkflowError);
   });
 });

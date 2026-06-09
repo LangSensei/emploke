@@ -112,7 +112,14 @@ async function makeHarness(): Promise<Harness> {
     logger: silentLogger,
     trustedCallerForTesting: true,
   });
-  const app = workflowsRoutes(() => module.service);
+  const app = workflowsRoutes(
+    () => module.service,
+    () =>
+      ({
+        findTaskByWorkflowNode: async () => null,
+      }) as unknown as import("@emploke/task").TaskService,
+    () => workspaceDir,
+  );
   return {
     module,
     app,
@@ -260,7 +267,11 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
     //    button). The substrate flips the workflow to `cancelled` and
     //    reconciles any non-terminal nodes (none here, both already
     //    succeeded).
-    const cancelRes = await h.app.request(`/${wfid}/cancel`, { method: "POST" });
+    const cancelRes = await h.app.request(`/${wfid}/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cancellation: { message: "e2e test stop" } }),
+    });
     expect(cancelRes.status).toBe(200);
     const cancelled = (await cancelRes.json()) as { status: string; endedAt?: string };
     expect(cancelled.status).toBe("cancelled");
@@ -371,6 +382,10 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
     expect(errBody.code).toBe("WorkflowNodeNotMutableError");
 
     // Clean termination.
-    await h.app.request(`/${wfid}/cancel`, { method: "POST" });
+    await h.app.request(`/${wfid}/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cancellation: { message: "" } }),
+    });
   }, 15000);
 });
