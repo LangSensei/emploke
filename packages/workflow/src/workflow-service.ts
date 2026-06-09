@@ -1,4 +1,5 @@
 import { randomBytes as nodeRandomBytes, randomUUID as nodeRandomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
@@ -18,7 +19,7 @@ import {
   workflowEntityFor,
   wouldCreateCycle,
 } from "./_dag.js";
-import { assertCoordinatorSpecAgent } from "./_helpers.js";
+import { assertCoordinatorSpecAgent, safeRmDir } from "./_helpers.js";
 import {
   EmptyParentsError,
   MultipleSuccessorCoordsError,
@@ -38,7 +39,7 @@ import {
   WorkflowSubgraphEmptyError,
   WorkflowSubgraphNodeRefUnresolvedError,
 } from "./errors.js";
-import { workflowNodeDir } from "./paths.js";
+import { workflowDir, workflowNodeDir } from "./paths.js";
 import type * as schema from "./schema.js";
 import { workflows } from "./schema.js";
 import type {
@@ -52,7 +53,7 @@ import type {
   WorkflowRunners,
   WorkflowSuccess,
 } from "./types.js";
-import { generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
+import { assertValidWorkflowId, generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
 import type { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
 import type { WorkflowRepository } from "./workflow-repository.js";
 
@@ -486,28 +487,79 @@ export class WorkflowService {
     const validatedSpec = await runner.validate(coordSpec, validateCtx);
     assertCoordinatorSpecAgent(validatedSpec);
 
-    this.db.transaction((tx) => {
-      const wfEntity = workflowEntityFor({
-        id: workflowId,
-        brief: args.brief,
-        details: args.details,
-        coordinatorAgent: validatedSpec.agent,
-        ...(args.metadata !== undefined ? { metadata: args.metadata } : {}),
-        nowIso,
+    // Reserve (mkdir) the per-workflow shared dir BEFORE inserting
+    // the workflows row so a mkdir failure leaves no orphan row.
+    // Mirrors `@emploke/task`'s `dispatch` flow, which reserves the
+    // workdir before the row insert + `safeRm` on rollback. The dir
+    // is empty on creation; the coordinator owns the internal
+    // layout.
+    //
+    // Order matters: mkdir → tx → if tx fails, `safeRmDir`. A dir-
+    // without-row is rolled back here; a row-without-dir is
+    // impossible because the mkdir happens first.
+    const wfDir = workflowDir(this.workspaceDir, workflowId);
+    await mkdir(wfDir, { recursive: true });
+
+    try {
+      this.db.transaction((tx) => {
+        const wfEntity = workflowEntityFor({
+          id: workflowId,
+          brief: args.brief,
+          details: args.details,
+          coordinatorAgent: validatedSpec.agent,
+          ...(args.metadata !== undefined ? { metadata: args.metadata } : {}),
+          nowIso,
+        });
+        this.repo.insertWorkflow(tx, wfEntity);
+        this.insertCoordNodeInTx(tx, {
+          workflowId,
+          nodeId: initialCoordNodeId,
+          validatedSpec,
+          parents: [],
+          nowIso,
+        });
       });
-      this.repo.insertWorkflow(tx, wfEntity);
-      this.insertCoordNodeInTx(tx, {
-        workflowId,
-        nodeId: initialCoordNodeId,
-        validatedSpec,
-        parents: [],
-        nowIso,
-      });
-    });
+    } catch (err) {
+      await safeRmDir(wfDir, this.logger);
+      throw err;
+    }
 
     await this.dispatchAtomic(initialCoordNodeId);
     this.nudgeEngine(workflowId);
     return { workflowId, initialCoordNodeId };
+  }
+
+  // ─── purge ──────────────────────────────────────────────
+
+  /**
+   * Remove a workflow's shared dir at
+   * `<workspaceDir>/workflows/<workflowId>/`.
+   *
+   * Idempotent — no-op if the dir does not exist (a second `purge`
+   * call after the first one removed the dir is silent). Does NOT
+   * remove the workflow row; the workflow row + audit trail in the
+   * DB are owned by the workflow lifecycle, not the fs.
+   *
+   * Intended for operator cleanup of terminal workflows whose
+   * audit logs are no longer needed (the `emploke workflow purge
+   * --wfid X` subcommand wraps this) and for any future external-
+   * sweep job. Workspace deletion already cascades the entire
+   * `<workspaceDir>/workflows/` tree transitively via the workspace
+   * service's `fs.rm` — `purge` is the per-workflow scoped variant.
+   *
+   * `workflowId` shape is validated to prevent a malformed caller-
+   * supplied id from escaping the workspaceDir; the underlying
+   * `workflowDir` helper also rejects path-traversal components as
+   * defense in depth.
+   *
+   * Failure-mode: a real fs error (e.g. EBUSY) is warn-logged via
+   * the service logger and NOT rethrown. Callers cannot do anything
+   * useful with an `rm` error.
+   */
+  async purge(workflowId: string): Promise<void> {
+    assertValidWorkflowId(workflowId);
+    const wfDir = workflowDir(this.workspaceDir, workflowId);
+    await safeRmDir(wfDir, this.logger);
   }
 
   // ─── addNode ─────────────────────────────────────────────
