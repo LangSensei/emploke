@@ -174,7 +174,12 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
                   .filter((s) => s !== null)
                   .join(" ");
                 const title = JSON.stringify(node.spec, null, 2);
-                const idShort = node.id.slice(0, 8);
+                // Trim trailing dashes from the 8-char short id so the chip
+                // never ends on a separator if a future id format ever
+                // produces one (matches the defense in ArtifactsTab's
+                // node group label). UUIDv4 first-8 is pure hex so this
+                // is a no-op today, kept as belt-and-braces.
+                const idShort = node.id.slice(0, 8).replace(/-+$/, "");
                 const agent = extractAgent(node);
                 const inner = (
                   <>
