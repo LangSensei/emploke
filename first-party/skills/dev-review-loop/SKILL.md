@@ -186,7 +186,7 @@ are resolved.
 
 # Required output protocol
 Identical to review's protocol (verdict.json + optional review.md).
-See template-review-brief above for the schema and validation rules.
+See template-review above for the schema and validation rules.
 ```
 
 ---

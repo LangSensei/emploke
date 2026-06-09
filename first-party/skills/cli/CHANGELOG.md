@@ -4,7 +4,7 @@
 
 ### Added
 
-- New `references/workflow-commands.md` covering the full `emploke workflow …` subcommand surface (13 subcommands: `list`, `create`, `show`, `dag`, `node-show`, `add-node`, `add-subgraph`, `add-edge`, `remove-node`, `remove-edge`, `replace-spec`, `cancel`, `cancel-node`, `finish`) — flags, HTTP routes, body schemas, response shapes, plus coord introspection / batch-mutation snippets.
+- New `references/workflow-commands.md` covering the full `emploke workflow …` subcommand surface (14 subcommands: `list`, `create`, `show`, `dag`, `node-show`, `add-node`, `add-subgraph`, `add-edge`, `remove-node`, `remove-edge`, `replace-spec`, `cancel`, `cancel-node`, `finish`) — flags, HTTP routes, body schemas, response shapes, plus coord introspection / batch-mutation snippets.
 - New top-level `## Workflow subcommands` section in `SKILL.md` that points to the new reference file and lists the subcommands at a glance.
 - `## Common workflows` index entry retained; workflow CLI gets its own first-class section because it's a distinct caller surface (coord-facing) from the ad-hoc playbooks under `references/workflows.md`.
 

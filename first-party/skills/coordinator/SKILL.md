@@ -142,7 +142,7 @@ Parse rules for coord:
 - Treat missing `findings` array as `[]`
 - On parse failure: `workflow finish --outcome failed --message "reviewer <agent> did not produce valid verdict.json"` and exit
 
-Strategy skills SHOULD re-quote this schema verbatim inside their reviewer brief templates so the worker receives the schema in its brief and need not load this skill.
+Strategy skills SHOULD re-quote this schema (verbatim, or as a worked example with concrete sample values) inside their reviewer brief templates so the worker receives the schema in its brief and need not load this skill.
 
 ---
 
@@ -152,7 +152,7 @@ Treat workers as pure specialists: they MUST NOT depend on any workflow-specific
 
 - **Always include**: workflow id (so the worker can call `emploke workflow show --wfid $WF --json` itself), `workflow.brief` verbatim (no trim, no summary, no paraphrase), `workflow.details` verbatim (empty string if `null`), and concrete fetch instructions for any prior-iter outputs the worker needs (e.g. `emploke task show --tid ${PRIOR_<role>_TASK_ID}` then `<task-workdir>/verdict.json`). Workers do their own fetching; coord does not pre-digest.
 - **Never include**: technical content (quality bars, fix suggestions, design opinions — workers own those domains), coord's interpretation of prior-iter findings (the worker reads the raw `verdict.json` itself), or hints about future coord wake-ups (workers are workflow-unaware).
-- **Always inline the output protocol**: for reviewer workers, the §C `verdict.json` schema verbatim plus validation rules and the optional narrative-file convention. For implementer workers, the expected branch / PR convention the next coord wake-up relies on.
+- **Always inline the output protocol**: for reviewer workers, the §C `verdict.json` schema (verbatim, or as a worked example) plus validation rules and the optional narrative-file convention. For implementer workers, the expected branch / PR convention the next coord wake-up relies on.
 - **Use `${PLACEHOLDER}` substitution** for every per-dispatch slot. Coord fills slots via plain string replacement before writing the brief into `add-subgraph`. Substitution is total — a literal `${...}` in the dispatched brief is a bug. Unresolved placeholders (e.g. `${WORKFLOW_DETAILS}` when the creator passed nothing) substitute the empty string.
 
 ---

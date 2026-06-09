@@ -76,7 +76,7 @@ Detailed playbooks live in `references/workflows.md`. Quick index:
 
 `emploke workflow …` is the surface a `kind: coordinator` task uses to seed a workflow, walk its live DAG, and mutate it (add / remove nodes and edges, replace specs, cancel, finish). Workers do not call into it — they just exit, and the substrate joins their result back to the DAG via `task.metadata.workflowNodeId`.
 
-The full per-subcommand reference (flags, HTTP route, body schema, response shape, exit-code notes, plus coord introspection / batch-mutation snippets) lives in `references/workflow-commands.md`. The 13 subcommands at a glance:
+The full per-subcommand reference (flags, HTTP route, body schema, response shape, exit-code notes, plus coord introspection / batch-mutation snippets) lives in `references/workflow-commands.md`. The 14 subcommands at a glance:
 
 | Read-only | Coord-only mutation | Terminal |
 | --- | --- | --- |
