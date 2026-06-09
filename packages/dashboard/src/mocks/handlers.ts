@@ -117,7 +117,10 @@ function cryptoRandom8(): string {
 function cryptoUuid(): string {
   const u = globalThis.crypto?.randomUUID?.();
   if (u !== undefined) return u;
-  const hex = (n: number) => Math.floor(Math.random() * 16 ** n).toString(16).padStart(n, "0");
+  const hex = (n: number) =>
+    Math.floor(Math.random() * 16 ** n)
+      .toString(16)
+      .padStart(n, "0");
   // y in [8,9,a,b] per RFC 4122 §4.4
   const y = "89ab"[Math.floor(Math.random() * 4)];
   return `${hex(8)}-${hex(4)}-4${hex(3)}-${y}${hex(3)}-${hex(12)}`;
