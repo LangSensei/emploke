@@ -9,7 +9,7 @@ function makeNode(overrides: Partial<WorkflowNodeWire> = {}): WorkflowNodeWire {
     workflowId: "wf-1",
     status: "running",
     phase: 0,
-    spec: { kind: "task", agent: "emploke/dev", brief: "default brief" },
+    spec: { kind: "worker", agent: "emploke/dev", brief: "default brief" },
     createdAt: "2026-05-28T00:00:00.000Z",
     ...overrides,
   };
@@ -48,7 +48,7 @@ describe("WorkflowDagView — phase grouping", () => {
           makeNode({
             id: "n-phase2",
             phase: 2,
-            spec: { kind: "task", agent: "emploke/review", brief: "b2" },
+            spec: { kind: "worker", agent: "emploke/review", brief: "b2" },
           }),
           makeNode({
             id: "n-phase0",
@@ -58,7 +58,7 @@ describe("WorkflowDagView — phase grouping", () => {
           makeNode({
             id: "n-phase1",
             phase: 1,
-            spec: { kind: "task", agent: "emploke/dev", brief: "b1" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "b1" },
           }),
         ])}
       />,
@@ -78,13 +78,13 @@ describe("WorkflowDagView — phase grouping", () => {
             id: "n-later",
             phase: 0,
             createdAt: "2026-05-28T00:02:00.000Z",
-            spec: { kind: "task", agent: "emploke/dev", brief: "later" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "later" },
           }),
           makeNode({
             id: "n-earlier",
             phase: 0,
             createdAt: "2026-05-28T00:01:00.000Z",
-            spec: { kind: "task", agent: "emploke/dev", brief: "earlier" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "earlier" },
           }),
         ])}
       />,
@@ -97,7 +97,7 @@ describe("WorkflowDagView — phase grouping", () => {
 });
 
 describe("WorkflowDagView — kind-driven styling and content", () => {
-  it("applies the coordinator + task modifier classes per node kind", () => {
+  it("applies the coordinator + worker modifier classes per node kind", () => {
     render(
       <WorkflowDagView
         dag={makeDag([
@@ -109,7 +109,7 @@ describe("WorkflowDagView — kind-driven styling and content", () => {
           makeNode({
             id: "n-task",
             phase: 1,
-            spec: { kind: "task", agent: "emploke/review", brief: "x" },
+            spec: { kind: "worker", agent: "emploke/review", brief: "x" },
           }),
         ])}
       />,
@@ -117,7 +117,7 @@ describe("WorkflowDagView — kind-driven styling and content", () => {
     const coord = screen.getByTestId("dag-node-n-coord");
     const task = screen.getByTestId("dag-node-n-task");
     expect(coord.className).toContain("dag-node--coordinator");
-    expect(task.className).toContain("dag-node--task");
+    expect(task.className).toContain("dag-node--worker");
     expect(coord.textContent).toContain("emploke/dev");
     expect(task.textContent).toContain("emploke/review");
   });
@@ -133,7 +133,7 @@ describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
             id: "n-a",
             phase: 0,
             taskId: "task-a",
-            spec: { kind: "task", agent: "emploke/dev", brief: "a" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "a" },
           }),
         ])}
         onSelectNode={onSelectNode}
@@ -154,7 +154,7 @@ describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
           makeNode({
             id: "n-no-task",
             phase: 0,
-            spec: { kind: "task", agent: "emploke/dev", brief: "x" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
           }),
         ])}
         onSelectNode={onSelectNode}
@@ -174,14 +174,14 @@ describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
             id: "n-a",
             phase: 0,
             taskId: "task-a",
-            spec: { kind: "task", agent: "emploke/dev", brief: "a" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "a" },
           }),
           makeNode({
             id: "n-b",
             phase: 0,
             createdAt: "2026-05-28T00:01:00.000Z",
             taskId: "task-b",
-            spec: { kind: "task", agent: "emploke/dev", brief: "b" },
+            spec: { kind: "worker", agent: "emploke/dev", brief: "b" },
           }),
         ])}
         selectedNodeId="n-b"

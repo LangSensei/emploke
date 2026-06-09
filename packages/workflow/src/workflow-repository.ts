@@ -17,20 +17,6 @@ import { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workfl
 type Db = BetterSQLite3Database<typeof schema>;
 
 /**
- * Resolved row for the cross-cut auth gate read. A single SQL JOIN
- * across `workflow_nodes` (caller) and `workflows` so the predicate
- * is evaluated atomically — a two-read pattern would race with
- * concurrent terminations.
- */
-export interface CallerCoordContextRow {
-  readonly callerKind: string;
-  readonly callerStatus: WorkflowNodeStatus;
-  readonly callerWorkflowId: string;
-  readonly callerSpecJson: string;
-  readonly workflowStatus: WorkflowStatus;
-}
-
-/**
  * Drizzle-backed CRUD for `workflows` / `workflow_nodes` /
  * `workflow_edges`. Private to the pkg: external callers go through
  * `WorkflowService`. Kind-blind: the repository never reads or writes
@@ -345,80 +331,6 @@ export class WorkflowRepository {
         ),
       )
       .run();
-  }
-
-  // ─── Caller-coord derivation + auth-gate JOIN ───────────
-
-  /**
-   * Per-workflow derivation of the unique running coordinator-kind
-   * node. Implements the SELECT at the top of every R4 mutation tx:
-   *
-   * ```sql
-   * SELECT id, spec_json FROM workflow_nodes
-   * WHERE workflow_id = :workflowId
-   *   AND kind = 'coordinator' AND status = 'running'
-   * LIMIT 2
-   * ```
-   *
-   * `LIMIT 2` (not `LIMIT 1`) so the caller can distinguish the
-   * legitimate 1-row case from the defensive 2+-row case (invariant
-   * #2 violation; schema corruption) without a second query.
-   *
-   * Returns the at-most-2 matching rows; the caller branches on the
-   * length (0 → handover window, 1 → derived caller, 2+ → corruption).
-   */
-  readRunningCoordsForWorkflow(
-    tx: Db,
-    workflowId: string,
-  ): readonly { readonly id: string; readonly specJson: string }[] {
-    assertValidWorkflowId(workflowId);
-    const rows = tx
-      .select({ id: workflowNodes.id, specJson: workflowNodes.specJson })
-      .from(workflowNodes)
-      .where(
-        and(
-          eq(workflowNodes.workflowId, workflowId),
-          eq(workflowNodes.kind, "coordinator"),
-          eq(workflowNodes.status, "running"),
-        ),
-      )
-      .limit(2)
-      .all();
-    return rows.map((row) => ({ id: row.id, specJson: row.specJson }));
-  }
-
-  /**
-   * Single-statement JOIN used by the inside-tx defense-in-depth
-   * recheck after the R4 derivation has already identified the
-   * caller coord (by id). Reads the caller's `(kind, status,
-   * workflowId)` and the workflow's `status` in one query so a
-   * concurrent termination on either side cannot slip between two
-   * reads. Returns `null` when the caller node does not exist
-   * (concurrent removal; should not happen given the prior
-   * derivation succeeded, but the JOIN reports it consistently).
-   */
-  readCallerCoordContext(tx: Db, callerCoordNodeId: string): CallerCoordContextRow | null {
-    assertValidWorkflowNodeId(callerCoordNodeId);
-    const row = tx
-      .select({
-        callerKind: workflowNodes.kind,
-        callerStatus: workflowNodes.status,
-        callerWorkflowId: workflowNodes.workflowId,
-        callerSpecJson: workflowNodes.specJson,
-        workflowStatus: workflows.status,
-      })
-      .from(workflowNodes)
-      .innerJoin(workflows, eq(workflows.id, workflowNodes.workflowId))
-      .where(eq(workflowNodes.id, callerCoordNodeId))
-      .get();
-    if (row === undefined) return null;
-    return {
-      callerKind: row.callerKind,
-      callerStatus: row.callerStatus as WorkflowNodeStatus,
-      callerWorkflowId: row.callerWorkflowId,
-      callerSpecJson: row.callerSpecJson,
-      workflowStatus: row.workflowStatus as WorkflowStatus,
-    };
   }
 
   // ─── Read-side helpers used by service primitives ────────

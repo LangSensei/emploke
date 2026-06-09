@@ -62,12 +62,12 @@ describe("OverviewTab — typed state strips", () => {
       <OverviewTab
         workflow={makeWf({
           status: "failed",
-          failure: { kind: "coord", message: "coordinator returned non-zero" },
+          failure: { kind: "coordinator", message: "coordinator returned non-zero" },
         })}
       />,
     );
     const callout = screen.getByTestId("workflow-overview-failure-callout");
-    expect(callout.textContent).toContain("coord");
+    expect(callout.textContent).toContain("coordinator");
     expect(screen.getByTestId("workflow-overview-failure-message").textContent).toContain(
       "coordinator returned non-zero",
     );

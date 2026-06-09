@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  WorkflowMutationUnauthorizedError,
+  WorkflowAlreadyTerminalError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
 } from "../src/errors.js";
@@ -122,7 +122,6 @@ describe("WorkflowService.replaceNodeSpec", () => {
     const call = h.workerRunner.validateCalls[0]!;
     expect(call.spec).toEqual({ agent: "w", brief: "user-input" });
     expect(call.ctx.workflowId).toBe(workflowId);
-    expect(call.ctx.callerCoordNodeId).toBe(initialCoordNodeId);
     expect(call.ctx.workflowStatus).toBe("running");
     const node = await h.service.getNode(nodeId);
     expect(node.spec).toEqual({ agent: "w-canon", brief: "canonical" });
@@ -204,7 +203,7 @@ describe("WorkflowService.replaceNodeSpec", () => {
         nodeId: otherTask,
         newSpec: { agent: "w" },
       }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
+    ).rejects.toBeInstanceOf(WorkflowNodeNotFoundError);
   });
 
   it("REJECTS coord-kind spec missing `agent`", async () => {
@@ -227,31 +226,7 @@ describe("WorkflowService.replaceNodeSpec", () => {
     ).rejects.toThrow();
   });
 
-  // ─── Auth gate ───────────────────────────────────────────
-
-  it("REJECTS when no coord is running (handover window)", async () => {
-    const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    const { nodeId } = await h.service.addNode({
-      workflowId,
-      kind: "worker",
-      spec: { agent: "w", brief: "v1" },
-      parents: [initialCoordNodeId],
-    });
-    h.db.db.transaction((tx) => {
-      h.repo.updateNodeLifecycle(tx, {
-        id: initialCoordNodeId,
-        status: "succeeded",
-        endedAt: "2026-06-07T01:00:00.000Z",
-      });
-    });
-    await expect(
-      h.service.replaceNodeSpec({
-        workflowId,
-        nodeId,
-        newSpec: { agent: "w", brief: "v2" },
-      }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
-  });
+  // ─── Workflow lifecycle gate ─────────────────────────────
 
   it("REJECTS when workflow is terminal", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
@@ -268,6 +243,6 @@ describe("WorkflowService.replaceNodeSpec", () => {
         nodeId,
         newSpec: { agent: "w", brief: "v2" },
       }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
+    ).rejects.toBeInstanceOf(WorkflowAlreadyTerminalError);
   });
 });

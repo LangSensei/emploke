@@ -29,6 +29,7 @@ import {
   workflowDag,
   workflowFinish,
   workflowList,
+  workflowNodeShow,
   workflowRemoveEdge,
   workflowRemoveNode,
   workflowReplaceSpec,
@@ -337,6 +338,84 @@ describe("workflowShow — server error envelope", () => {
 
 // ─── dag ───────────────────────────────────────────────────────────────
 
+const NODE_SHOW_NID = "node-task-1";
+const NODE_SHOW_URL = `${SERVER_URL}/api/workspaces/${WSID}/workflows/${WFID}/nodes/${NODE_SHOW_NID}`;
+
+const sampleNodeShow = {
+  id: NODE_SHOW_NID,
+  workflowId: WFID,
+  phase: 1,
+  status: "running" as const,
+  spec: { kind: "worker" as const, agent: "emploke/dev", brief: "implement parser" },
+  createdAt: "2026-06-01T00:00:11.000Z",
+  runningAt: "2026-06-01T00:00:12.000Z",
+  taskId: "20260601-zzzz9999",
+};
+
+describe("workflowNodeShow — happy path", () => {
+  it("GETs /workflows/:wfid/nodes/:nid and renders the node as a record", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify(sampleNodeShow) }]);
+    const r = await workflowNodeShow({ ...commonOpts(), wfid: WFID, nid: NODE_SHOW_NID });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(NODE_SHOW_URL);
+    expect(r.stdout).toContain(NODE_SHOW_NID);
+    expect(r.stdout).toContain("worker");
+    expect(r.stdout).toContain("emploke/dev");
+    expect(r.stdout).toContain("20260601-zzzz9999");
+  });
+
+  it("--json emits the projected node as formatted JSON", async () => {
+    stubFetchMulti([{ status: 200, body: JSON.stringify(sampleNodeShow) }]);
+    const r = await workflowNodeShow({
+      ...commonOpts(),
+      wfid: WFID,
+      nid: NODE_SHOW_NID,
+      json: true,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const parsed = JSON.parse(r.stdout ?? "") as { id: string };
+    expect(parsed.id).toBe(NODE_SHOW_NID);
+  });
+});
+
+describe("workflowNodeShow — validation (no fetch)", () => {
+  it("empty --wfid → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowNodeShow({ ...commonOpts(), wfid: "", nid: NODE_SHOW_NID });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--wfid/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("empty --nid → exit 2", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await workflowNodeShow({ ...commonOpts(), wfid: WFID, nid: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--nid/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowNodeShow — server error envelope", () => {
+  it("404 WorkflowNodeNotFoundError surfaces via formatError (exit 4)", async () => {
+    stubFetchMulti([
+      {
+        status: 404,
+        body: JSON.stringify({
+          error: `node "${NODE_SHOW_NID}" not found in workflow "${WFID}"`,
+          code: "WorkflowNodeNotFoundError",
+        }),
+      },
+    ]);
+    const r = await workflowNodeShow({ ...commonOpts(), wfid: WFID, nid: NODE_SHOW_NID });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toMatch(/WorkflowNodeNotFoundError/);
+    expect(r.stderr).toMatch(/HTTP 404/);
+  });
+});
+
 const sampleDag = {
   workflow: sampleHeader,
   nodes: [
@@ -355,7 +434,7 @@ const sampleDag = {
       phase: 1,
       status: "running",
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/dev",
         brief: "implement parser",
       },
@@ -603,7 +682,7 @@ const sampleNode = {
   workflowId: WFID,
   phase: 2,
   status: "not_started" as const,
-  spec: { kind: "task" as const, agent: "writer", brief: "thing" },
+  spec: { kind: "worker" as const, agent: "writer", brief: "thing" },
   createdAt: "2026-06-01T00:00:00.000Z",
 };
 
@@ -680,14 +759,14 @@ describe("workflowAddNode", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("server 403 surfaces typed code via formatError (exit 4)", async () => {
+  it("server 409 surfaces typed code via formatError (exit 4)", async () => {
     const specFile = await writeSpec({});
     stubFetchMulti([
       {
-        status: 403,
+        status: 409,
         body: JSON.stringify({
-          error: "denied",
-          code: "WorkflowMutationUnauthorizedError",
+          error: "workflow already terminal",
+          code: "WorkflowAlreadyTerminalError",
         }),
       },
     ]);
@@ -699,7 +778,7 @@ describe("workflowAddNode", () => {
       parents: "p1",
     });
     expect(r.exitCode).toBe(4);
-    expect(r.stderr).toContain("WorkflowMutationUnauthorizedError");
+    expect(r.stderr).toContain("WorkflowAlreadyTerminalError");
   });
 });
 
@@ -708,7 +787,7 @@ describe("workflowAddNode", () => {
 describe("workflowAddEdge", () => {
   it("POSTs /edges with {fromNodeId, toNodeId} from --from / --to", async () => {
     const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify({ fromNodeId: NID, toNodeId: NID2 }) },
+      { status: 200, body: JSON.stringify({ fromNodeId: NID, toNodeId: NID2, toPhase: 2 }) },
     ]);
     const r = await workflowAddEdge({
       ...commonOpts(),
@@ -717,6 +796,7 @@ describe("workflowAddEdge", () => {
       to: NID2,
     });
     expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain("toPhase 2");
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(EDGES_URL);
     expect(calls[0]?.body).toEqual({ fromNodeId: NID, toNodeId: NID2 });
@@ -941,7 +1021,7 @@ describe("workflowFinish", () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls[0]?.body).toEqual({
       outcome: "failed",
-      failure: { kind: "coord", message: "budget exhausted" },
+      failure: { kind: "coordinator", message: "budget exhausted" },
     });
   });
 

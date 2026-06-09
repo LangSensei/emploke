@@ -63,14 +63,13 @@ import {
   type WorkflowEdgeEntity,
   WorkflowEdgeNotFoundError,
   type WorkflowEntity,
-  WorkflowEnumValueError,
+  WorkflowEnumValueCorruptionError,
   WorkflowError,
   type WorkflowModule,
   type WorkflowModuleOptions,
-  WorkflowMutationUnauthorizedError,
   type WorkflowNodeEntity,
+  WorkflowNodeKindCorruptionError,
   WorkflowNodeKindShapeError,
-  WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   type WorkflowNodeRunner,
@@ -106,23 +105,22 @@ describe("@emploke/workflow public API guard", () => {
       new InvalidWorkflowIdError("bad"),
       new InvalidWorkflowNodeIdError("bad"),
       new WorkflowAlreadyTerminalError("wf-id"),
-      new WorkflowMutationUnauthorizedError("wf-id", "caller-id", "not coord"),
       new WorkflowNodeNotMutableError("wf-id", "node-id", "running", "removeNode"),
       new WorkflowEdgeCycleError("wf-id", "node-a", "node-b"),
       // Defensive guard — fires only when a persisted row carries a
       // kind value outside `NodeKind`, signalling schema corruption
       // or a row written by an older binary. Unreachable through
       // typed callers because `runnerFor` accepts `NodeKind`.
-      new WorkflowNodeKindUnknownError("evaluator"),
+      new WorkflowNodeKindCorruptionError("evaluator"),
       new WorkflowNodeKindShapeError(""),
       new WorkflowNodeSpecError("worker", "agent missing"),
-      new MultipleSuccessorCoordsError("wf-id", "caller-id"),
-      new OrphanCoordInsertError("wf-id", "caller-id"),
+      new MultipleSuccessorCoordsError("wf-id", "coord-parent-id"),
+      new OrphanCoordInsertError("wf-id"),
       new ParentStateError("wf-id", "worker", "parent-id", "failed"),
       // Zero-arg now: structural precondition (≥1 parent) is workflow-
-      // and caller-independent, so the error doesn't take an id.
+      // independent, so the error doesn't take an id.
       new EmptyParentsError(),
-      new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
+      new WorkflowEnumValueCorruptionError("status", "archived", ["running", "succeeded"]),
     ];
     expectTypeOf(errs[0]!).toExtend<Error>();
   });
@@ -161,8 +159,6 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeRunner>().toHaveProperty("cancel");
 
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowId");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordNodeId");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordSpec");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
   });
 
@@ -176,7 +172,7 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeTerminalResult>().toEqualTypeOf<
       | { readonly status: "succeeded"; readonly output?: unknown }
       | { readonly status: "failed"; readonly reason: string; readonly output?: unknown }
-      | { readonly status: "cancelled" }
+      | { readonly status: "cancelled"; readonly reason: string }
     >();
   });
 
@@ -268,23 +264,6 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowModule>().toHaveProperty("engine");
   });
 
-  it("M1 (#325 D7): WorkflowModuleOptions exposes test-only trustedCallerForTesting", () => {
-    // This OPTIONAL field bypasses the caller-coord auth gate on
-    // addNode/addEdge/addSubgraph for tests that don't have a coord
-    // runner. The field is documented as TESTING ONLY; the api-pkg
-    // public-API guard asserts the field is NOT plumbed through
-    // `@emploke/api`'s surface so production paths cannot
-    // accidentally enable it.
-    expectTypeOf<WorkflowModuleOptions>().toHaveProperty("trustedCallerForTesting");
-    // Compile-time check that the field is shaped as a boolean,
-    // not (say) a config object. We don't lock optionality here
-    // because `exactOptionalPropertyTypes` makes the indexed-access
-    // assertion brittle; the `?` on the source declaration is
-    // covered by the `toHaveProperty` above.
-    type FlagType = NonNullable<WorkflowModuleOptions["trustedCallerForTesting"]>;
-    expectTypeOf<FlagType>().toEqualTypeOf<boolean>();
-  });
-
   it("preserves the service class", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("getWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("getDag");
@@ -310,13 +289,12 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowDagSnapshot>().toHaveProperty("edges");
   });
 
-  it("R4: the four mutation Args carry `workflowId` (NOT `callerCoordNodeId`)", () => {
-    // R4 derivation: the substrate determines the calling coord from
-    // `workflowId` (the unique running coord per workflow, invariant
-    // #2). The leaked-id field `callerCoordNodeId` is removed from
-    // these Args; only the structural `workflowId` remains. Adding
-    // it back here is a compile-time error — this guard ensures it
-    // never silently re-appears.
+  it("mutation Args expose `workflowId` but not `callerCoordNodeId`", () => {
+    // The mutation Args carry `workflowId` as the routing key into a
+    // specific DAG; the substrate does not accept a caller-coord id on
+    // the wire. Adding `callerCoordNodeId` back to any of these Args is
+    // a compile-time error — this guard ensures it never silently
+    // re-appears in a future refactor.
     expectTypeOf<AddNodeArgs>().toHaveProperty("workflowId");
     expectTypeOf<AddEdgeArgs>().toHaveProperty("workflowId");
     expectTypeOf<CancelNodeArgs>().toHaveProperty("workflowId");
@@ -325,20 +303,17 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<AddEdgeArgs["workflowId"]>().toBeString();
     expectTypeOf<CancelNodeArgs["workflowId"]>().toBeString();
     expectTypeOf<FinishWorkflowArgs["workflowId"]>().toBeString();
-    // Defence-in-depth: `callerCoordNodeId` must NOT be exposed on
-    // any of the four mutation Args. `not.toHaveProperty` is the
-    // type-level assertion that fails if a future refactor leaks
-    // the derived id back into the public surface.
     expectTypeOf<AddNodeArgs>().not.toHaveProperty("callerCoordNodeId");
     expectTypeOf<AddEdgeArgs>().not.toHaveProperty("callerCoordNodeId");
     expectTypeOf<CancelNodeArgs>().not.toHaveProperty("callerCoordNodeId");
     expectTypeOf<FinishWorkflowArgs>().not.toHaveProperty("callerCoordNodeId");
   });
 
-  it("R4 (Phase 2b): the structural mutation Args carry `workflowId` only", () => {
-    // Same R4 contract for the four Phase 2b mutation Args. Repeats
-    // the assertion so the failure message points at the new
-    // primitives if a future refactor leaks `callerCoordNodeId`.
+  it("structural mutation Args expose `workflowId` but not `callerCoordNodeId`", () => {
+    // Same contract for the structural DAG-edit primitives. Repeats
+    // the assertion so a regression's failure message points at the
+    // primitive that leaked the derived id back onto the public
+    // surface.
     expectTypeOf<RemoveNodeArgs>().toHaveProperty("workflowId");
     expectTypeOf<RemoveEdgeArgs>().toHaveProperty("workflowId");
     expectTypeOf<ReplaceNodeSpecArgs>().toHaveProperty("workflowId");
@@ -353,7 +328,7 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<AddSubgraphArgs>().not.toHaveProperty("callerCoordNodeId");
   });
 
-  it("Phase 2b Args carry the per-method structural fields", () => {
+  it("structural mutation Args carry the per-method positional fields", () => {
     expectTypeOf<RemoveNodeArgs>().toHaveProperty("nodeId");
     expectTypeOf<RemoveNodeArgs["nodeId"]>().toBeString();
     expectTypeOf<RemoveEdgeArgs>().toHaveProperty("fromNodeId");

@@ -172,7 +172,7 @@ const dagRunningMultistage: WorkflowDagWire = {
       phase: 1,
       taskId: TASK_ID_MIG_TASK_1A,
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/dev",
         brief: "Replace session middleware with OAuth in packages/server",
         runtime: "copilot",
@@ -201,7 +201,7 @@ const dagRunningMultistage: WorkflowDagWire = {
       phase: 3,
       taskId: TASK_ID_MIG_TASK_3A,
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/review",
         brief: "Run the auth integration suite + summarise failures",
         runtime: "claude",
@@ -240,7 +240,7 @@ const dagSucceededSimple: WorkflowDagWire = {
       phase: 1,
       taskId: TASK_ID_LOG_TASK_1A,
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/dev",
         brief: "Replace console.log calls in packages/catalog",
       },
@@ -256,7 +256,7 @@ const dagSucceededSimple: WorkflowDagWire = {
       phase: 1,
       taskId: TASK_ID_LOG_TASK_1B,
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/dev",
         brief: "Add structured-logger happy-path tests",
       },
@@ -313,7 +313,7 @@ const dagCancelledLate: WorkflowDagWire = {
       phase: 1,
       taskId: TASK_ID_BRAND_TASK_1A,
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/designer",
         brief: "Draft hero section copy + image layout",
       },

@@ -80,7 +80,7 @@ describe("WorkflowService.createWorkflow", () => {
     expect(coord.status).toBe("running");
   });
 
-  it("validate ctx: routes the initial coord through runner.validate with self-bootstrap identity", async () => {
+  it("validate ctx: routes the initial coord through runner.validate", async () => {
     h.coordRunner.validateReturnValue = { agent: "coord-a", validated: true };
     const { initialCoordNodeId, workflowId } = await h.service.createWorkflow({
       brief: "x",
@@ -89,9 +89,7 @@ describe("WorkflowService.createWorkflow", () => {
     expect(h.coordRunner.validateCalls).toHaveLength(1);
     const v = h.coordRunner.validateCalls[0]!;
     expect(v.spec).toEqual({ agent: "coord-a" });
-    expect(v.ctx.callerCoordNodeId).toBe(initialCoordNodeId);
     expect(v.ctx.workflowId).toBe(workflowId);
-    expect(v.ctx.callerCoordSpec).toEqual({ agent: "coord-a" });
     expect(v.ctx.workflowStatus).toBe("running");
     // The persisted spec is what the handler returned.
     const coord = await h.service.getNode(initialCoordNodeId);
@@ -108,6 +106,35 @@ describe("WorkflowService.createWorkflow", () => {
     await expect(
       h.service.createWorkflow({ brief: "x", coordinatorAgent: "" }),
     ).rejects.toBeInstanceOf(WorkflowError);
+  });
+
+  it("persists metadata round-trip through getWorkflow", async () => {
+    const { workflowId } = await h.service.createWorkflow({
+      brief: "x",
+      coordinatorAgent: "coord-a",
+      metadata: { source: "cli", tags: ["urgent", "blocking"] },
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.metadata).toEqual({ source: "cli", tags: ["urgent", "blocking"] });
+  });
+
+  it("defaults metadata to an empty object when omitted", async () => {
+    const { workflowId } = await h.service.createWorkflow({
+      brief: "x",
+      coordinatorAgent: "coord-a",
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.metadata).toEqual({});
+  });
+
+  it("initializes startedAt to the createdAt instant (no pre-running state)", async () => {
+    const { workflowId } = await h.service.createWorkflow({
+      brief: "x",
+      coordinatorAgent: "coord-a",
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.startedAt).toBeDefined();
+    expect(wf.startedAt).toBe(wf.createdAt);
   });
 
   it("dispatch-failure inside createWorkflow flips initial coord to failed", async () => {

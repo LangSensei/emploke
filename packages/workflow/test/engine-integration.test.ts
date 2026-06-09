@@ -4,11 +4,9 @@
  * to-end using FAKE runners (no real `@emploke/task` dependency) so
  * the assertions stay focused on engine ↔ substrate behavior.
  *
- * The test escape hatch (`trustedCallerForTesting: true`) is used
- * here to add worker nodes directly without standing up a coord
- * runner. The fake coord runner is a passthrough stub whose
- * `dispatch` immediately fires `onTerminal({succeeded})` so workflow
- * lifecycle assertions can land cleanly.
+ * The fake coord runner is a passthrough stub whose `dispatch`
+ * immediately fires `onTerminal({succeeded})` so workflow lifecycle
+ * assertions can land cleanly.
  *
  * Scenarios (one `it` block each):
  *   1. happy path: create → coord auto-succeeds → add worker →
@@ -23,7 +21,7 @@
  *   7. cross-workflow parallelism → two workflows progress
  *      independently
  *   8. engine.stop() drains in-flight ticks
- *   9. trustedCallerForTesting bypass still runs structural rules
+ *   9. structural rules still fire (worker requires ≥1 parent)
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -54,7 +52,7 @@ interface RecordingRunner extends WorkflowNodeRunner {
       readonly spec: unknown;
       readonly nodeDir: string;
       readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
-    }) => Promise<{ readonly unitId: string }>,
+    }) => Promise<void>,
   ): void;
   readonly dispatchCalls: ReadonlyArray<{
     readonly workflowId: string;
@@ -73,7 +71,7 @@ function makeAutoSucceedRunner(label: string): RecordingRunner {
     readonly spec: unknown;
     readonly nodeDir: string;
     readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
-  }) => Promise<{ readonly unitId: string }> = async (opts) => {
+  }) => Promise<void> = async (opts) => {
     // Default: succeed immediately. Push the terminal off the
     // microtask queue so the engine has a chance to commit the
     // `ready → running` transition first; this exercises the
@@ -81,7 +79,10 @@ function makeAutoSucceedRunner(label: string): RecordingRunner {
     // common case in production).
     queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
     seq += 1;
-    return { unitId: `${label}-unit-${seq}` };
+    // Stub still tracks a per-call identifier mirroring runner
+    // book-keeping (e.g. logging a task id); the substrate does not
+    // consume it.
+    void `${label}-unit-${seq}`;
   };
   const runner: RecordingRunner = {
     setDispatch(fn) {
@@ -124,7 +125,6 @@ async function makeHarness(): Promise<Harness> {
     workspaceDir,
     runners: { coordinator: coord, worker },
     logger: silentLogger,
-    trustedCallerForTesting: true,
   });
   return {
     module,
@@ -186,12 +186,10 @@ describe("WorkflowEngine integration", () => {
       "initial coord becomes succeeded",
     );
 
-    // Add a worker node with the now-terminal coord as parent. With
-    // `trustedCallerForTesting: true` we bypass the caller-coord auth
-    // gate (there is no running coord). The structural rule for
-    // worker parents is "at least one parent in non-failed terminal"
-    // — the coord just succeeded, so the worker is immediately
-    // eligible.
+    // Add a worker node with the now-terminal coord as parent. The
+    // structural rule for worker parents is "at least one parent in
+    // non-failed terminal" — the coord just succeeded, so the worker
+    // is immediately eligible.
     const { nodeId: workerId } = await h.module.service.addNode({
       workflowId,
       kind: "worker",
@@ -215,7 +213,6 @@ describe("WorkflowEngine integration", () => {
   it("runner reports failed → node marked failed via markNodeTerminal", async () => {
     h.worker.setDispatch(async (opts) => {
       queueMicrotask(() => opts.onTerminal({ status: "failed", reason: "intentional failure" }));
-      return { unitId: "fail-unit" };
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "fail-test",
@@ -241,8 +238,7 @@ describe("WorkflowEngine integration", () => {
 
   it("runner reports cancelled → node marked cancelled", async () => {
     h.worker.setDispatch(async (opts) => {
-      queueMicrotask(() => opts.onTerminal({ status: "cancelled" }));
-      return { unitId: "cancel-unit" };
+      queueMicrotask(() => opts.onTerminal({ status: "cancelled", reason: "intentional cancel" }));
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "cancel-test",
@@ -306,7 +302,6 @@ describe("WorkflowEngine integration", () => {
           opts.onTerminal({ status: "failed", reason: "duplicate; should be ignored" });
         });
       });
-      return { unitId: "dup-unit" };
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "dup-test",
@@ -387,7 +382,6 @@ describe("WorkflowEngine integration", () => {
     const slowDispatch: DispatchFn = async (opts) => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
-      return { unitId: `unit-${opts.nodeId}` };
     };
     h.coord.setDispatch(slowDispatch);
     h.worker.setDispatch(slowDispatch);
@@ -446,7 +440,6 @@ describe("WorkflowEngine integration", () => {
     const gatedDispatch: DispatchFn = async (opts) => {
       await gate;
       queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
-      return { unitId: `unit-${opts.nodeId}` };
     };
     h.worker.setDispatch(gatedDispatch);
 
@@ -542,15 +535,14 @@ describe("WorkflowEngine integration", () => {
     expect(h.coord.dispatchCalls.length).toBe(dispatchesBefore);
   });
 
-  it("trustedCallerForTesting bypass still runs structural rules (worker requires ≥1 parent)", async () => {
+  it("structural rules still fire (worker requires ≥1 parent)", async () => {
     const { workflowId } = await h.module.service.createWorkflow({
       brief: "structural-test",
       coordinatorAgent: "coord-agent",
     });
-    // Worker with zero parents — structural rule rejects regardless
-    // of the auth bypass. The error class is EmptyParentsError; we
-    // assert via instanceof / message rather than importing yet
-    // another error class.
+    // Worker with zero parents — substrate rejects via
+    // EmptyParentsError; we assert via instanceof / message rather
+    // than importing yet another error class.
     await expect(
       h.module.service.addNode({
         workflowId,

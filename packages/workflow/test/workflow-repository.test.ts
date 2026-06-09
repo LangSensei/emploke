@@ -29,7 +29,7 @@ function makeWf(over?: Partial<{ status: string; coordinatorAgent: string }>): W
     startedAt: NOW,
     endedAt: null,
     success: status === "succeeded" ? JSON.stringify({ output: null }) : null,
-    failure: status === "failed" ? JSON.stringify({ kind: "coord", message: "" }) : null,
+    failure: status === "failed" ? JSON.stringify({ kind: "coordinator", message: "" }) : null,
     cancellation: status === "cancelled" ? JSON.stringify({ kind: "user", message: "" }) : null,
   });
 }
@@ -174,87 +174,6 @@ describe("WorkflowRepository — CRUD round-trips", () => {
     expect(edges[0]).toBeInstanceOf(WorkflowEdgeEntity);
     expect(edges[0]?.from).toBe(COORD_ID);
     expect(edges[0]?.to).toBe(WORKER_ID);
-  });
-
-  it("readCallerCoordContext returns the JOIN row when both sides exist", () => {
-    db.db.transaction((tx) => {
-      repo.insertWorkflow(tx, makeWf());
-      repo.insertNode(tx, makeNode({ id: COORD_ID, status: "running" }));
-    });
-    const ctx = db.db.transaction((tx) => repo.readCallerCoordContext(tx, COORD_ID));
-    expect(ctx).not.toBeNull();
-    expect(ctx?.callerKind).toBe("coordinator");
-    expect(ctx?.callerStatus).toBe("running");
-    expect(ctx?.workflowStatus).toBe("running");
-    expect(ctx?.callerWorkflowId).toBe(WF_ID);
-    expect(JSON.parse(ctx?.callerSpecJson ?? "{}")).toEqual({ agent: "agent-1" });
-  });
-
-  it("readCallerCoordContext returns null when caller node is absent", () => {
-    const ctx = db.db.transaction((tx) => repo.readCallerCoordContext(tx, COORD_ID));
-    expect(ctx).toBeNull();
-  });
-
-  it("readRunningCoordsForWorkflow returns an empty list when no coord is running", () => {
-    // 0-row branch — exercised by `deriveCallerCoord` to reject
-    // ordinary mutations during the handover window (or when the
-    // workflow is terminal).
-    db.db.transaction((tx) => {
-      repo.insertWorkflow(tx, makeWf());
-      repo.insertNode(tx, makeNode({ id: COORD_ID, status: "succeeded" }));
-    });
-    const rows = db.db.transaction((tx) => repo.readRunningCoordsForWorkflow(tx, WF_ID));
-    expect(rows).toEqual([]);
-  });
-
-  it("readRunningCoordsForWorkflow returns the single running coord (happy path)", () => {
-    // 1-row branch — the substrate parses `specJson` and returns
-    // `{id, spec}` to the caller.
-    db.db.transaction((tx) => {
-      repo.insertWorkflow(tx, makeWf());
-      repo.insertNode(tx, makeNode({ id: COORD_ID, status: "running" }));
-    });
-    const rows = db.db.transaction((tx) => repo.readRunningCoordsForWorkflow(tx, WF_ID));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.id).toBe(COORD_ID);
-    expect(JSON.parse(rows[0]?.specJson ?? "{}")).toEqual({ agent: "agent-1" });
-  });
-
-  it("readRunningCoordsForWorkflow caps the result at 2 rows (LIMIT 2) for invariant-#2 detection", () => {
-    // 2+ branch — `deriveCallerCoord` only needs to know "≥ 2", so
-    // the LIMIT 2 keeps the SELECT bounded even if a future
-    // corruption ever produced many running coords.
-    const SECOND_COORD = "550e8400-e29b-41d4-a716-446655440099";
-    const THIRD_COORD = "550e8400-e29b-41d4-a716-44665544009a";
-    db.db.transaction((tx) => {
-      repo.insertWorkflow(tx, makeWf());
-      repo.insertNode(tx, makeNode({ id: COORD_ID, status: "running" }));
-      repo.insertNode(tx, makeNode({ id: SECOND_COORD, status: "running" }));
-      repo.insertNode(tx, makeNode({ id: THIRD_COORD, status: "running" }));
-    });
-    const rows = db.db.transaction((tx) => repo.readRunningCoordsForWorkflow(tx, WF_ID));
-    expect(rows).toHaveLength(2);
-  });
-
-  it("readRunningCoordsForWorkflow ignores worker-kind running rows", () => {
-    // Only `kind = 'coordinator'` rows are considered; running
-    // workers must NOT be counted toward the invariant-#2 check.
-    db.db.transaction((tx) => {
-      repo.insertWorkflow(tx, makeWf());
-      repo.insertNode(tx, makeNode({ id: COORD_ID, status: "running" }));
-      repo.insertNode(
-        tx,
-        makeNode({
-          id: WORKER_ID,
-          kind: "worker",
-          phase: 1,
-          status: "running",
-        }),
-      );
-    });
-    const rows = db.db.transaction((tx) => repo.readRunningCoordsForWorkflow(tx, WF_ID));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.id).toBe(COORD_ID);
   });
 
   it("listNonTerminalNodes filters to {not_started, ready, running}", () => {

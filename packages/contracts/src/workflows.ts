@@ -11,29 +11,20 @@
  */
 
 /**
- * Task-kind node spec payload. Flat, matches the body shape minus
+ * Worker-kind node spec payload. Flat, matches the body shape minus
  * the discriminator. Persisted opaquely as `workflow_nodes.spec_json`
  * via the substrate's envelope; consumed flatly on the wire.
  *
- * The task-kind handler enforces (at insert time):
+ * The worker-kind handler enforces (at insert time):
  *
- *   1. `agent` non-empty string AND exists in the catalog AND appears
- *      in the caller coord agent's `dependencies.agents` declaration.
- *      The last clause means a coordinator can only dispatch task
- *      nodes for agents it has statically declared a dependency on,
- *      so the static dependency graph is also the runtime
- *      dispatch-permission graph.
+ *   1. `agent` non-empty string AND exists in the catalog.
  *   2. `brief` non-empty string, no `\n`/`\r`, length ≤ 200 (matches
  *      `@emploke/task` `DispatchOpts.brief`).
  *   3. `details` when present, must be string (empty allowed).
  *   4. `runtime` when present, must be non-empty string.
  */
-export interface WorkflowTaskNodeSpec {
-  /**
-   * Worker agent FQN. MUST appear in the most-recent coord node's
-   * `spec.agent`'s `dependencies.agents` (validated by the
-   * task-kind handler at insert time).
-   */
+export interface WorkflowWorkerNodeSpec {
+  /** Worker agent FQN. */
   readonly agent: string;
   /** Worker brief: single line, ≤ 200 chars (no `\n` / `\r`). */
   readonly brief: string;
@@ -67,13 +58,13 @@ export interface WorkflowCoordinatorNodeSpec {
 }
 
 /**
- * Flat wire projection for a task-kind workflow node spec. The
- * internal envelope `{ kind: "task", spec: { agent, brief, ... } }`
- * is flattened to `{ kind: "task", agent, brief, ... }` for HTTP
+ * Flat wire projection for a worker-kind workflow node spec. The
+ * internal envelope `{ kind: "worker", spec: { agent, brief, ... } }`
+ * is flattened to `{ kind: "worker", agent, brief, ... }` for HTTP
  * responses so dashboard / CLI code can read `node.spec.agent`
  * without unwrapping `spec`.
  */
-export type WorkflowTaskNodeSpecWire = { readonly kind: "task" } & WorkflowTaskNodeSpec;
+export type WorkflowWorkerNodeSpecWire = { readonly kind: "worker" } & WorkflowWorkerNodeSpec;
 
 /** Flat wire projection for a coordinator-kind workflow node spec. */
 export type WorkflowCoordinatorNodeSpecWire = {
@@ -82,13 +73,13 @@ export type WorkflowCoordinatorNodeSpecWire = {
 
 /**
  * Wire-shape spec on workflow node responses. Flat for the two
- * shipped kinds (`task` / `coordinator`); opaque envelope for any
+ * shipped kinds (`worker` / `coordinator`); opaque envelope for any
  * future kind the server projects through unchanged. When a third
  * concrete kind ships, add its flat wire shape here as another
  * union member.
  */
 export type WorkflowNodeWireSpec =
-  | WorkflowTaskNodeSpecWire
+  | WorkflowWorkerNodeSpecWire
   | WorkflowCoordinatorNodeSpecWire
   | { readonly kind: string; readonly spec: unknown };
 
@@ -121,13 +112,15 @@ export type WorkflowNodeStatusWire =
  * strings (already stored that way), optional `endedAt` is absent on
  * non-terminal rows.
  *
- * `iterationCount` is kept for forward diagnostics; not rendered
- * after v2.2.
+ * `iterationCount` is optional. Per-workflow reads (`GET /:wfid`,
+ * `POST /` create response) include it (cheap: the route already has
+ * the DAG snapshot in hand). The list endpoint (`GET /`) omits it
+ * because computing it would require an N+1 fan-out across every
+ * row in the result set to load each workflow's DAG; the field
+ * stays "kept for forward diagnostics" rather than "always renders".
  *
- * `success` / `failure` / `cancellation` are v2.2 terminal payloads —
- * exactly the one matching `status` is present on terminal rows
- * (legacy pre-v2.2 terminal rows with no payload column populated
- * round-trip with all three absent).
+ * `success` / `failure` / `cancellation` are terminal payloads —
+ * exactly the one matching `status` is present on terminal rows.
  */
 export interface WorkflowHeaderWire {
   readonly id: string;
@@ -136,8 +129,12 @@ export interface WorkflowHeaderWire {
   readonly coordinatorAgent: string;
   readonly status: WorkflowStatusWire;
   readonly metadata: Readonly<Record<string, unknown>>;
-  /** Kept for forward diagnostics; not rendered after v2.2. */
-  readonly iterationCount: number;
+  /**
+   * Coordinator-chain depth at projection time. Present on
+   * per-workflow reads; omitted on list rows to avoid an N+1
+   * snapshot fan-out across the result set.
+   */
+  readonly iterationCount?: number;
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly endedAt?: string;
@@ -157,28 +154,30 @@ export interface WorkflowSuccessWire {
 
 /**
  * Wire projection of a failed workflow's terminal payload.
- * Discriminated on `kind`:
+ * Single-arm interface — `kind` retained as a discriminator so future
+ * substrate-detected failure modes can be added without breaking the
+ * wire shape.
  *
- *   - `coord`    — coordinator explicitly called `/finish` with
- *                  `outcome: 'failed'` and a message.
- *   - `internal` — substrate self-terminated the workflow (reserved
- *                  for future use; v2.2 emits only `coord`).
+ *   - `coordinator` — the coordinator explicitly called `/finish`
+ *                     with `outcome: 'failed'` and a message.
  */
-export type WorkflowFailureWire =
-  | { readonly kind: "coord"; readonly message: string }
-  | { readonly kind: "internal"; readonly message: string };
+export type WorkflowFailureWire = {
+  readonly kind: "coordinator";
+  readonly message: string;
+};
 
 /**
  * Wire projection of a cancelled workflow's terminal payload.
- * Discriminated on `kind`:
+ * Single-arm interface — `kind` retained as a discriminator so future
+ * cancellation sources (e.g. parent-workflow cascade) can be added
+ * without breaking the wire shape.
  *
- *   - `user`    — operator called `/cancel` from the dashboard / CLI.
- *   - `cascade` — substrate cancelled this workflow as collateral
- *                 (reserved for future use; v2.2 emits only `user`).
+ *   - `user` — operator called `/cancel` from the dashboard / CLI.
  */
-export type WorkflowCancellationWire =
-  | { readonly kind: "user"; readonly message: string }
-  | { readonly kind: "cascade"; readonly message: string };
+export type WorkflowCancellationWire = {
+  readonly kind: "user";
+  readonly message: string;
+};
 
 /**
  * Wire projection of a single workflow node. Per-kind `spec` is
@@ -272,12 +271,10 @@ export interface WorkflowListQuery {
 // body. Wire shapes are JSON-safe — plain literal-union strings (no
 // `Date`, `Map`, `Set`, `Symbol`).
 //
-// Auth is substrate-derived: the unique `kind='coordinator' AND
-// status='running'` row in the workflow IS the caller. HTTP routes
-// forward `workflowId` from the path; they do NOT accept a
-// `callerCoordNodeId` body field, header, or query param. A request
-// from outside any coord task gets `WorkflowMutationUnauthorizedError`
-// → 403.
+// The substrate does not derive any caller identity from mutation
+// bodies; the only lifecycle gate is the workflow's own status, which
+// is re-checked atomically inside each write tx. A request against a
+// terminal workflow surfaces `WorkflowAlreadyTerminalError` → 409.
 
 /**
  * Per-node kind discriminator on every mutation body that allocates a
@@ -322,11 +319,15 @@ export interface AddEdgeBody {
 /**
  * Response of `POST /workspaces/:id/workflows/:wfid/edges`. Echoes the
  * pair back so the caller has a self-contained record of the inserted
- * edge without re-fetching the DAG.
+ * edge without re-fetching the DAG, plus the substrate's recomputed
+ * `toPhase` (the receiving node's phase may have shifted when the new
+ * edge was inserted, so the caller needs the post-insert value to
+ * stay in sync without a follow-up `getDag` call).
  */
 export interface AddEdgeResultWire {
   readonly fromNodeId: string;
   readonly toNodeId: string;
+  readonly toPhase: number;
 }
 
 /**
@@ -403,8 +404,8 @@ export interface ReplaceNodeSpecBody {
  *   - `succeeded` — `success` is optional. When omitted, the server
  *     defaults the persisted payload to `{ output: null }`.
  *   - `failed`    — `failure` is REQUIRED. `kind` defaults to
- *     `"coord"` at the server boundary when omitted; `message` is
- *     a free-form string (empty allowed).
+ *     `"coordinator"` at the server boundary when omitted; `message`
+ *     is a free-form string (empty allowed).
  *
  * Workflow-level cancellation is a separate route
  * (`POST .../cancel`) — see {@link CancelWorkflowBody}.
@@ -416,7 +417,7 @@ export type FinishWorkflowBody =
     }
   | {
       readonly outcome: "failed";
-      readonly failure: { readonly kind?: "coord"; readonly message: string };
+      readonly failure: { readonly kind?: "coordinator"; readonly message: string };
     };
 
 /**

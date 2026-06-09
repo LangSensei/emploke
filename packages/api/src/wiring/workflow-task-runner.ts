@@ -1,3 +1,8 @@
+// "task" in this filename refers to the @emploke/task dispatch
+// mechanism this runner uses (visible at the deps.tasks.dispatch call
+// inside dispatch()), not the workflow-node wire `kind` — which is
+// "worker" (this runner) or "coordinator" (sibling runner).
+
 /**
  * `makeWorkerNodeRunner` — the worker-kind {@link
  * WorkflowNodeRunner} that maps a workflow worker node to a
@@ -53,9 +58,12 @@
  * - `onTerminal` is fired exactly once per dispatched node by this
  *   runner (the interval is cleared the moment a terminal status is
  *   observed, and the per-node Map entry is dropped at the same time).
- * - `dispatch` returns `{unitId: task.id}` for audit/log correlation
- *   only — the substrate explicitly does NOT persist `unitId` (per
- *   the same `types.ts:222` comment).
+ * - `dispatch` returns `void`. The runner logs the substrate-side
+ *   identifier (the task id) at info level inside `dispatch` so
+ *   operators can correlate substrate events with the underlying
+ *   task; the substrate explicitly does NOT persist that id (per the
+ *   same `types.ts:222` comment) because reverse-lookup goes through
+ *   the unit's metadata.
  * - No retry, no exponential backoff at the runner level; a single
  *   runner-local poll-error budget (`maxPollErrors`, default 3)
  *   maps repeated `tasks.get` failures to
@@ -226,7 +234,7 @@ export function makeWorkerNodeRunner(
       return validated;
     },
 
-    async dispatch(opts): Promise<{ readonly unitId: string }> {
+    async dispatch(opts): Promise<void> {
       const spec = opts.spec as WorkerNodeSpec;
       const task = await deps.tasks.dispatch({
         agent: spec.agent,
@@ -247,6 +255,10 @@ export function makeWorkerNodeRunner(
       const taskId = task.id;
       const nodeId = opts.nodeId;
       const onTerminal = opts.onTerminal;
+      logger.info(
+        { workflowId: opts.workflowId, nodeId, taskId },
+        "workflow-task-runner: dispatched worker task",
+      );
 
       // If a previous dispatch on the same nodeId left an orphan
       // interval (shouldn't happen — the substrate guarantees a
@@ -313,7 +325,10 @@ export function makeWorkerNodeRunner(
               });
               return;
             case "cancelled":
-              fireTerminal(nodeId, onTerminal, { status: "cancelled" });
+              fireTerminal(nodeId, onTerminal, {
+                status: "cancelled",
+                reason: task.cancellation?.message ?? "task cancelled (no reason recorded)",
+              });
               return;
             default: {
               // Defense against a future TaskStatus arm we don't
@@ -330,8 +345,6 @@ export function makeWorkerNodeRunner(
         })();
       }, pollIntervalMs);
       intervals.set(nodeId, handle);
-
-      return { unitId: taskId };
     },
 
     async hasInFlightForNode(nodeId: string): Promise<boolean> {

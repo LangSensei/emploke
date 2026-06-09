@@ -106,19 +106,8 @@ export async function workflowList(opts: WorkflowListOpts = {}): Promise<Command
     return {
       exitCode: 0,
       stdout: formatTable(
-        ["id", "brief", "coordinatorAgent", "status", "iterationCount", "createdAt"],
-        list.map((wf) => [
-          wf.id,
-          wf.brief,
-          wf.coordinatorAgent,
-          wf.status,
-          // `iterationCount` is projected as `0` on every list row by
-          // design (see route doc-block: keeps the endpoint O(workflows)).
-          // The number-as-string cast is just for table padding; callers
-          // wanting the accurate count use `workflow show`.
-          String(wf.iterationCount),
-          wf.createdAt,
-        ]),
+        ["id", "brief", "coordinatorAgent", "status", "createdAt"],
+        list.map((wf) => [wf.id, wf.brief, wf.coordinatorAgent, wf.status, wf.createdAt]),
       ),
     };
   } catch (err) {
@@ -182,6 +171,54 @@ export async function workflowShow(opts: WorkflowShowOpts): Promise<CommandResul
   }
 }
 
+// ─── node-show ─────────────────────────────────────────────────────────
+export interface WorkflowNodeShowOpts extends CommonFlags {
+  /** Workflow id. */
+  readonly wfid: string;
+  /** Node id within the workflow. */
+  readonly nid: string;
+}
+
+export async function workflowNodeShow(opts: WorkflowNodeShowOpts): Promise<CommandResult> {
+  if (typeof opts.wfid !== "string" || opts.wfid.trim() === "") {
+    return { exitCode: 2, stderr: "workflow id is required (--wfid <id>)\n" };
+  }
+  if (typeof opts.nid !== "string" || opts.nid.trim() === "") {
+    return { exitCode: 2, stderr: "node id is required (--nid <id>)\n" };
+  }
+  const client = await makeClient(opts);
+  try {
+    const id = await resolveWorkspace(opts);
+    const node = await client.call("workflows.getNode", {
+      params: { id, wfid: opts.wfid, nid: opts.nid },
+    });
+    const fmt = pickFormat(opts, "table");
+    if (fmt === "json") return { exitCode: 0, stdout: formatJson(node) };
+    const rows: Array<readonly [string, string]> = [
+      ["id", node.id],
+      ["workflowId", node.workflowId],
+      ["phase", String(node.phase)],
+      ["kind", node.spec.kind],
+      ["status", node.status],
+      ["agent", agentForSpec(node.spec)],
+      ["createdAt", node.createdAt],
+    ];
+    if (node.readyAt !== undefined) rows.push(["readyAt", node.readyAt]);
+    if (node.runningAt !== undefined) rows.push(["runningAt", node.runningAt]);
+    if (node.endedAt !== undefined) rows.push(["endedAt", node.endedAt]);
+    if (node.taskId !== undefined) rows.push(["taskId", node.taskId]);
+    return {
+      exitCode: 0,
+      stdout: `${formatTable(
+        ["field", "value"],
+        rows.map(([k, v]) => [k, v]),
+      )}\n`,
+    };
+  } catch (err) {
+    return formatError(err);
+  }
+}
+
 // ─── dag ───────────────────────────────────────────────────────────────
 export interface WorkflowDagOpts extends CommonFlags {
   readonly wfid: string;
@@ -229,16 +266,15 @@ export interface WorkflowCancelOpts extends CommonFlags {
   /**
    * Free-text operator-supplied message persisted into the
    * workflow's `cancellation` JSON column. Empty string is allowed
-   * but the flag itself MUST be present in v2.2 — the route rejects
-   * `{}` with a 400 because the `cancellation.message` field is
-   * required by the wire contract.
+   * but the flag itself MUST be present — the route rejects `{}` with
+   * a 400 because the `cancellation.message` field is required by the
+   * wire contract.
    */
   readonly message?: string;
   /**
-   * Cancellation kind. v2.2 only emits `"user"`; the flag is
-   * accepted for forward compatibility with future kinds (e.g.
-   * `"cascade"` once the substrate cascades cancels from a parent
-   * workflow). Defaults to `"user"` when omitted.
+   * Cancellation kind. Currently only `"user"` is emitted; the flag is
+   * accepted as a forward-compatibility seam for future kinds.
+   * Defaults to `"user"` when omitted.
    */
   readonly kind?: string;
 }
@@ -478,7 +514,7 @@ export async function workflowAddEdge(opts: WorkflowAddEdgeOpts): Promise<Comman
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(result) };
     return {
       exitCode: 0,
-      stdout: `edge ${result.fromNodeId} → ${result.toNodeId} inserted\n`,
+      stdout: `edge ${result.fromNodeId} → ${result.toNodeId} inserted (toPhase ${result.toPhase})\n`,
     };
   } catch (err) {
     return formatError(err);
@@ -656,7 +692,7 @@ export async function workflowFinish(opts: WorkflowFinishOpts): Promise<CommandR
     const body: FinishWorkflowBody =
       opts.outcome === "succeeded"
         ? { outcome: "succeeded", success: { output: opts.summary ?? null } }
-        : { outcome: "failed", failure: { kind: "coord", message: opts.message ?? "" } };
+        : { outcome: "failed", failure: { kind: "coordinator", message: opts.message ?? "" } };
     const updated = await client.call("workflows.finish", {
       params: { id, wfid: opts.wfid },
       body,

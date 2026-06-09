@@ -208,8 +208,8 @@ function OverviewCard({
 
 /**
  * Render a workflow failure callout with `failure.kind` chip + the
- * coord-supplied message. Mirrors the Task `FailureStrip` shape but
- * specialised for `WorkflowFailureWire` (kind: 'coord' | 'internal').
+ * coordinator-supplied message. Mirrors the Task `FailureStrip` shape
+ * but specialised for `WorkflowFailureWire` (kind: 'coordinator').
  */
 function FailureStrip({ failure }: { failure: NonNullable<WorkflowHeaderWire["failure"]> }) {
   return (

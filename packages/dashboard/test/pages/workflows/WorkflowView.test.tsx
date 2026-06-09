@@ -35,7 +35,7 @@ function makeDag(wf: WorkflowHeaderWire): WorkflowDagWire {
         workflowId: wf.id,
         status: "running",
         phase: 0,
-        spec: { kind: "task", agent: "emploke/dev", brief: "x" },
+        spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
         createdAt: wf.createdAt,
         taskId: "task-1",
       },

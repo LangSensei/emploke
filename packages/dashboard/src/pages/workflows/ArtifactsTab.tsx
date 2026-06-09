@@ -376,7 +376,7 @@ function nodeGroupLabel(nodeId: string, dag: WorkflowDagWire | null): string {
   if (node === undefined) return `Node ${short}`;
   const spec = node.spec;
   if (
-    (spec.kind === "coordinator" || spec.kind === "task") &&
+    (spec.kind === "coordinator" || spec.kind === "worker") &&
     "agent" in spec &&
     typeof spec.agent === "string"
   ) {

@@ -8,9 +8,10 @@
  *
  *   - `validate` is identity-by-default; tests can swap the fn to
  *     assert call args or simulate validate-failure flows.
- *   - `dispatch` records calls and returns `unit-N`; the substrate
- *     ignores the returned `unitId` (see types.ts: "the substrate
- *     does NOT persist this id").
+ *   - `dispatch` records calls and returns `void`. The runner logs
+ *     its substrate-side identifier (e.g. task id) at info inside
+ *     dispatch; the substrate explicitly does NOT persist that id
+ *     (see types.ts: "the substrate does NOT persist this id").
  *   - `hasInFlightForNode` reads from `inFlightSet`; defaults to
  *     `false`.
  *   - `cancel` records calls; throws when `cancelShouldThrow` is set
@@ -87,7 +88,9 @@ export function makeStubRunner(): StubRunner {
         stub.dispatchShouldThrow = false;
         throw new Error("stub dispatch failure");
       }
-      return { unitId: `unit-${seq}` };
+      // Suppress no-unused-expression on `seq`; the stub still
+      // increments per dispatch to mirror runner book-keeping.
+      void `unit-${seq}`;
     },
     async hasInFlightForNode(nodeId) {
       return inFlightSet.has(nodeId);

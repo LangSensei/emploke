@@ -109,9 +109,7 @@ async function makeHarness(opts: MakeHarnessOpts = {}): Promise<Harness> {
     async validate(spec) {
       return spec;
     },
-    async dispatch(_opts) {
-      return { unitId: "worker-stub-unit" };
-    },
+    async dispatch(_opts) {},
     async hasInFlightForNode(_nodeId) {
       return false;
     },

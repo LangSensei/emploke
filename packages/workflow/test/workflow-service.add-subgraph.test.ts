@@ -3,7 +3,7 @@ import {
   MultipleSuccessorCoordsError,
   OrphanCoordInsertError,
   ParentStateError,
-  WorkflowMutationUnauthorizedError,
+  WorkflowAlreadyTerminalError,
   WorkflowNodeNotMutableError,
   WorkflowSubgraphCyclicError,
   WorkflowSubgraphEmptyError,
@@ -441,7 +441,7 @@ describe("WorkflowService.addSubgraph", () => {
         ],
         edges: [],
       }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
+    ).rejects.toBeInstanceOf(WorkflowSubgraphNodeRefUnresolvedError);
   });
 
   it("REJECTS when an existing to-node is not not_started", async () => {
@@ -638,7 +638,7 @@ describe("WorkflowService.addSubgraph", () => {
     ).rejects.toThrow("bad temp spec");
   });
 
-  // ─── Auth gate ───────────────────────────────────────────
+  // ─── Workflow lifecycle gate ─────────────────────────────
 
   it("REJECTS when workflow is terminal (cancel race)", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
@@ -656,6 +656,6 @@ describe("WorkflowService.addSubgraph", () => {
         ],
         edges: [],
       }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
+    ).rejects.toBeInstanceOf(WorkflowAlreadyTerminalError);
   });
 });

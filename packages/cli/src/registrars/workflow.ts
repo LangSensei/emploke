@@ -23,6 +23,7 @@ import {
   workflowDag,
   workflowFinish,
   workflowList,
+  workflowNodeShow,
   workflowRemoveEdge,
   workflowRemoveNode,
   workflowReplaceSpec,
@@ -73,6 +74,18 @@ export function registerWorkflowCommands(program: Command, slot: Slot): void {
       slot.result = await workflowShow({
         ...parseWorkspaceFlags(opts),
         wfid: pickString(opts, "wfid") ?? "",
+      });
+    });
+
+  withWorkspaceFlags(workflowCmd.command("node-show"))
+    .description("Print one workflow node's projected wire shape (with taskId enrichment)")
+    .requiredOption("--wfid <id>", "Workflow id")
+    .requiredOption("--nid <id>", "Node id within the workflow")
+    .action(async (opts: Record<string, unknown>) => {
+      slot.result = await workflowNodeShow({
+        ...parseWorkspaceFlags(opts),
+        wfid: pickString(opts, "wfid") ?? "",
+        nid: pickString(opts, "nid") ?? "",
       });
     });
 

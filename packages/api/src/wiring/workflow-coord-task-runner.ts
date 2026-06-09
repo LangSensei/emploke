@@ -1,3 +1,8 @@
+// "task" in this filename refers to the @emploke/task dispatch
+// mechanism this runner uses (visible at the deps.tasks.dispatch call
+// inside dispatch()), not the workflow-node wire `kind` — which is
+// "coordinator" (this runner) or "worker" (sibling runner).
+
 /**
  * `makeCoordNodeRunner` — the coordinator-kind {@link
  * WorkflowNodeRunner} that maps a workflow coordinator node to a
@@ -46,9 +51,12 @@
  *     runner (the interval is cleared the moment a terminal status
  *     is observed, and the per-node Map entry is dropped at the same
  *     time).
- *   - `dispatch` returns `{unitId: task.id}` for audit/log
- *     correlation only — the substrate explicitly does NOT persist
- *     `unitId` (per the same `types.ts:222` comment).
+ *   - `dispatch` returns `void`. The runner logs the substrate-side
+ *     identifier (the task id) at info level inside `dispatch` so
+ *     operators can correlate substrate events with the underlying
+ *     task; the substrate explicitly does NOT persist that id (per
+ *     the same `types.ts:222` comment) because reverse-lookup goes
+ *     through the unit's metadata.
  *   - No retry / no exponential backoff at the runner level; a
  *     single runner-local poll-error budget (`maxPollErrors`,
  *     default 3) maps repeated `tasks.get` failures to
@@ -214,7 +222,7 @@ export function makeCoordNodeRunner(
       return { agent: obj.agent };
     },
 
-    async dispatch(opts): Promise<{ readonly unitId: string }> {
+    async dispatch(opts): Promise<void> {
       // Resolve the service exactly once per dispatch — see the
       // `getService` thunk JSDoc above. The substrate guarantees the
       // ref is assigned by the time dispatch fires (post-compose),
@@ -255,6 +263,10 @@ export function makeCoordNodeRunner(
       const taskId = task.id;
       const nodeId = opts.nodeId;
       const onTerminal = opts.onTerminal;
+      logger.info(
+        { workflowId: opts.workflowId, nodeId, taskId },
+        "workflow-coord-task-runner: dispatched coordinator task",
+      );
 
       // If a previous dispatch on the same nodeId left an orphan
       // interval (shouldn't happen — the substrate guarantees a
@@ -321,7 +333,10 @@ export function makeCoordNodeRunner(
               });
               return;
             case "cancelled":
-              fireTerminal(nodeId, onTerminal, { status: "cancelled" });
+              fireTerminal(nodeId, onTerminal, {
+                status: "cancelled",
+                reason: polled.cancellation?.message ?? "task cancelled (no reason recorded)",
+              });
               return;
             default: {
               // Defense against a future TaskStatus arm we don't
@@ -338,8 +353,6 @@ export function makeCoordNodeRunner(
         })();
       }, pollIntervalMs);
       intervals.set(nodeId, handle);
-
-      return { unitId: taskId };
     },
 
     async hasInFlightForNode(nodeId: string): Promise<boolean> {

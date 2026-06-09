@@ -44,13 +44,24 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
   },
   {
     sql: [
-      "-- Adds typed terminal payload columns to workflows. Mirrors\r\n-- @emploke/task's success / failure / cancellation discriminated\r\n-- payload shape (each terminal status carries its own typed JSON\r\n-- blob; running rows have all three null).\r\n--\r\n-- No backfill needed: every existing row is already terminal-with-\r\n-- no-payload (pre-v2.2 behaviour). They surface in the dashboard\r\n-- via the read-path tolerance branch (\"the row is terminal but\r\n-- carries no payload — render a placeholder\").\r\n--\r\n-- Columns added in alphabetical order to match the schema.ts\r\n-- declaration order; the drizzle drift guard (gh #322) checks\r\n-- column ordering and rejects a mismatch.\r\nALTER TABLE `workflows` ADD COLUMN `cancellation` text;",
-      "\r\nALTER TABLE `workflows` ADD COLUMN `failure` text;",
-      "\r\nALTER TABLE `workflows` ADD COLUMN `success` text;\r\n"
+      "-- Adds typed terminal payload columns to workflows. Mirrors\n-- @emploke/task's success / failure / cancellation discriminated\n-- payload shape (each terminal status carries its own typed JSON\n-- blob; running rows have all three null).\n--\n-- No backfill needed: any row predating these columns is already\n-- terminal with no payload attached. They surface in the dashboard\n-- via the read-path tolerance branch (\"the row is terminal but\n-- carries no payload — render a placeholder\").\n--\n-- Columns added in alphabetical order to match the schema.ts\n-- declaration order so the drizzle drift guard (which compares\n-- introspected column ordering against the schema) keeps passing.\nALTER TABLE `workflows` ADD COLUMN `cancellation` text;",
+      "\nALTER TABLE `workflows` ADD COLUMN `failure` text;",
+      "\nALTER TABLE `workflows` ADD COLUMN `success` text;\n"
     ],
     bps: true,
     folderMillis: 3,
-    hash: "9bcd8b5c5098b75424bde6b0238fb3d7aad439aea6f57674b2129d0ba5427812",
+    hash: "6e80c5539b117bb6e1405ef711d0dcefe4dcd2266376f992ff48283029fdac97",
+  },
+  {
+    sql: [
+      "-- Final shape cleanup for the workflow substrate.\n--\n-- 1. Drops the (workflow_id, phase) composite index. The substrate's\n--    read paths order by phase only inside the per-workflow result\n--    set surfaced by `workflow_nodes_workflow_idx`; SQLite's planner\n--    sorts that small set in memory rather than walking a second\n--    index, so the phase index never appeared in any EXPLAIN QUERY\n--    PLAN that mattered. Dropping it removes a per-row write cost\n--    and trims the on-disk footprint.\n--\n-- 2. Coerces legacy terminal-payload discriminator values onto the\n--    current single-arm vocabulary so the read path's tolerance\n--    branch becomes unreachable for any row written prior to the\n--    enum tightening:\n--      * `failure.kind` in {`coord`, `internal`} -> `coordinator`\n--      * `cancellation.kind` = `cascade` -> `user`\n--    Mirrors the in-process coercion in `parseTerminalPayload` so\n--    inserts written today and rows touched by this migration agree\n--    on the discriminator vocabulary.\n--\n-- 3. Backfills `started_at` for any pre-existing workflow row that\n--    was created before the engine started populating the column at\n--    insert time. `started_at` is now mandatory at write time (the\n--    repository asserts it); the backfill makes the column non-null\n--    for the entire historical fleet so a future `NOT NULL` tighten\n--    is a no-op at migration time.\nDROP INDEX IF EXISTS `workflow_nodes_phase_idx`;\n",
+      "\nUPDATE `workflows` SET `failure` = json_set(`failure`, '$.kind', 'coordinator') WHERE json_extract(`failure`, '$.kind') IN ('coord', 'internal');\n",
+      "\nUPDATE `workflows` SET `cancellation` = json_set(`cancellation`, '$.kind', 'user') WHERE json_extract(`cancellation`, '$.kind') = 'cascade';\n",
+      "\nUPDATE `workflows` SET `started_at` = `created_at` WHERE `started_at` IS NULL;"
+    ],
+    bps: true,
+    folderMillis: 4,
+    hash: "579e3db8e7e415fc45f9ae79a103519bf350e6e9b23e9b0a4f785b43aea78688",
   },
 ];
 

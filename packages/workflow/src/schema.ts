@@ -90,8 +90,6 @@ export const workflows = sqliteTable(
  *   - `workflow_nodes_status_idx` (composite `(workflow_id, status)`)
  *     — "ready nodes in this workflow" and similar per-workflow
  *     status-filtered scans.
- *   - `workflow_nodes_phase_idx` (composite `(workflow_id, phase)`)
- *     — exclusively for the UI's `ORDER BY phase` rendering query.
  */
 export const workflowNodes = sqliteTable(
   "workflow_nodes",
@@ -110,7 +108,6 @@ export const workflowNodes = sqliteTable(
   (t) => [
     index("workflow_nodes_workflow_idx").on(t.workflowId),
     index("workflow_nodes_status_idx").on(t.workflowId, t.status),
-    index("workflow_nodes_phase_idx").on(t.workflowId, t.phase),
   ],
 );
 

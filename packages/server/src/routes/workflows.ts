@@ -35,14 +35,13 @@
  *   - `DELETE /:wfid/edges/:from/:to`     — delete a not_started edge (M2.5)
  *   - `PATCH  /:wfid/nodes/:nid/spec`     — re-validate + replace spec (M2.5)
  *
- * ## Auth gate (mutation routes)
+ * ## Workflow lifecycle gate (mutation routes)
  *
  * Every mutation route forwards `workflowId` from the URL path and
- * NOTHING ELSE about the caller. The substrate derives the calling
- * coordinator (the unique `kind='coordinator' AND status='running'`
- * row in this workflow) inside its mutation tx. A request that does
- * not originate from inside a coord task gets
- * `WorkflowMutationUnauthorizedError` → 403 from the policy below.
+ * NOTHING ELSE about the caller. The substrate re-checks the workflow's
+ * lifecycle status inside its mutation tx and rejects mutations against
+ * a terminal workflow with `WorkflowAlreadyTerminalError` → 409 from the
+ * policy below.
  *
  * ## iterationCount derivation
  *
@@ -104,6 +103,7 @@ import {
   type NodeRef,
   workflowDir as resolveWorkflowDir,
   WorkflowError,
+  WorkflowNodeNotFoundError,
   type WorkflowService,
 } from "@emploke/workflow";
 import { Hono } from "hono";
@@ -408,8 +408,8 @@ function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkfl
     }
   }
   const kind = (failure as { kind?: unknown }).kind;
-  if (kind !== undefined && kind !== "coord") {
-    return { ok: false, error: 'failure.kind must be "coord" when supplied' };
+  if (kind !== undefined && kind !== "coordinator") {
+    return { ok: false, error: 'failure.kind must be "coordinator" when supplied' };
   }
   const message = (failure as { message?: unknown }).message;
   if (typeof message !== "string") {
@@ -419,7 +419,7 @@ function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkfl
     ok: true,
     value: {
       outcome: "failed",
-      failure: { kind: "coord", message },
+      failure: { kind: "coordinator", message },
     },
   };
 }
@@ -519,10 +519,13 @@ export function workflowsRoutes(
     if (createdSinceResult.value !== undefined) opts.createdSince = createdSinceResult.value;
     try {
       const list = await resolve(c).list(Object.keys(opts).length === 0 ? undefined : opts);
-      // `iterationCount` projected as 0 on list rows to keep the
-      // endpoint O(workflows). Clients that need the accurate count
-      // fetch the header via `GET /:wfid`.
-      const wire: readonly WorkflowHeaderWire[] = list.map((wf) => projectWorkflowHeader(wf, 0));
+      // `iterationCount` is omitted from list rows to keep the
+      // endpoint O(workflows): computing it per row would require a
+      // DAG snapshot per workflow. Clients that need the accurate
+      // count fetch the header via `GET /:wfid`.
+      const wire: readonly WorkflowHeaderWire[] = list.map((wf) =>
+        projectWorkflowHeader(wf, undefined),
+      );
       return c.json(wire);
     } catch (err) {
       return respondError(c, err, {
@@ -594,6 +597,33 @@ export function workflowsRoutes(
         route: "workflows.dag",
         policy: workflowsErrorPolicy,
         meta: { workflowId: wfid },
+      });
+    }
+  });
+
+  // ── GET /:wfid/nodes/:nid — single node, taskId enriched ─────────
+  // Sibling of the dag route, addressable without paying for the
+  // full snapshot. Same wire shape as the per-node entries inside
+  // `/:wfid/dag.nodes`.
+  app.get("/:wfid/nodes/:nid", async (c) => {
+    const wfid = c.req.param("wfid");
+    const nid = c.req.param("nid");
+    try {
+      const node = await resolve(c).getNode(nid);
+      // The substrate's `getNode(nid)` is workflow-agnostic by id;
+      // re-check the path's `wfid` segment here so a typo'd
+      // workflow id doesn't silently return the right node from a
+      // different workflow.
+      if (node.workflowId !== wfid) {
+        throw new WorkflowNodeNotFoundError(wfid, nid);
+      }
+      const wire = await projectWorkflowNodeWithTaskId(node, { tasks: resolveTasks(c) });
+      return c.json(wire);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "workflows.getNode",
+        policy: workflowsErrorPolicy,
+        meta: { workflowId: wfid, nodeId: nid },
       });
     }
   });
@@ -864,22 +894,26 @@ export function workflowsRoutes(
     if (!validated.ok) return c.json({ error: validated.error }, 400);
     const body = validated.value;
     try {
-      await resolve(c).addEdge({
+      const result = await resolve(c).addEdge({
         workflowId: wfid,
         fromNodeId: body.fromNodeId,
         toNodeId: body.toNodeId,
       });
-      // The substrate returns `{ toPhase }`; the wire shape echoes the
-      // (from, to) pair instead — useful for the caller who already has
-      // the phase (it computed the edge itself) but wants confirmation
-      // of the endpoints in the JSON response without re-fetching the
-      // DAG.
+      // The substrate returns `{ toPhase }` because inserting an edge
+      // can shift the receiving node's phase. The wire echoes the
+      // (from, to) pair plus the post-insert phase so the caller has
+      // a self-contained record without re-fetching the DAG.
       logEvent(c, "workflow.addEdge", {
         workflowId: wfid,
         fromNodeId: body.fromNodeId,
         toNodeId: body.toNodeId,
+        toPhase: result.toPhase,
       });
-      return c.json({ fromNodeId: body.fromNodeId, toNodeId: body.toNodeId });
+      return c.json({
+        fromNodeId: body.fromNodeId,
+        toNodeId: body.toNodeId,
+        toPhase: result.toPhase,
+      });
     } catch (err) {
       return respondError(c, err, {
         route: "workflows.addEdge",
@@ -967,7 +1001,7 @@ export function workflowsRoutes(
         await resolve(c).finishWorkflow({
           workflowId: wfid,
           outcome: "failed",
-          failure: { kind: "coord", message: body.failure.message },
+          failure: { kind: "coordinator", message: body.failure.message },
         });
       }
       const dag = await resolve(c).getDag(wfid);

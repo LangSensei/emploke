@@ -13,7 +13,7 @@
  * The entity layer's remaining job is:
  *
  *   1. `fromRow` — parse persisted JSON, validate enums (throws
- *      `WorkflowEnumValueError` on miss). Defense-in-depth so a
+ *      `WorkflowEnumValueCorruptionError` on miss). Defense-in-depth so a
  *      corrupted or hand-edited row can't smuggle a junk enum into
  *      the runtime.
  *   2. `toRow` — project the typed in-memory shape to a Drizzle
@@ -88,8 +88,8 @@ export class WorkflowEntity {
   ) {}
 
   /**
-   * Hydrate from a Drizzle row. Throws `WorkflowEnumValueError` if
-   * the persisted `status` is not in the known vocabulary.
+   * Hydrate from a Drizzle row. Throws `WorkflowEnumValueCorruptionError`
+   * if the persisted `status` is not in the known vocabulary.
    * `metadata` is JSON-parsed; corrupt JSON throws `WorkflowError`.
    *
    * Terminal-payload columns (`success` / `failure` / `cancellation`)
@@ -100,12 +100,13 @@ export class WorkflowEntity {
    *
    * **Tolerance branch for legacy rows**: a row with a terminal
    * `status` ('succeeded' / 'failed' / 'cancelled') but a NULL
-   * matching-payload column does NOT throw. Pre-v2.2 rows (terminal,
-   * payload columns NULL) are valid and the corresponding getter
-   * returns `undefined`; the dashboard renders a "legacy-note" muted
-   * message rather than failing the read. The cross-field invariant
-   * "if a payload exists, its column must match the status" still
-   * fires when a payload IS present.
+   * matching-payload column does NOT throw. Rows whose terminal
+   * state was written before the payload columns existed (terminal
+   * status, payload columns NULL) are valid and the corresponding
+   * getter returns `undefined`; the dashboard renders a "legacy-note"
+   * muted message rather than failing the read. The cross-field
+   * invariant "if a payload exists, its column must match the status"
+   * still fires when a payload IS present.
    */
   static fromRow(row: WorkflowRow): WorkflowEntity {
     assertValidWorkflowId(row.id);
@@ -131,9 +132,11 @@ export class WorkflowEntity {
     );
     // Cross-field invariant: a payload belongs to its own terminal
     // status (and only its own). A non-terminal row with any payload
-    // attached is corrupt. Pre-v2.2 terminal rows with NULL payloads
-    // are tolerated (see method JSDoc) — the matching-payload
-    // requirement is conditional on the column being non-null.
+    // attached is corrupt. Terminal rows whose payload columns are
+    // NULL (because their terminal state was written before those
+    // columns existed) are tolerated (see method JSDoc) — the
+    // matching-payload requirement is conditional on the column
+    // being non-null.
     if (row.status === "succeeded" && (failure !== undefined || cancellation !== undefined)) {
       throw new WorkflowError(
         `Workflow "${row.id}" corrupted: status='succeeded' row carries failure/cancellation payload`,
@@ -221,8 +224,8 @@ export class WorkflowNodeEntity {
    *
    *   - `InvalidWorkflowIdError` / `InvalidWorkflowNodeIdError` if
    *     ids fail grammar.
-   *   - `WorkflowEnumValueError` if `status` is not in the known
-   *     node-status vocabulary.
+   *   - `WorkflowEnumValueCorruptionError` if `status` is not in the
+   *     known node-status vocabulary.
    *   - `WorkflowNodeKindShapeError` if `kind` is not a known
    *     `NodeKind` (defensive guard against schema corruption).
    *   - `WorkflowError` if `spec_json` is not valid JSON.
@@ -331,9 +334,17 @@ function parseSpecJson(nodeId: string, raw: string): unknown {
 /**
  * Parse one of the optional terminal-payload columns. Returns
  * `undefined` when the column is null/undefined (the tolerance branch
- * for pre-v2.2 rows). When the column is a string, parses it as JSON
- * and runs the supplied shape validator; a parse error or shape
- * mismatch surfaces as `WorkflowError`.
+ * for pre-existing rows). When the column is a string, parses it as
+ * JSON, coerces legacy discriminator values onto the current
+ * single-arm vocabulary, and runs the supplied shape validator; a
+ * parse error or shape mismatch surfaces as `WorkflowError`.
+ *
+ * Legacy coercions (tolerance read path):
+ *   - `failure.kind` ∈ {`coord`, `internal`} → `coordinator`
+ *   - `cancellation.kind` === `cascade` → `user`
+ *
+ * The corresponding write path is migration-aware: see
+ * `packages/workflow/drizzle/0003_v2_5_cleanup.sql`.
  */
 function parseTerminalPayload<T>(
   rowId: string,
@@ -349,6 +360,17 @@ function parseTerminalPayload<T>(
     throw new WorkflowError(
       `Workflow "${rowId}" corrupted: ${field} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+  if (field === "failure" && parsed !== null && typeof parsed === "object") {
+    const v = parsed as { kind?: unknown };
+    if (v.kind === "coord" || v.kind === "internal") {
+      (parsed as { kind: string }).kind = "coordinator";
+    }
+  } else if (field === "cancellation" && parsed !== null && typeof parsed === "object") {
+    const v = parsed as { kind?: unknown };
+    if (v.kind === "cascade") {
+      (parsed as { kind: string }).kind = "user";
+    }
   }
   assertShape(rowId, parsed as T);
   return parsed as T;
