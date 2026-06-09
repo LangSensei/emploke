@@ -175,6 +175,61 @@ describe("workflowList — server error envelope", () => {
   });
 });
 
+describe("workflowList — filter flags map to HTTP query slots", () => {
+  it("--q is forwarded as the wire `q` query param", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([]) }]);
+    const r = await workflowList({ ...commonOpts(), q: "20260601" });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.url).toBe(`${LIST_URL}?q=20260601`);
+  });
+
+  it("--coordinator-agent is forwarded as `coordinatorAgent`", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([]) }]);
+    const r = await workflowList({
+      ...commonOpts(),
+      coordinatorAgent: "emploke/coordinator",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.url).toBe(`${LIST_URL}?coordinatorAgent=emploke%2Fcoordinator`);
+  });
+
+  it("--created-since is forwarded as `createdSince`", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([]) }]);
+    const r = await workflowList({
+      ...commonOpts(),
+      createdSince: "2026-06-01T00:00:00.000Z",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.url).toBe(`${LIST_URL}?createdSince=2026-06-01T00%3A00%3A00.000Z`);
+  });
+
+  it("all three slots combine in one query string when supplied together", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([]) }]);
+    const r = await workflowList({
+      ...commonOpts(),
+      q: "abc",
+      coordinatorAgent: "emploke/coordinator",
+      createdSince: "2026-06-01T00:00:00.000Z",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    // URLSearchParams preserves insertion order in the appended-query
+    // string the ApiClient builds; pin that order so the test detects
+    // accidental shuffles (which would still be wire-equivalent but
+    // would be a surprise in HTTP traces).
+    expect(calls[0]?.url).toBe(
+      `${LIST_URL}?q=abc&coordinatorAgent=emploke%2Fcoordinator&createdSince=2026-06-01T00%3A00%3A00.000Z`,
+    );
+  });
+
+  it("omitted filters produce a bare list URL with no query string", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([]) }]);
+    const r = await workflowList(commonOpts());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.url).toBe(LIST_URL);
+    expect(calls[0]?.url).not.toContain("?");
+  });
+});
+
 // ─── create ────────────────────────────────────────────────────────────
 
 describe("workflowCreate — happy path", () => {
@@ -281,6 +336,242 @@ describe("workflowCreate — server error envelope", () => {
     expect(r.exitCode).toBe(4);
     expect(r.stderr).toMatch(/CoordinatorAgentInvalidError/);
     expect(r.stderr).toMatch(/HTTP 400/);
+  });
+});
+
+describe("workflowCreate — pre-resolved --metadata maps to CreateWorkflowBody.metadata", () => {
+  it("forwards the provided object verbatim as `metadata`", async () => {
+    const payload = { source: "cli", tags: ["pilot", "audit"], nested: { v: 1 } };
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "design the parser",
+      coordAgent: "emploke/coordinator",
+      metadata: payload,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+      metadata: payload,
+    });
+  });
+
+  it("omits `metadata` from the body when absent", async () => {
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "design the parser",
+      coordAgent: "emploke/coordinator",
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+    });
+  });
+});
+
+describe("workflow create --metadata-file (commander wiring) — file IO + object validation", () => {
+  function env(): Record<string, string | undefined> {
+    return {
+      EMPLOKE_HOME: home,
+      EMPLOKE_SERVER: SERVER_URL,
+      EMPLOKE_WORKSPACE: undefined,
+    };
+  }
+
+  it("rejects an unreadable --metadata-file with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--metadata-file",
+        path.join(home, "does-not-exist-metadata.json"),
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/failed to read --metadata-file/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed JSON --metadata-file with exit 2, no fetch", async () => {
+    const badPath = path.join(home, "bad-metadata.json");
+    await writeFile(badPath, "{not json", "utf8");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--metadata-file",
+        badPath,
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--metadata-file JSON parse error/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an array root --metadata-file; error message names the shape ('array')", async () => {
+    const arrPath = path.join(home, "arr-metadata.json");
+    await writeFile(arrPath, JSON.stringify([1, 2, 3]), "utf8");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--metadata-file",
+        arrPath,
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--metadata-file must be a JSON object; got array/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a null root --metadata-file; error message names the shape ('null')", async () => {
+    const nullPath = path.join(home, "null-metadata.json");
+    await writeFile(nullPath, "null", "utf8");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--metadata-file",
+        nullPath,
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--metadata-file must be a JSON object; got null/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a scalar root --metadata-file; error message names the shape ('string')", async () => {
+    const scalarPath = path.join(home, "scalar-metadata.json");
+    await writeFile(scalarPath, JSON.stringify("just a string"), "utf8");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--metadata-file",
+        scalarPath,
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--metadata-file must be a JSON object; got string/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflowCreate — pre-resolved --details maps to CreateWorkflowBody.details", () => {
+  it("forwards the provided string verbatim as `details`", async () => {
+    const longBody = "## Why\n\nSeed the parser strategy.\n\n## How\n\nSee /docs/parser.md\n";
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await workflowCreate({
+      ...commonOpts(),
+      brief: "design the parser",
+      coordAgent: "emploke/coordinator",
+      details: longBody,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+      details: longBody,
+    });
+  });
+});
+
+describe("workflow create --details-file / --details (commander wiring) — file IO + mutex", () => {
+  function env(): Record<string, string | undefined> {
+    return {
+      EMPLOKE_HOME: home,
+      EMPLOKE_SERVER: SERVER_URL,
+      EMPLOKE_WORKSPACE: undefined,
+    };
+  }
+
+  it("rejects --details + --details-file with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--details",
+        "inline body",
+        "--details-file",
+        path.join(home, "anything.md"),
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--details and --details-file are mutually exclusive/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unreadable --details-file with exit 2, no fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "x",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--details-file",
+        path.join(home, "does-not-exist-details.md"),
+      ],
+      env(),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/failed to read --details-file/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -662,6 +953,93 @@ describe("`emploke workflow …` commander wiring (argv → action)", () => {
       cancellation: { kind: "user", message: "user pressed stop" },
     });
   });
+
+  it("`workflow list --q --coordinator-agent --created-since` routes through commander to a GET with all three slots", async () => {
+    const { calls } = stubFetchMulti([{ status: 200, body: JSON.stringify([sampleHeader]) }]);
+    const r = await runCli(
+      [
+        "workflow",
+        "list",
+        "--workspace",
+        WSID,
+        "--q",
+        "20260601",
+        "--coordinator-agent",
+        "emploke/coordinator",
+        "--created-since",
+        "2026-06-01T00:00:00.000Z",
+      ],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(
+      `${LIST_URL}?q=20260601&coordinatorAgent=emploke%2Fcoordinator&createdSince=2026-06-01T00%3A00%3A00.000Z`,
+    );
+  });
+
+  it("`workflow create --metadata-file` routes through commander; metadata lands on the body verbatim", async () => {
+    const metadataFile = path.join(
+      home,
+      `cli-metadata-${Math.random().toString(36).slice(2)}.json`,
+    );
+    const payload = { ticket: "T-7", owners: ["alice"] };
+    await writeFile(metadataFile, JSON.stringify(payload), "utf8");
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "design the parser",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--metadata-file",
+        metadataFile,
+      ],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+      metadata: payload,
+    });
+  });
+
+  it("`workflow create --details-file` routes through commander; details lands on the body verbatim", async () => {
+    const detailsFile = path.join(home, `cli-details-${Math.random().toString(36).slice(2)}.md`);
+    const body = "## Goal\n\nShip the parser.\n";
+    await writeFile(detailsFile, body, "utf8");
+    const { calls } = stubFetchMulti([{ status: 201, body: JSON.stringify(sampleHeader) }]);
+    const r = await runCli(
+      [
+        "workflow",
+        "create",
+        "--workspace",
+        WSID,
+        "--brief",
+        "design the parser",
+        "--coord-agent",
+        "emploke/coordinator",
+        "--details-file",
+        detailsFile,
+      ],
+      env(),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toEqual({
+      brief: "design the parser",
+      coordinatorAgent: "emploke/coordinator",
+      details: body,
+    });
+  });
 });
 
 // ─── M2.5 coord-callback mutation commands ───────────────────────────
@@ -740,7 +1118,7 @@ describe("workflowAddNode", () => {
       specFile: path.join(home, "does-not-exist.json"),
     });
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(/--spec-file read failed/);
+    expect(r.stderr).toMatch(/failed to read --spec-file/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

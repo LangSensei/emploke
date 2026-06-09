@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.1 (2026-06-09)
+
+### Fixed
+
+- `references/workflow-commands.md` — `emploke workflow list` section now documents the three optional filter flags (`--q`, `--coordinator-agent`, `--created-since`) that the HTTP surface has supported since the substrate-v3 + coord-capability landings. Before this entry the reference advertised "Args: none" with no optional flags, so the only way to discover the filters was to read `WorkflowListQuery` directly.
+- Added a worked example to the `workflow list` section showing how to combine `--coordinator-agent` and `--created-since` to narrow recent runs for one coordinator.
+
+### Notes
+
+- This patch ships alongside the CLI changes in PR #354 (Group C of #352) that wired the same three filter flags into the `workflow list` command and added `--metadata-file` / `--details-file` to `workflow create`. The reference doc had drifted because the underlying CLI was missing the flags; with the CLI fix in the same PR, the doc entries now match the implementation.
+- No `SKILL.md` text edits in this bump — only `references/workflow-commands.md`.
+
 ## 1.1.0 (2026-06-09)
 
 ### Added

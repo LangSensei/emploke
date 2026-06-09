@@ -69,12 +69,13 @@
  * scripted use from a coord agent's task command line.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import type {
   AddEdgeBody,
   AddNodeBody,
   AddSubgraphBody,
   CancelWorkflowBody,
+  CreateWorkflowBody,
   FinishWorkflowBody,
   ReplaceNodeSpecBody,
   WorkflowHeaderWire,
@@ -94,13 +95,40 @@ interface CommonFlags {
 }
 
 // ─── list ──────────────────────────────────────────────────────────────
-export type WorkflowListOpts = CommonFlags;
+export interface WorkflowListOpts extends CommonFlags {
+  /**
+   * Case-sensitive substring match on the workflow id. Maps to the
+   * HTTP query parameter `q` (the substrate forwards it to a SQL
+   * `LIKE` predicate with the metacharacters escaped). Flag name
+   * mirrors the wire param name.
+   */
+  readonly q?: string;
+  /**
+   * Exact match on the workflow's denormalised `coordinator_agent`
+   * column. Maps to the HTTP query parameter `coordinatorAgent`.
+   */
+  readonly coordinatorAgent?: string;
+  /**
+   * ISO 8601 lower bound (inclusive) on `created_at`. Maps to the
+   * HTTP query parameter `createdSince`. Mirrors
+   * `task list --created-since` semantics.
+   */
+  readonly createdSince?: string;
+}
 
 export async function workflowList(opts: WorkflowListOpts = {}): Promise<CommandResult> {
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    const list = await client.call("workflows.list", { params: { id } });
+    const query: {
+      q?: string;
+      coordinatorAgent?: string;
+      createdSince?: string;
+    } = {};
+    if (opts.q !== undefined) query.q = opts.q;
+    if (opts.coordinatorAgent !== undefined) query.coordinatorAgent = opts.coordinatorAgent;
+    if (opts.createdSince !== undefined) query.createdSince = opts.createdSince;
+    const list = await client.call("workflows.list", { params: { id }, query });
     const fmt = pickFormat(opts, "table");
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(list) };
     return {
@@ -121,8 +149,21 @@ export interface WorkflowCreateOpts extends CommonFlags {
   readonly brief: string;
   /** Coordinator agent FQN — non-empty. Maps to `CreateWorkflowBody.coordinatorAgent`. */
   readonly coordAgent: string;
-  /** Optional multi-line workflow context. Maps to `CreateWorkflowBody.details`. */
+  /**
+   * Optional multi-line workflow context. Maps to
+   * `CreateWorkflowBody.details`. The registrar resolves
+   * `--details-file <path>` into this same field before the call,
+   * mirroring the `task dispatch` precedent (file IO lives in the
+   * registrar, the command is a thin pass-through).
+   */
   readonly details?: string;
+  /**
+   * Opaque metadata object persisted verbatim onto the workflow row.
+   * Maps to `CreateWorkflowBody.metadata`. The registrar resolves
+   * `--metadata-file <path>` (file read + JSON parse + object-shape
+   * validation) into this field before the call.
+   */
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 export async function workflowCreate(opts: WorkflowCreateOpts): Promise<CommandResult> {
@@ -135,15 +176,12 @@ export async function workflowCreate(opts: WorkflowCreateOpts): Promise<CommandR
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
-    const body: {
-      brief: string;
-      coordinatorAgent: string;
-      details?: string;
-    } = {
+    const body: CreateWorkflowBody = {
       brief: opts.brief,
       coordinatorAgent: opts.coordAgent,
+      ...(opts.details !== undefined ? { details: opts.details } : {}),
+      ...(opts.metadata !== undefined ? { metadata: opts.metadata } : {}),
     };
-    if (opts.details !== undefined) body.details = opts.details;
     const created = await client.call("workflows.create", { params: { id }, body });
     return { exitCode: 0, stdout: renderHeader(created, opts) };
   } catch (err) {
@@ -361,26 +399,46 @@ function parseParents(raw: string | undefined): readonly string[] {
 }
 
 /**
- * Read a `--spec-file <path>` and parse it as JSON. Returns either the
- * parsed value or `{ error: string }` for the caller to surface as
+ * Read a `<flagName> <path>` JSON file. Returns the parsed value or
+ * an `{ ok: false, error }` envelope the caller surfaces as
  * exit-code-2 usage feedback. The parsed value is intentionally typed
  * `unknown` — the per-kind runner is the validator on the server, and
  * the CLI's job is to forward the JSON faithfully.
+ *
+ * The `flagName` parameter (e.g. `"--spec-file"`, `"--metadata-file"`)
+ * is woven into both the "failed to read" and "JSON parse error"
+ * messages so callers don't have to post-process the result.
+ *
+ * Exported because the workflow-create registrar reuses this helper
+ * for `--metadata-file`, keeping the read+parse+error-wrap pattern
+ * in one place (no per-call-site flag-name rewriting).
+ *
+ * Synchronous to mirror the `task dispatch` registrar's `readFileSync`
+ * precedent; the await-cost of an extra microtask hop is meaningless
+ * compared to the actual fs read but the sync shape keeps the
+ * registrar action body flat and the helper signature easy to share
+ * between the registrar (which uses sync fs) and the command-layer
+ * callers (which previously used async fs).
  */
-async function readSpecFile(path: string): Promise<unknown | { error: string }> {
+export function readJsonFileArg(
+  flagName: string,
+  value: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
   let raw: string;
   try {
-    raw = await readFile(path, "utf8");
+    raw = readFileSync(value, "utf8");
   } catch (err) {
     return {
-      error: `--spec-file read failed: ${err instanceof Error ? err.message : String(err)}`,
+      ok: false,
+      error: `failed to read ${flagName}: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
   try {
-    return JSON.parse(raw) as unknown;
+    return { ok: true, value: JSON.parse(raw) as unknown };
   } catch (err) {
     return {
-      error: `--spec-file JSON parse error: ${err instanceof Error ? err.message : String(err)}`,
+      ok: false,
+      error: `${flagName} JSON parse error: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }
@@ -406,10 +464,11 @@ export async function workflowAddNode(opts: WorkflowAddNodeOpts): Promise<Comman
   if (typeof opts.specFile !== "string" || opts.specFile.trim() === "") {
     return { exitCode: 2, stderr: "missing required --spec-file <path>\n" };
   }
-  const spec = await readSpecFile(opts.specFile);
-  if (typeof spec === "object" && spec !== null && "error" in spec) {
-    return { exitCode: 2, stderr: `${(spec as { error: string }).error}\n` };
+  const specResult = readJsonFileArg("--spec-file", opts.specFile);
+  if (!specResult.ok) {
+    return { exitCode: 2, stderr: `${specResult.error}\n` };
   }
+  const spec = specResult.value;
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
@@ -448,10 +507,11 @@ export async function workflowAddSubgraph(opts: WorkflowAddSubgraphOpts): Promis
   if (typeof opts.specFile !== "string" || opts.specFile.trim() === "") {
     return { exitCode: 2, stderr: "missing required --spec-file <path>\n" };
   }
-  const payload = await readSpecFile(opts.specFile);
-  if (typeof payload === "object" && payload !== null && "error" in payload) {
-    return { exitCode: 2, stderr: `${(payload as { error: string }).error}\n` };
+  const payloadResult = readJsonFileArg("--spec-file", opts.specFile);
+  if (!payloadResult.ok) {
+    return { exitCode: 2, stderr: `${payloadResult.error}\n` };
   }
+  const payload = payloadResult.value;
   if (
     typeof payload !== "object" ||
     payload === null ||
@@ -595,10 +655,11 @@ export async function workflowReplaceSpec(opts: WorkflowReplaceSpecOpts): Promis
   if (typeof opts.specFile !== "string" || opts.specFile.trim() === "") {
     return { exitCode: 2, stderr: "missing required --spec-file <path>\n" };
   }
-  const newSpec = await readSpecFile(opts.specFile);
-  if (typeof newSpec === "object" && newSpec !== null && "error" in newSpec) {
-    return { exitCode: 2, stderr: `${(newSpec as { error: string }).error}\n` };
+  const newSpecResult = readJsonFileArg("--spec-file", opts.specFile);
+  if (!newSpecResult.ok) {
+    return { exitCode: 2, stderr: `${newSpecResult.error}\n` };
   }
+  const newSpec = newSpecResult.value;
   const client = await makeClient(opts);
   try {
     const id = await resolveWorkspace(opts);
