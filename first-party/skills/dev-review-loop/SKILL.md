@@ -7,34 +7,13 @@ version: 1.0.0
 
 # Emploke Development-Loop Strategy Skill
 
-A **strategy skill** for the `emploke/coordinator` agent. Encodes the
-`dev → review + frontend-designer → iterate until clean` orchestration
-strategy as a case bank + brief templates + placeholder table + stop
-condition + failure-mode coverage matrix.
-
-This skill is **content-only** (no `dependencies:`, no `prereqs:`) per
-the meta-pattern in the `emploke/coordinator` skill §E. It is loaded by
-the coord agent alongside the generic `emploke/coordinator` skill at
-every coord wake-up. The generic skill provides §A operating model, §B
-DAG introspection patterns, §C verdict.json schema, and §D brief
-plumbing meta-pattern; this skill provides everything strategy-specific.
-
-What this strategy does, in one sentence: dispatch a single `emploke/dev`
-worker; once it succeeds, fan out to parallel `emploke/review` +
-`emploke/frontend-designer` reviewers; if both verdicts come back clean
-(APPROVE with only minor findings), finish the workflow succeeded;
-otherwise dispatch the next `emploke/dev` iteration with the prior-iter
-verdicts available to it for context, and loop.
+Strategy: dispatch a single `emploke/dev` worker; on success, fan out to parallel `emploke/review` + `emploke/frontend-designer` reviewers; finish succeeded if both verdicts come back clean (APPROVE with at most minor findings), else dispatch the next `emploke/dev` iteration with prior verdicts available, and loop. Loaded by the `emploke/coordinator` agent alongside the generic `emploke/coordinator` skill at every coord wake-up.
 
 ---
 
 ## Case bank
 
-Match own direct parents against these cases. Exactly one case matches
-per coord wake-up — the case bank is total over the strategy's expected
-parent shapes (see "Failure-mode coverage" below). If none match,
-terminate the workflow with `workflow finish --outcome failed --message
-"coord saw unexpected DAG shape under emploke/dev-review-loop: <describe>"`.
+Match own direct parents against these cases — exactly one matches per wake-up (the case bank is total over expected shapes; see "Failure-mode coverage"). Unexpected shapes (3 parents, an unknown agent FQN, etc.) are bugs in workflow construction; terminate with `workflow finish --outcome failed --message "coord saw unexpected DAG shape under emploke/dev-review-loop: <describe>"`.
 
 ```
 CASE "no parents" (initial coord node):
@@ -84,41 +63,13 @@ CASE "two parents, both worker, any status in (failed, cancelled)":
   exit
 ```
 
-### Tempid wiring for `add-subgraph` payloads
-
-Use the generic skill §B "Batch-mutate the DAG atomically" pattern.
-Example: the "one parent, dev=succeeded" case emits this payload shape:
-
-```jsonc
-{
-  "nodes": [
-    { "tempId": "review",   "kind": "worker", "parents": ["<self-node-id>"],
-      "spec": { "agent": "emploke/review",            "brief": "<template-review, substituted>",   "details": null } },
-    { "tempId": "designer", "kind": "worker", "parents": ["<self-node-id>"],
-      "spec": { "agent": "emploke/frontend-designer", "brief": "<template-designer, substituted>", "details": null } },
-    { "tempId": "coord",    "kind": "coordinator", "parents": [],
-      "spec": { "agent": "emploke/coordinator" } }
-  ],
-  "edges": [
-    { "from": "review",   "to": "coord" },
-    { "from": "designer", "to": "coord" }
-  ]
-}
-```
-
-The substrate resolves the `tempId`s within the batch transaction and
-returns the assigned node ids in `inserted[].nodeId`.
+Use the §B "Batch-mutate the DAG atomically" `add-subgraph` payload shape from the generic skill; substitute `<self-node-id>` with the actual id from the DAG snapshot.
 
 ---
 
 ## Brief templates
 
-Verbatim text blocks the coord agent writes into each dispatched
-worker's task brief. Templates use `${PLACEHOLDER}` substitution per the
-generic skill §D meta-pattern: workflow id + verbatim brief +
-prior-iter fetch instructions + output protocol. **Do not paraphrase
-these templates** when substituting — workers receive them as their
-primary contract.
+Coord at dispatch time substitutes `${PLACEHOLDER}` slots per the resolution table below; do not paraphrase template prose — workers receive these as their primary contract.
 
 ### Template: template-dev-iter-1 (the initial dev call)
 
@@ -242,11 +193,7 @@ See template-review-brief above for the schema and validation rules.
 
 ## Placeholder resolution table
 
-For each `${...}` slot used in any template above, the source coord
-resolves it from at dispatch time. Substitution is plain string
-replacement. If a placeholder has no value (e.g. `${WORKFLOW_DETAILS}`
-when the creator passed nothing), substitute an empty string rather
-than leaving the literal `${…}` in the brief.
+Plain string replacement; placeholders with no value (e.g. `${WORKFLOW_DETAILS}` when the creator passed nothing) substitute the empty string rather than leaving the literal `${...}` in the dispatched brief.
 
 | Placeholder | Source | Notes |
 | --- | --- | --- |
@@ -258,40 +205,19 @@ than leaving the literal `${…}` in the brief.
 | `${PRIOR_DESIGNER_TASK_ID}` | `taskId` of the most recent `agent=emploke/frontend-designer` worker parent of the prior coord | string; `template-dev-iter-2-plus` only |
 | `${BRANCH_NAME}` | branch the prior dev node pushed (derive from prior dev task's terminal result or its `<task-workdir>/branch.txt`) | string; `template-dev-iter-2-plus` only |
 
-The `${PRIOR_*_TASK_ID}` lookups use the "Find prior-iter siblings"
-snippet from the generic skill §B (same agent FQN, lower phase).
+`${PRIOR_*_TASK_ID}` lookups use the "Find prior-iter siblings" snippet from the generic skill §B (same agent FQN, lower phase).
 
 ---
 
 ## Stop condition
 
-`finishWorkflow(succeeded, ...)` is triggered when:
-
-- Coord is in the "two parents, both reviewers" case, AND
-- Both verdicts parsed cleanly per §C of the generic skill, AND
-- `blockers_and_majors` (the union of findings across both verdicts
-  filtered to `severity in ('blocker', 'major')`) is empty.
-
-Equivalently: every reviewer verdict is `APPROVE`, with at most `minor`
-findings remaining. The `summary` payload of the finish call records
-`iterations` (count of `emploke/dev` nodes in the final DAG) and
-`minor_findings_remaining` (count, for visibility — the work is shipped
-with them outstanding).
-
-There is no iteration cap in v1: as long as reviewers keep returning
-`REQUEST_CHANGES` with blockers/majors and dev keeps succeeding,
-the loop continues. (An iteration cap is a deferred concern per
-`coord-design.md` §7; when added it will be a sibling case in the case
-bank, not a hidden timer.)
+Trigger `finishWorkflow(succeeded, ...)` in the "two parents, both reviewers" case when both verdicts parse cleanly per §C and the union of findings filtered to `severity in ('blocker', 'major')` is empty. The success `summary` records `iterations` (count of `emploke/dev` nodes in the final DAG) and `minor_findings_remaining` (visibility — the work ships with them outstanding). No iteration cap in v1; an iteration cap is deferred per `coord-design.md` §7 and will land as a sibling case in the case bank when added.
 
 ---
 
 ## Failure-mode coverage
 
-Every `(parent role, parent terminal status)` combination the strategy
-expects MUST match exactly one case in the case bank. Verifying that
-matrix here so a future author editing the case bank can re-check
-coverage without re-deriving it:
+Every `(parent role, parent terminal status)` cell on every expected parent role matches exactly one case in the case bank — verify here when editing.
 
 | Coord wake-up shape | Parent role | Parent status | Matched case | Action |
 | --- | --- | --- | --- | --- |
@@ -303,26 +229,3 @@ coverage without re-deriving it:
 | 2 parents | reviewer | `failed` | "two parents, any failed/cancelled" | finish(failed, "reviewer iteration ended in failed") |
 | 2 parents | reviewer | `cancelled` | "two parents, any failed/cancelled" | finish(failed, "reviewer iteration ended in cancelled") |
 | 2 parents | reviewer | `succeeded` but `verdict.json` missing / unparseable | "two parents, both reviewers" → §C parse failure | finish(failed, "reviewer <agent> did not produce valid verdict.json") |
-
-No fall-through cells remain. Every terminal status on every expected
-parent role is caught either by the case bank or by §C's verdict.json
-parse rules (which themselves terminate the workflow with a diagnosable
-failure message).
-
-Unexpected shapes (e.g. 3 parents, or a parent whose agent is none of
-the three the strategy uses) are not covered by the case bank by
-design — those are bugs in the workflow's construction, and the coord
-should `workflow finish --outcome failed --message "coord saw
-unexpected DAG shape under emploke/dev-review-loop: <describe>"` per
-the case-bank preamble.
-
----
-
-## See also
-
-- `emploke/coordinator` skill — generic framework (operating model,
-  DAG patterns, verdict schema, brief plumbing pattern, strategy
-  authoring guide). This strategy skill plugs into §A of that skill.
-- `emploke/cli` skill — `emploke workflow …` subcommand reference.
-- `emploke/coordinator` agent — the agent that loads both the generic
-  skill and this strategy skill at every wake-up.

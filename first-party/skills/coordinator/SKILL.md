@@ -7,42 +7,13 @@ version: 1.0.0
 
 # Emploke Coordinator Skill
 
-You are inside a workflow coordinator agent (`emploke/coordinator`). This
-skill is the **generic orchestration framework**: it tells you how a
-coord wake-up is shaped, how to read the DAG, what schema the workers'
-verdicts use, the meta-pattern you follow when writing worker briefs,
-and what a sibling strategy skill must contain. It is loaded fresh at
-every coord wake-up. Same agent + same skill = identical behaviour at
-every coord node in the DAG; position-in-loop is derived purely from
-DAG introspection — there is no hidden per-coord state to carry
-between wake-ups.
+The framework every workflow coordinator wake-up loads: how to read the DAG, what schema reviewer workers emit in `verdict.json`, how to plumb context into worker briefs, and how to author a sibling strategy skill. The case bank, brief templates, and stop condition for any given workflow live in a sibling **strategy skill** (for v1: `emploke/dev-review-loop`); the scaffolding here is strategy-agnostic.
 
-**This skill is strategy-agnostic.** It does NOT contain any concrete
-case bank, brief template, or stop condition. Those live in **strategy
-skills** (sibling skills the coord agent also declares as deps), one per
-strategy. For v1 the only strategy skill is `emploke/dev-review-loop`.
-Future strategies (`emploke/research-synth`, `emploke/data-pipeline`,
-etc.) ship as additional sibling skills — never by editing this skill.
-
-Five sections that together cover the generic contract:
-
-- §A — Operating model (the wake-up loop)
-- §B — DAG introspection patterns (reusable snippets every strategy uses)
-- §C — `verdict.json` schema (universal output protocol for reviewer workers)
-- §D — Brief plumbing meta-pattern (how to write worker briefs)
-- §E — How to author a strategy skill (the meta-guide for the next author)
-
-CLI invocations referenced below (`emploke workflow show`, `dag`,
-`node-show`, `add-subgraph`, `finish`, `task show`) are documented in the
-`emploke/cli` skill, which the agent loads alongside this one. Consult
-the `emploke/cli` skill's `references/workflow-commands.md` for the full
-per-subcommand reference (flags, routes, response shapes).
+CLI invocations cited below (`workflow show`, `dag`, `node-show`, `add-subgraph`, `finish`, `task show`) are documented in the `emploke/cli` skill, loaded alongside this one.
 
 ---
 
 ## §A — Operating model
-
-How a coord wake-up proceeds:
 
 ```
 1. Read own node id from the task spec / env
@@ -60,47 +31,25 @@ How a coord wake-up proceeds:
    next coord wake-up only happens when its own future parents complete)
 ```
 
-Discipline:
-
-- **One wake-up = one decision = one mutation.** Either `add-subgraph`
-  (expand the DAG with new worker / coord nodes per the matching case)
-  or `finish` (terminal). Coord never sits in a loop waiting for
-  parents — that's the substrate's job. If parents aren't terminal yet,
-  the substrate would not have dispatched this coord wake-up in the
-  first place.
-- **All identifiers come from the DAG snapshot.** Don't cache parent ids,
-  task ids, or branch names between wake-ups; re-read every time. The
-  DAG IS the state.
-- **The strategy skill owns the case bank.** Coord-the-agent loads BOTH
-  this generic skill and the matching strategy skill, then matches
-  parents against the strategy skill's case bank. This skill provides
-  the universal scaffolding only; do not look for concrete cases here.
+- One wake-up = one decision = one mutation. Use `add-subgraph` OR `finish`. Never loop waiting for parents — the substrate re-wakes coord when its parents land terminal.
+- Re-read every identifier from the DAG snapshot every wake-up. Do not cache parent ids, task ids, or branch names across wake-ups. The DAG IS the state.
+- The strategy skill owns the case bank; the scaffolding here is universal. Do not look for concrete cases in this skill.
 
 ### Strategy selection details
 
-Step 5 above resolves the strategy in priority order:
+Resolve step 5 in priority order:
 
-1. `workflow.metadata.strategy` — if the workflow creator set an explicit
-   strategy FQN (e.g. `"emploke/dev-review-loop"`), use it.
-2. `workflow.brief` — if the brief contains an explicit hint
-   ("strategy: emploke/research-synth"), use it.
-3. The only strategy declared in the coord agent's `dependencies.skills` —
-   when there is exactly one strategy skill among the agent's deps,
-   default to it. (For v1 with a single strategy this is the common
-   path and steps 1–2 are typically empty.)
+1. `workflow.metadata.strategy` — explicit strategy FQN set by the workflow creator (e.g. `"emploke/dev-review-loop"`).
+2. An explicit hint inside `workflow.brief` (e.g. `strategy: emploke/research-synth`).
+3. The sole strategy among the coord agent's `dependencies.skills` when exactly one is declared.
 
-If none of the three sources yields a strategy, terminate the workflow
-with `workflow finish --outcome failed --message "coord could not select
-a strategy: no metadata, no brief hint, and the coord agent declares
-multiple strategy skills"`.
+If none of the three yields a strategy, terminate: `workflow finish --outcome failed --message "coord could not select a strategy: no metadata, no brief hint, and the coord agent declares multiple strategy skills"`.
 
 ---
 
 ## §B — DAG introspection patterns
 
-Reusable snippets for the universal sub-tasks every strategy performs.
-The pseudocode below assumes the DAG and workflow header have already
-been fetched per §A steps 2–3 and bound to `$DAG` and `$WF` (JSON).
+Snippets below assume `$DAG` and `$WF` hold the JSON fetched per §A steps 2–3. Parent order is not significant; downstream classification keys on `(kind, agent, status)`.
 
 ### Find own parents
 
@@ -110,13 +59,9 @@ PARENT_IDS=$(jq -r --arg self "$SELF" \
   '.edges[] | select(.to == $self) | .from' <<<"$DAG")
 ```
 
-The parent set is the input to every case-match decision. Order is not
-significant; downstream classification keys on `(kind, agent, status)`.
-
 ### Classify a parent: (kind, status, agent, taskId)
 
-For each parent id, pull the node record from the DAG and (if it is a
-worker) the task record via `emploke task show`:
+For each parent id, pull the node from the DAG; for worker parents also pull the task record via `emploke task show`:
 
 ```
 for PID in $PARENT_IDS; do
@@ -128,17 +73,11 @@ for PID in $PARENT_IDS; do
 done
 ```
 
-The 4-tuple `(kind, status, agent, taskId)` is the classifier key every
-strategy case bank uses. `agent` is empty for `kind: "coordinator"`
-nodes; `taskId` is empty until the node has been dispatched.
+The 4-tuple `(kind, status, agent, taskId)` is the case-bank classifier key. `agent` is empty for `kind: "coordinator"` nodes; `taskId` is empty until the node has been dispatched.
 
 ### Find prior-iter siblings (same agent, lower phase)
 
-When a strategy needs to propagate context across iterations (e.g.
-iteration N reads iteration N−1's output to confirm prior findings are
-addressed), the canonical way to find the prior-iter sibling is: same
-`spec.agent`, lower `phase` (or lower position in topological order),
-nearest match.
+Nearest sibling with the same `spec.agent` and a lower `phase`:
 
 ```
 PRIOR=$(jq -r --arg agent "$WORKER_AGENT" --argjson myPhase "$MY_PHASE" '
@@ -149,16 +88,11 @@ PRIOR_TASK_ID=$(jq -r --arg id "$PRIOR" \
   '.nodes[] | select(.id == $id) | .taskId' <<<"$DAG")
 ```
 
-The strategy then writes `${PRIOR_*_TASK_ID}` into the next worker's
-brief; the worker fetches the prior verdict.json itself via `emploke
-task show` (workers stay workflow-unaware — see §D).
+The strategy writes `${PRIOR_*_TASK_ID}` into the next worker's brief; the worker fetches the prior `verdict.json` itself via `emploke task show` (workers stay workflow-unaware — see §D).
 
 ### Batch-mutate the DAG atomically via add-subgraph
 
-Use `emploke workflow add-subgraph` with `tempId` references so every
-node + edge in a fan-out lands in a single transaction. Example payload
-shape (the specific contents are strategy-driven; the SHAPE is
-universal):
+Use `emploke workflow add-subgraph` with `tempId` references so every node + edge in a fan-out lands in a single transaction. Specific contents are strategy-driven; the SHAPE is universal:
 
 ```jsonc
 {
@@ -177,25 +111,13 @@ universal):
 }
 ```
 
-The substrate resolves the `tempId`s within the transaction and returns
-the assigned node ids in `inserted[].nodeId`. Two rules apply
-universally:
-
-1. **Every fan-out ends in a `next-coord` node** whose parents are the
-   newly-inserted workers. Without a `next-coord`, the DAG branch dead-ends
-   when the workers finish.
-2. **One `add-subgraph` per wake-up.** Splitting a fan-out across two CLI
-   calls means the substrate sees a half-formed DAG and could re-wake the
-   wrong coord. Bundle the whole slice into one call.
+The substrate resolves the `tempId`s within the transaction and returns the assigned node ids in `inserted[].nodeId`. Two universal rules: every fan-out MUST end in a `next-coord` whose parents are the newly-inserted workers (otherwise the branch dead-ends), and exactly one `add-subgraph` per wake-up (splitting a fan-out across two CLI calls leaves a half-formed DAG and may re-wake the wrong coord).
 
 ---
 
 ## §C — verdict.json schema (universal)
 
-Every reviewer-style worker (any worker whose output a coord needs to
-parse to decide "continue or finish") writes a `verdict.json` to its task
-workdir. The schema is part of this generic skill because every strategy
-that uses reviewer parents consumes it the same way.
+Reviewer workers (any worker whose output a coord parses to decide "continue or finish") write a `verdict.json` to their task workdir; every strategy that uses reviewer parents consumes it via this schema.
 
 ```
 verdict.json schema:
@@ -220,98 +142,24 @@ Parse rules for coord:
 - Treat missing `findings` array as `[]`
 - On parse failure: `workflow finish --outcome failed --message "reviewer <agent> did not produce valid verdict.json"` and exit
 
-Pseudocode coord can adapt (actual implementation is at the agent
-runtime's discretion; this is the contract):
-
-```js
-function parseVerdict(workdir, agentFqn) {
-  const raw = readFile(`${workdir}/verdict.json`);
-  let v;
-  try { v = JSON.parse(raw); }
-  catch (e) { finishWorkflow("failed", `reviewer ${agentFqn} did not produce valid verdict.json`); throw; }
-
-  if (v.verdict !== "APPROVE" && v.verdict !== "REQUEST_CHANGES") {
-    finishWorkflow("failed", `reviewer ${agentFqn} verdict.json has invalid verdict field`); throw;
-  }
-  const findings = Array.isArray(v.findings) ? v.findings : [];
-  return {
-    verdict: v.verdict,
-    findings: findings.map((f) => ({
-      id: f.id,
-      severity: ["blocker", "major", "minor"].includes(f.severity) ? f.severity : "major",
-      summary: f.summary,
-      detail: f.detail,
-    })),
-  };
-}
-```
-
-Strategy skills should reference this schema verbatim inside their
-reviewer-role brief template (so the worker receives the schema in its
-brief and need not load this skill).
+Strategy skills SHOULD re-quote this schema verbatim inside their reviewer brief templates so the worker receives the schema in its brief and need not load this skill.
 
 ---
 
 ## §D — Brief plumbing meta-pattern
 
-Workers (implementer agents, reviewer agents, etc.) are pure specialists. They MUST NOT depend on any
-workflow-specific skill or know they're running inside a workflow. All
-workflow context is plumbed to them via the **task brief** coord writes
-when dispatching them.
+Treat workers as pure specialists: they MUST NOT depend on any workflow-specific skill or know they are inside a workflow. All workflow context reaches them via the task brief coord writes when dispatching them. Every worker brief a strategy template emits MUST follow this pattern:
 
-Every worker brief a strategy template emits MUST follow this pattern:
-
-1. **Always include**:
-   - The workflow id (so the worker can call `emploke workflow show
-     --wfid $WF --json` if it needs further context).
-   - The workflow brief, **verbatim** from `workflow.brief` — do not
-     trim, summarize, or paraphrase.
-   - The workflow details, verbatim from `workflow.details` (substitute
-     empty string if `null`).
-   - Where to fetch prior-iter outputs, expressed as concrete task ids
-     the worker reads itself (e.g. "fetch the prior reviewer's verdict via
-     `emploke task show --tid ${PRIOR_<role>_TASK_ID}` then read
-     `<task-workdir>/verdict.json`" — the concrete slot name comes from the
-     strategy skill's placeholder resolution table). Workers do their own
-     fetching; coord does not pre-digest.
-
-2. **Never include**:
-   - Technical content (quality bars, fix suggestions, implementation
-     guidance, design opinions). Workers own those domains.
-   - Coord's own interpretation of prior-iter findings. The worker reads
-     the raw verdict.json itself; coord MUST NOT pre-classify or
-     prioritise findings for it.
-   - Hints about what the next coord wake-up will do. Workers are
-     workflow-unaware; the coord state machine is not their concern.
-
-3. **Always inline the output protocol** the worker should follow:
-   - For reviewer workers: the §C verdict.json schema, verbatim, plus
-     the validation rules and the optional narrative file convention.
-   - For implementer workers: the expected branch / PR convention,
-     which the next coord wake-up will rely on.
-
-4. **Use `${PLACEHOLDER}` substitution syntax** for every slot whose
-   value is per-dispatch. Coord at runtime fills the slots via plain
-   string replacement before writing the brief into the
-   `add-subgraph` payload. Substitution is total — leaving a literal
-   `${...}` in the dispatched brief is a bug. If a placeholder has no
-   value (e.g. `${WORKFLOW_DETAILS}` when the creator passed nothing),
-   substitute an empty string rather than the literal `${…}`.
-
-This meta-pattern is universal across strategies. **Each strategy
-skill provides the concrete templates** (the actual prose workers
-receive) plus the placeholder-resolution table mapping each `${...}` to
-its source (`workflow.brief`, parent `taskId`, DAG-derived counters,
-etc.). See §E.
+- **Always include**: workflow id (so the worker can call `emploke workflow show --wfid $WF --json` itself), `workflow.brief` verbatim (no trim, no summary, no paraphrase), `workflow.details` verbatim (empty string if `null`), and concrete fetch instructions for any prior-iter outputs the worker needs (e.g. `emploke task show --tid ${PRIOR_<role>_TASK_ID}` then `<task-workdir>/verdict.json`). Workers do their own fetching; coord does not pre-digest.
+- **Never include**: technical content (quality bars, fix suggestions, design opinions — workers own those domains), coord's interpretation of prior-iter findings (the worker reads the raw `verdict.json` itself), or hints about future coord wake-ups (workers are workflow-unaware).
+- **Always inline the output protocol**: for reviewer workers, the §C `verdict.json` schema verbatim plus validation rules and the optional narrative-file convention. For implementer workers, the expected branch / PR convention the next coord wake-up relies on.
+- **Use `${PLACEHOLDER}` substitution** for every per-dispatch slot. Coord fills slots via plain string replacement before writing the brief into `add-subgraph`. Substitution is total — a literal `${...}` in the dispatched brief is a bug. Unresolved placeholders (e.g. `${WORKFLOW_DETAILS}` when the creator passed nothing) substitute the empty string.
 
 ---
 
 ## §E — How to author a strategy skill
 
-A strategy skill is a content-only sibling skill the coord agent loads
-alongside this one. Its job: provide the case bank, brief templates, and
-stop condition for one orchestration strategy. Multiple strategy skills
-can coexist; the coord agent picks one per workflow per §A step 5.
+A strategy skill is a content-only sibling skill the coord agent loads alongside this one — providing the case bank, brief templates, and stop condition for one orchestration strategy. Multiple strategy skills coexist; the coord agent picks one per workflow per §A step 5.
 
 ### Required frontmatter
 
@@ -324,147 +172,29 @@ version: 1.0.0                       # 3-segment semver
 ---
 ```
 
-Strategy skills are **content-only**:
+Content-only: **no `dependencies:`** (the coord agent already declares the generic `emploke/coordinator` skill as a peer dep; adding deps here would shadow that scope), **no `prereqs:`** (the skill body is the entire contract — nothing to install).
 
-- **No `dependencies:`** — they are loaded by the coord agent, which
-  already declares the generic `emploke/coordinator` skill as a peer
-  dep. Adding deps here would shadow that scope.
-- **No `prereqs:`** — there is nothing to install or set up; the skill
-  body is the entire contract.
+### Required body sections (use these exact headings — the coord LLM and lint tooling key on them)
 
-### Required body sections
-
-Every strategy skill MUST contain these sections (use these exact
-headings or near-equivalents — the coord LLM and the lint tooling key
-on them):
-
-1. **Case bank** — enumerate every parent-classification case the
-   strategy expects. For each case:
-   - The matching predicate on `(kind, status, agent)` tuples of own
-     direct parents (use the classifier from §B).
-   - The action: either `addSubgraph: <node list>` (with the new
-     workers + their briefs + the trailing `next-coord` per §B) OR
-     `finishWorkflow(<outcome>, "<message>")`.
-   Fall-through is forbidden — every reachable combination of parent
-   `(kind, status, agent)` must match exactly one case. See "Failure-mode
-   coverage" below.
-
-2. **Brief templates** — one verbatim text block per worker role the
-   strategy dispatches. Each template MUST follow the §D meta-pattern:
-   workflow context + prior-iter fetch instructions + output protocol +
-   `${PLACEHOLDER}` slots. Templates are quoted into the case bank by
-   reference (e.g. `brief=<template-review>`); coord at runtime
-   substitutes placeholders.
-
-3. **Placeholder resolution table** — for each `${...}` slot used in any
-   template, the source it resolves from. Example rows:
-
-   | Placeholder | Source | Notes |
-   | --- | --- | --- |
-   | `${WORKFLOW_ID}` | `workflow.id` from `emploke workflow show` | string |
-   | `${WORKFLOW_BRIEF}` | `workflow.brief` | verbatim |
-   | `${ITERATION_NUMBER}` | count of relevant worker nodes in DAG + 1 | integer |
-
-   Every placeholder appearing in any template MUST have a row. Coord
-   reads this table to resolve the slot before dispatch.
-
-4. **Stop condition** — the explicit predicate that triggers
-   `finishWorkflow(succeeded, ...)`. Strategies that never succeed
-   (forever-loops) MUST NOT exist in this catalog — every strategy
-   needs a clean terminal state.
-
-5. **Failure-mode coverage** — an explicit subsection that verifies every
-   `failed` / `cancelled` terminal status on every parent role the
-   strategy expects is covered by a case in the case bank. List the
-   `(role, status)` matrix and the case that catches each cell. The
-   verifier comment is part of the skill body so a future author
-   editing the case bank can re-check coverage without re-deriving it.
+1. **Case bank** — enumerate every parent-classification case. Each case carries the matching predicate on `(kind, status, agent)` tuples of own direct parents (use the §B classifier) plus an action: `addSubgraph: <node list>` (with the new workers + briefs + a trailing `next-coord` per §B) or `finishWorkflow(<outcome>, "<message>")`. Fall-through is forbidden; every reachable parent combination must match exactly one case (see "Failure-mode coverage" below).
+2. **Brief templates** — one verbatim text block per worker role the strategy dispatches. Each template MUST follow the §D meta-pattern: workflow context + prior-iter fetch instructions + output protocol + `${PLACEHOLDER}` slots. The case bank quotes templates by reference (e.g. `brief=<template-review>`); coord substitutes placeholders at runtime.
+3. **Placeholder resolution table** — for every `${...}` slot used in any template, the source it resolves from (`workflow.id`, `workflow.brief`, a parent `taskId`, a DAG-derived counter, etc.). Coord reads this table to resolve the slot before dispatch.
+4. **Stop condition** — the explicit predicate that triggers `finishWorkflow(succeeded, ...)`. Strategies without a clean terminal state MUST NOT exist in this catalog.
+5. **Failure-mode coverage** — an explicit `(role, terminal status)` matrix mapping each cell to the case that catches it, so a future author editing the case bank can re-check coverage without re-deriving it.
 
 ### Optional body sections
 
-- **Tempid wiring sketches** — concrete `add-subgraph` JSON payloads
-  for the strategy's most common fan-outs, useful for the LLM to anchor
-  its output shape. (Coord generates payloads from the case bank
-  pseudocode; sketches are purely illustrative.)
-- **Decision-log shape** — strategies may extend the generic
-  `coord-decision.md` template with strategy-specific fields (e.g.
-  iteration counter, blockers-and-majors count).
+- **Tempid wiring sketches** — concrete `add-subgraph` JSON payloads for the strategy's common fan-outs, useful for the LLM to anchor output shape.
+- **Decision-log shape** — strategy-specific extensions to the generic `coord-decision.md` (e.g. iteration counter, blockers-and-majors count).
 
 ### Constraints
 
-- **Strategy skills MUST NOT redefine the verdict.json schema** — they
-  point at §C of the generic skill (verbatim re-quoting in a reviewer
-  brief template is fine; introducing a different schema is forbidden).
-- **Strategy skills MUST NOT introduce strategy selection logic** — that
-  lives in §A of this skill. A strategy skill's body assumes "I have
-  been selected; here is what I do".
-- **Strategy skills MUST NOT compose technical content.** Quality bars,
-  fix opinions, and review heuristics live in worker agents — strategy
-  briefs only plumb workflow context and the verdict schema.
+- Strategy skills MUST NOT redefine the `verdict.json` schema — point at §C (verbatim re-quoting inside a reviewer brief template is fine; introducing a different schema is forbidden).
+- Strategy skills MUST NOT introduce strategy selection logic — that lives in §A. A strategy skill body assumes "I have been selected; here is what I do".
+- Strategy skills MUST NOT compose technical content. Quality bars, fix opinions, and review heuristics live in worker agents; strategy briefs only plumb workflow context and the verdict schema.
 
 ---
 
 ## Decision log
 
-Every wake-up writes a `coord-decision.md` to the coord task's workdir
-documenting: which strategy was selected, which case matched, the parent
-ids + statuses inspected, the verdicts parsed (if any), and the action
-taken (`add-subgraph` with which children, or `finish` with which
-outcome and reason). This is the audit trail for any post-mortem on the
-workflow.
-
-Template (strategy skills may extend with extra fields):
-
-```
-# Coord decision — node ${OWN_NODE_ID} (wfid ${WORKFLOW_ID})
-
-## Strategy selected
-${STRATEGY_FQN}  (source: workflow.metadata | brief hint | sole agent dep)
-
-## Parents observed
-- ${PARENT_ID}: kind=${kind} status=${status} agent=${agent} taskId=${taskId}
-  …
-
-## Verdicts read
-- ${PARENT_ID} (${agent}): verdict=${verdict}, findings=${counts by severity}
-  …
-
-## Case matched
-${case label from the strategy skill's case bank}
-
-## Action taken
-- add-subgraph: ${new node summary}
-  OR
-- finish: outcome=${outcome}, reason="${reason}"
-
-## Reasoning
-${one paragraph}
-```
-
----
-
-## What this skill is NOT
-
-- **Not a strategy.** This skill defines the framework. The matching
-  strategy skill (e.g. `emploke/dev-review-loop`) defines the case
-  bank and brief templates the framework dispatches.
-- **Not a CLI reference.** The `emploke/cli` skill (loaded alongside)
-  carries the per-subcommand surface for `emploke workflow …`. Consult
-  it for flag names, body schemas, and exit codes.
-- **Not a substitute for the workflow substrate.** Coord makes one
-  decision per wake-up and exits; the substrate handles dispatch,
-  parent-readiness, and re-waking coord nodes when their parents land
-  terminal. Don't try to "loop" inside a single coord wake-up.
-
----
-
-## See also
-
-- `emploke/cli` skill — flags, routes, and bodies for every `emploke
-  workflow …` subcommand referenced here, plus the `--json` /
-  workspace-scoping discipline this skill's pseudocode assumes.
-- `emploke/dev-review-loop` skill — the v1 strategy skill (case bank,
-  brief templates, placeholder table, stop condition, failure-mode
-  coverage for the dev → review+designer iterate-to-clean strategy).
-- `emploke/coordinator` agent — loads this skill and one strategy skill
-  on every wake-up.
+Each wake-up writes a `coord-decision.md` to its task workdir capturing: which strategy was selected, which case matched, parent ids + statuses observed, verdicts parsed (if any), and the action taken (`add-subgraph` specifics or `finish` outcome + reason). This is the audit trail for post-mortems on the workflow. Strategy skills may extend the record with extra fields (iteration counter, blocker/major counts, etc.).
