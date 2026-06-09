@@ -13,7 +13,7 @@
  * The entity layer's remaining job is:
  *
  *   1. `fromRow` — parse persisted JSON, validate enums (throws
- *      `WorkflowEnumValueError` on miss). Defense-in-depth so a
+ *      `WorkflowEnumValueCorruptionError` on miss). Defense-in-depth so a
  *      corrupted or hand-edited row can't smuggle a junk enum into
  *      the runtime.
  *   2. `toRow` — project the typed in-memory shape to a Drizzle
@@ -88,8 +88,8 @@ export class WorkflowEntity {
   ) {}
 
   /**
-   * Hydrate from a Drizzle row. Throws `WorkflowEnumValueError` if
-   * the persisted `status` is not in the known vocabulary.
+   * Hydrate from a Drizzle row. Throws `WorkflowEnumValueCorruptionError`
+   * if the persisted `status` is not in the known vocabulary.
    * `metadata` is JSON-parsed; corrupt JSON throws `WorkflowError`.
    *
    * Terminal-payload columns (`success` / `failure` / `cancellation`)
@@ -221,8 +221,8 @@ export class WorkflowNodeEntity {
    *
    *   - `InvalidWorkflowIdError` / `InvalidWorkflowNodeIdError` if
    *     ids fail grammar.
-   *   - `WorkflowEnumValueError` if `status` is not in the known
-   *     node-status vocabulary.
+   *   - `WorkflowEnumValueCorruptionError` if `status` is not in the
+   *     known node-status vocabulary.
    *   - `WorkflowNodeKindShapeError` if `kind` is not a known
    *     `NodeKind` (defensive guard against schema corruption).
    *   - `WorkflowError` if `spec_json` is not valid JSON.

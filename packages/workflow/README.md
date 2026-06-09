@@ -133,7 +133,9 @@ calling the service.
 | `WorkflowNodeSpecError` (per-kind)       | 400  | caller-fixable spec validation                                 |
 | `EmptyParentsError`                      | 400  | mutation body empty                                            |
 | `WorkflowSubgraph*Error`                 | 400/409 | structural batch rules                                      |
-| `WorkflowNodeKindUnknownError` etc.      | 400  | enum/kind guards (see `_error-policies/workflows.ts` doc)      |
+| `WorkflowNodeKindShapeError`             | 400  | caller `kind` not a non-empty string                           |
+| `WorkflowNodeKindCorruptionError`        | 500  | persisted `kind` value outside the closed enum (corruption)    |
+| `WorkflowEnumValueCorruptionError`       | 500  | persisted enum value outside the known vocabulary (corruption) |
 | `WorkflowAlreadyTerminalError`           | 409  | CAS conflict — workflow is already terminal                    |
 | `WorkflowNodeNotMutableError`            | 409  | sealing rule — status disallows the verb                       |
 | `WorkflowEdgeCycleError`                 | 409  | DAG cycle would close                                          |

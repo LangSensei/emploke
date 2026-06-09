@@ -117,7 +117,7 @@ export type WorkflowNodeStatus =
  *
  * The string values `"coordinator"` / `"worker"` are also the
  * persisted `workflow_nodes.kind` column values; the substrate's
- * defensive {@link WorkflowNodeKindUnknownError} only fires when a
+ * defensive {@link WorkflowNodeKindCorruptionError} only fires when a
  * persisted row carries a value outside this union (schema
  * corruption / older-binary leftover row).
  */

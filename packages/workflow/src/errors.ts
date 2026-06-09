@@ -121,8 +121,8 @@ export class WorkflowEdgeCycleError extends WorkflowError {
  * enum. Operator/data-corruption class; the server's error-policy
  * table maps to 500.
  */
-export class WorkflowNodeKindUnknownError extends WorkflowError {
-  override readonly name = "WorkflowNodeKindUnknownError";
+export class WorkflowNodeKindCorruptionError extends WorkflowError {
+  override readonly name = "WorkflowNodeKindCorruptionError";
   constructor(public readonly kind: string) {
     super(
       `Workflow node kind "${kind}" is not a known kind (expected one of: "coordinator", "worker"). This indicates schema corruption or a row written by an older binary.`,
@@ -234,10 +234,11 @@ export class EmptyParentsError extends WorkflowError {
  * Thrown by entity `fromRow` factories when a persisted enum value
  * is not in the current vocabulary (e.g. a hand-edited DB or a
  * pre-migration row that smuggled in an unknown status). Operator/
- * data-corruption error; maps to 500 with an opaque body.
+ * data-corruption error; the server's error-policy table maps to
+ * 500 with an opaque body.
  */
-export class WorkflowEnumValueError extends WorkflowError {
-  override readonly name = "WorkflowEnumValueError";
+export class WorkflowEnumValueCorruptionError extends WorkflowError {
+  override readonly name = "WorkflowEnumValueCorruptionError";
   constructor(
     public readonly field: string,
     public readonly value: string,
@@ -249,10 +250,10 @@ export class WorkflowEnumValueError extends WorkflowError {
 
 /**
  * Thrown by `assertValidWorkflowNodeKind` when the value is not a
- * non-empty string. Distinct from {@link WorkflowEnumValueError}:
+ * non-empty string. Distinct from {@link WorkflowEnumValueCorruptionError}:
  * the entity-layer kind guard checks shape only (`assertValidXxx`
  * pattern); membership against the closed `NodeKind` enum is
- * enforced separately by {@link WorkflowNodeKindUnknownError} when
+ * enforced separately by {@link WorkflowNodeKindCorruptionError} when
  * the substrate routes per-kind logic against a persisted row.
  */
 export class WorkflowNodeKindShapeError extends WorkflowError {

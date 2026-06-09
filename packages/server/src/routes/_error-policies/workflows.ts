@@ -6,11 +6,16 @@
  *
  * Status assignments:
  *
- *   - 400 — caller-fixable structural validation, including bad enum
- *           values supplied by the caller (a request specifying an
- *           unknown `kind` reaches `WorkflowNodeKindUnknownError` /
- *           `WorkflowEnumValueError` / `WorkflowNodeKindShapeError`
- *           via the substrate's defensive parse path).
+ *   - 400 — caller-fixable structural validation. Note: the
+ *           defensive enum / kind guards
+ *           (`WorkflowNodeKindCorruptionError`,
+ *           `WorkflowEnumValueCorruptionError`) are deliberately
+ *           NOT listed here: they signal that a persisted row or
+ *           internal lookup carried a value outside the closed enum,
+ *           which is schema corruption and maps to 500. The
+ *           caller-input shape guard for kind
+ *           (`WorkflowNodeKindShapeError`) is the legitimate 400
+ *           bucket for kind validation.
  *   - 403 — caller is not an authorised mutator (the substrate's auth
  *           gate: must be the unique running coordinator in this
  *           workflow). Distinct from 404 (entity missing) and 409
@@ -53,10 +58,10 @@ import {
   WorkflowAlreadyTerminalError,
   WorkflowEdgeCycleError,
   WorkflowEdgeNotFoundError,
-  WorkflowEnumValueError,
+  WorkflowEnumValueCorruptionError,
   WorkflowError,
+  WorkflowNodeKindCorruptionError,
   WorkflowNodeKindShapeError,
-  WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   WorkflowNodeSpecError,
@@ -90,19 +95,18 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowSubgraphTempIdInvalidError, 400],
     [WorkflowSubgraphTempParentlessError, 400],
     [WorkflowSubgraphNodeRefUnresolvedError, 400],
-    // The substrate's defensive enum / kind guards. Originally
-    // mapped to 500 (treated as schema corruption), but the M2.5
-    // mutation routes can surface them when a request crosses the
-    // boundary into substrate code paths that re-parse persisted
-    // rows (e.g. `getNode` after `replaceNodeSpec`, or `addSubgraph`
-    // when projecting batch results). Mapping to 400 keeps the
-    // caller's experience honest — the request failed structurally,
-    // it wasn't an internal error. Messages echo only caller-
-    // supplied values + the allowed alternatives, so the names are
-    // on the SAFE_ERROR_NAMES allow-list (see _shared.ts).
-    [WorkflowNodeKindUnknownError, 400],
-    [WorkflowEnumValueError, 400],
+    // The shape guard for `kind` fires on caller input — `kind` must
+    // be a non-empty string before the substrate even tries to map
+    // it to a runner. Honest 400.
     [WorkflowNodeKindShapeError, 400],
+
+    // 500 — defensive guards that fire only when a persisted row or
+    // internal lookup carries a value outside the closed enum. These
+    // signal schema corruption / older-binary-leftover rows, NOT
+    // caller mistakes; the response body is an opaque sanitized
+    // string at the respond-error layer (see SAFE_ERROR_NAMES).
+    [WorkflowNodeKindCorruptionError, 500],
+    [WorkflowEnumValueCorruptionError, 500],
 
     // 409 — FSM / DAG conflict against existing state
     [WorkflowAlreadyTerminalError, 409],

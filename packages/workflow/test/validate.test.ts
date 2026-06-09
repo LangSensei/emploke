@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
-  WorkflowEnumValueError,
+  WorkflowEnumValueCorruptionError,
   WorkflowNodeKindShapeError,
 } from "../src/errors.js";
 import {
@@ -148,11 +148,11 @@ describe("assertValidWorkflowStatusEnum", () => {
   });
 
   it("rejects an unknown value", () => {
-    expect(() => assertValidWorkflowStatusEnum("archived")).toThrowError(WorkflowEnumValueError);
+    expect(() => assertValidWorkflowStatusEnum("archived")).toThrowError(WorkflowEnumValueCorruptionError);
   });
 
   it("rejects the empty string", () => {
-    expect(() => assertValidWorkflowStatusEnum("")).toThrowError(WorkflowEnumValueError);
+    expect(() => assertValidWorkflowStatusEnum("")).toThrowError(WorkflowEnumValueCorruptionError);
   });
 });
 
@@ -164,11 +164,11 @@ describe("assertValidWorkflowNodeStatusEnum", () => {
   });
 
   it("rejects an unknown value", () => {
-    expect(() => assertValidWorkflowNodeStatusEnum("paused")).toThrowError(WorkflowEnumValueError);
+    expect(() => assertValidWorkflowNodeStatusEnum("paused")).toThrowError(WorkflowEnumValueCorruptionError);
   });
 
   it("rejects the empty string", () => {
-    expect(() => assertValidWorkflowNodeStatusEnum("")).toThrowError(WorkflowEnumValueError);
+    expect(() => assertValidWorkflowNodeStatusEnum("")).toThrowError(WorkflowEnumValueCorruptionError);
   });
 });
 
@@ -191,7 +191,7 @@ describe("assertValidWorkflowNodeKind (closed enum: 'coordinator' | 'worker')", 
     }
   });
 
-  it("rejects the empty string with WorkflowNodeKindShapeError (not WorkflowEnumValueError)", () => {
+  it("rejects the empty string with WorkflowNodeKindShapeError (not WorkflowEnumValueCorruptionError)", () => {
     expect(() => assertValidWorkflowNodeKind("")).toThrowError(WorkflowNodeKindShapeError);
   });
 

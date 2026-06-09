@@ -28,7 +28,7 @@ import {
   WorkflowEdgeCycleError,
   WorkflowEdgeNotFoundError,
   WorkflowError,
-  WorkflowNodeKindUnknownError,
+  WorkflowNodeKindCorruptionError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   WorkflowNotFoundError,
@@ -365,7 +365,7 @@ export class WorkflowService {
    * values are TypeScript-checked against the closed enum, so the
    * `default` branch only fires for persisted-row corruption (an
    * older binary's removed kind value, a hand-edited DB row); it
-   * throws {@link WorkflowNodeKindUnknownError} for diagnosis.
+   * throws {@link WorkflowNodeKindCorruptionError} for diagnosis.
    */
   private runnerFor(kind: string): WorkflowNodeRunner {
     switch (kind) {
@@ -374,7 +374,7 @@ export class WorkflowService {
       case WORKER_KIND:
         return this.runners.worker;
       default:
-        throw new WorkflowNodeKindUnknownError(kind);
+        throw new WorkflowNodeKindCorruptionError(kind);
     }
   }
 

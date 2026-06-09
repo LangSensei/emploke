@@ -63,13 +63,13 @@ import {
   type WorkflowEdgeEntity,
   WorkflowEdgeNotFoundError,
   type WorkflowEntity,
-  WorkflowEnumValueError,
+  WorkflowEnumValueCorruptionError,
   WorkflowError,
   type WorkflowModule,
   type WorkflowModuleOptions,
   type WorkflowNodeEntity,
+  WorkflowNodeKindCorruptionError,
   WorkflowNodeKindShapeError,
-  WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   type WorkflowNodeRunner,
@@ -111,7 +111,7 @@ describe("@emploke/workflow public API guard", () => {
       // kind value outside `NodeKind`, signalling schema corruption
       // or a row written by an older binary. Unreachable through
       // typed callers because `runnerFor` accepts `NodeKind`.
-      new WorkflowNodeKindUnknownError("evaluator"),
+      new WorkflowNodeKindCorruptionError("evaluator"),
       new WorkflowNodeKindShapeError(""),
       new WorkflowNodeSpecError("worker", "agent missing"),
       new MultipleSuccessorCoordsError("wf-id", "coord-parent-id"),
@@ -120,7 +120,7 @@ describe("@emploke/workflow public API guard", () => {
       // Zero-arg now: structural precondition (≥1 parent) is workflow-
       // independent, so the error doesn't take an id.
       new EmptyParentsError(),
-      new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
+      new WorkflowEnumValueCorruptionError("status", "archived", ["running", "succeeded"]),
     ];
     expectTypeOf(errs[0]!).toExtend<Error>();
   });

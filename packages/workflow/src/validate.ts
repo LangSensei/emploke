@@ -22,7 +22,7 @@ import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
 import {
   InvalidWorkflowIdError,
   InvalidWorkflowNodeIdError,
-  WorkflowEnumValueError,
+  WorkflowEnumValueCorruptionError,
   WorkflowError,
   WorkflowNodeKindShapeError,
 } from "./errors.js";
@@ -127,7 +127,7 @@ const VALID_NODE_STATUSES: readonly WorkflowNodeStatus[] = [
 
 /**
  * Enum-membership check for `workflow.status`. Throws
- * {@link WorkflowEnumValueError} on miss — used by
+ * {@link WorkflowEnumValueCorruptionError} on miss — used by
  * `WorkflowEntity.fromRow` to reject corrupted / hand-edited rows.
  */
 export function assertValidWorkflowStatusEnum(status: unknown): asserts status is WorkflowStatus {
@@ -135,20 +135,20 @@ export function assertValidWorkflowStatusEnum(status: unknown): asserts status i
     typeof status !== "string" ||
     !(VALID_WORKFLOW_STATUSES as readonly string[]).includes(status)
   ) {
-    throw new WorkflowEnumValueError("status", String(status), VALID_WORKFLOW_STATUSES);
+    throw new WorkflowEnumValueCorruptionError("status", String(status), VALID_WORKFLOW_STATUSES);
   }
 }
 
 /**
  * Enum-membership check for `workflow_nodes.status`. Throws
- * {@link WorkflowEnumValueError} on miss — used by
+ * {@link WorkflowEnumValueCorruptionError} on miss — used by
  * `WorkflowNodeEntity.fromRow` to reject corrupted rows.
  */
 export function assertValidWorkflowNodeStatusEnum(
   status: unknown,
 ): asserts status is WorkflowNodeStatus {
   if (typeof status !== "string" || !(VALID_NODE_STATUSES as readonly string[]).includes(status)) {
-    throw new WorkflowEnumValueError("status", String(status), VALID_NODE_STATUSES);
+    throw new WorkflowEnumValueCorruptionError("status", String(status), VALID_NODE_STATUSES);
   }
 }
 
