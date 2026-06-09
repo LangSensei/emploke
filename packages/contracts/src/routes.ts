@@ -773,6 +773,16 @@ export const ROUTES = {
     "/api/workspaces/:id/workflows/:wfid/dag",
   ),
   /**
+   * Single workflow node lookup. Returns the projected node wire
+   * shape — same shape as the entries inside `workflows.dag.nodes`,
+   * but addressable without paying for the full DAG snapshot. 404
+   * when either the workflow or the node id does not resolve.
+   */
+  "workflows.getNode": defineRoute<{ params: WorkflowNodePathParams }, WorkflowNodeWire>(
+    "GET",
+    "/api/workspaces/:id/workflows/:wfid/nodes/:nid",
+  ),
+  /**
    * External cancel — flips the workflow to `cancelled` and
    * reconciles every non-terminal node. v2.2 body requires
    * `cancellation: { kind?: 'user', message }` so the operator's

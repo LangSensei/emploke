@@ -103,6 +103,7 @@ import {
   type NodeRef,
   workflowDir as resolveWorkflowDir,
   WorkflowError,
+  WorkflowNodeNotFoundError,
   type WorkflowService,
 } from "@emploke/workflow";
 import { Hono } from "hono";
@@ -596,6 +597,33 @@ export function workflowsRoutes(
         route: "workflows.dag",
         policy: workflowsErrorPolicy,
         meta: { workflowId: wfid },
+      });
+    }
+  });
+
+  // ── GET /:wfid/nodes/:nid — single node, taskId enriched ─────────
+  // Sibling of the dag route, addressable without paying for the
+  // full snapshot. Same wire shape as the per-node entries inside
+  // `/:wfid/dag.nodes`.
+  app.get("/:wfid/nodes/:nid", async (c) => {
+    const wfid = c.req.param("wfid");
+    const nid = c.req.param("nid");
+    try {
+      const node = await resolve(c).getNode(nid);
+      // The substrate's `getNode(nid)` is workflow-agnostic by id;
+      // re-check the path's `wfid` segment here so a typo'd
+      // workflow id doesn't silently return the right node from a
+      // different workflow.
+      if (node.workflowId !== wfid) {
+        throw new WorkflowNodeNotFoundError(wfid, nid);
+      }
+      const wire = await projectWorkflowNodeWithTaskId(node, { tasks: resolveTasks(c) });
+      return c.json(wire);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "workflows.getNode",
+        policy: workflowsErrorPolicy,
+        meta: { workflowId: wfid, nodeId: nid },
       });
     }
   });

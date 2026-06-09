@@ -28,6 +28,7 @@ import {
   WorkflowEdgeEntity,
   WorkflowEntity,
   WorkflowNodeEntity,
+  WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   WorkflowNotFoundError,
   WorkflowRemoveNodeOrphansChildError,
@@ -368,6 +369,54 @@ describe("workflowsRoutes — dag", () => {
     expect("taskId" in (coordNode ?? {})).toBe(false);
     expect(findTaskByWorkflowNode).toHaveBeenCalledWith(WORKER_NID);
     expect(findTaskByWorkflowNode).toHaveBeenCalledWith(COORD_NID);
+  });
+});
+
+// ─── GET /:wfid/nodes/:nid — single node lookup ─────────────────────
+
+describe("workflowsRoutes — getNode", () => {
+  it("GET /:wfid/nodes/:nid returns the projected node with taskId", async () => {
+    const svc = stubService({
+      getNode: vi.fn(async () => makeWorker()),
+    });
+    const findTaskByWorkflowNode = vi.fn(async (nid: string) => {
+      if (nid === WORKER_NID) return { id: "20260607-bbbb2222" };
+      return null;
+    });
+    const tasks = stubTasks({ findTaskByWorkflowNode });
+    const res = await mountRoutes(svc, tasks).request(`/${WID}/nodes/${WORKER_NID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.id).toBe(WORKER_NID);
+    expect(body.workflowId).toBe(WID);
+    expect(body.spec).toEqual({ kind: "worker", agent: "writer", brief: "draft" });
+    expect(body.taskId).toBe("20260607-bbbb2222");
+    expect(findTaskByWorkflowNode).toHaveBeenCalledWith(WORKER_NID);
+  });
+
+  it("GET /:wfid/nodes/:nid maps WorkflowNodeNotFoundError to 404", async () => {
+    const svc = stubService({
+      getNode: vi.fn(async () => {
+        throw new WorkflowNodeNotFoundError(WID, WORKER_NID);
+      }),
+    });
+    const res = await mountRoutes(svc).request(`/${WID}/nodes/${WORKER_NID}`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("WorkflowNodeNotFoundError");
+  });
+
+  it("GET /:wfid/nodes/:nid returns 404 when the node belongs to a different workflow", async () => {
+    // Defense against the substrate's workflow-agnostic getNode(nid):
+    // a typo'd wfid must not silently return the right node from a
+    // different workflow.
+    const svc = stubService({
+      getNode: vi.fn(async () => makeWorker()),
+    });
+    const res = await mountRoutes(svc).request(`/some-other-wfid/nodes/${WORKER_NID}`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("WorkflowNodeNotFoundError");
   });
 });
 

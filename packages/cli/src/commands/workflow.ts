@@ -177,6 +177,51 @@ export async function workflowShow(opts: WorkflowShowOpts): Promise<CommandResul
   }
 }
 
+// ─── node-show ─────────────────────────────────────────────────────────
+export interface WorkflowNodeShowOpts extends CommonFlags {
+  /** Workflow id. */
+  readonly wfid: string;
+  /** Node id within the workflow. */
+  readonly nid: string;
+}
+
+export async function workflowNodeShow(opts: WorkflowNodeShowOpts): Promise<CommandResult> {
+  if (typeof opts.wfid !== "string" || opts.wfid.trim() === "") {
+    return { exitCode: 2, stderr: "workflow id is required (--wfid <id>)\n" };
+  }
+  if (typeof opts.nid !== "string" || opts.nid.trim() === "") {
+    return { exitCode: 2, stderr: "node id is required (--nid <id>)\n" };
+  }
+  const client = await makeClient(opts);
+  try {
+    const id = await resolveWorkspace(opts);
+    const node = await client.call("workflows.getNode", {
+      params: { id, wfid: opts.wfid, nid: opts.nid },
+    });
+    const fmt = pickFormat(opts, "table");
+    if (fmt === "json") return { exitCode: 0, stdout: formatJson(node) };
+    const rows: Array<readonly [string, string]> = [
+      ["id", node.id],
+      ["workflowId", node.workflowId],
+      ["phase", String(node.phase)],
+      ["kind", node.spec.kind],
+      ["status", node.status],
+      ["agent", agentForSpec(node.spec)],
+      ["createdAt", node.createdAt],
+    ];
+    if (node.readyAt !== undefined) rows.push(["readyAt", node.readyAt]);
+    if (node.runningAt !== undefined) rows.push(["runningAt", node.runningAt]);
+    if (node.endedAt !== undefined) rows.push(["endedAt", node.endedAt]);
+    if (node.taskId !== undefined) rows.push(["taskId", node.taskId]);
+    return {
+      exitCode: 0,
+      stdout: `${formatTable(["field", "value"], rows.map(([k, v]) => [k, v]))}\n`,
+    };
+  } catch (err) {
+    return formatError(err);
+  }
+}
+
 // ─── dag ───────────────────────────────────────────────────────────────
 export interface WorkflowDagOpts extends CommonFlags {
   readonly wfid: string;
