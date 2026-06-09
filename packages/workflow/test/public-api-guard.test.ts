@@ -172,7 +172,7 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeTerminalResult>().toEqualTypeOf<
       | { readonly status: "succeeded"; readonly output?: unknown }
       | { readonly status: "failed"; readonly reason: string; readonly output?: unknown }
-      | { readonly status: "cancelled" }
+      | { readonly status: "cancelled"; readonly reason: string }
     >();
   });
 

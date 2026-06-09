@@ -306,7 +306,7 @@ describe("makeCoordNodeRunner — dispatch", () => {
       origin: "workflow",
       metadata: { workflowId: "wf-id", workflowNodeId: "node-id" },
     });
-    expect(result).toEqual({ unitId: "tid-7" });
+    expect(result).toBeUndefined();
     await r.dispose();
   });
 
@@ -416,7 +416,30 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
     await r.dispose();
   });
 
-  it("U16: maps task.status='cancelled' → onTerminal({status:'cancelled'})", async () => {
+  it("U16: maps task.status='cancelled' → onTerminal({status:'cancelled', reason})", async () => {
+    const cancellation = { kind: "user", message: "cancelled by user" };
+    const deps = stubDeps({
+      getReturn: { ...fakeTaskRow({ status: "cancelled" }), cancellation },
+    });
+    const onTerminal = vi.fn();
+    const r = makeCoordNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      getService: deps.getService,
+      pollIntervalMs: 100,
+    });
+    await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTerminal).toHaveBeenCalledTimes(1);
+    expect(onTerminal.mock.calls[0]?.[0]).toEqual({
+      status: "cancelled",
+      reason: "cancelled by user",
+    });
+    await r.dispose();
+  });
+
+  it("U16b: falls back to a runner-default reason when cancellation.message is absent", async () => {
     const deps = stubDeps({
       getReturn: fakeTaskRow({ status: "cancelled" }),
     });
@@ -431,7 +454,10 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
     await vi.advanceTimersByTimeAsync(150);
     await vi.advanceTimersByTimeAsync(0);
     expect(onTerminal).toHaveBeenCalledTimes(1);
-    expect(onTerminal.mock.calls[0]?.[0]).toEqual({ status: "cancelled" });
+    expect(onTerminal.mock.calls[0]?.[0]).toEqual({
+      status: "cancelled",
+      reason: "task cancelled (no reason recorded)",
+    });
     await r.dispose();
   });
 

@@ -8,7 +8,8 @@
  *     (`AgentNotFoundError` / `AgentResolutionFailedError`)
  *   - dispatch: synthesises `origin: 'workflow'` + canonical
  *     `metadata.workflowNodeId` reverse-lookup key; installs the
- *     per-node poll interval and returns `{unitId}` for audit
+ *     per-node poll interval and returns `void` (the runner logs the
+ *     task id at info inside dispatch for audit / log correlation)
  *   - poll loop status→terminal mapping (`succeeded` / `failed` /
  *     `cancelled` / `null` task), runner-local error budget exhaustion
  *   - hasInFlightForNode pass-through to
@@ -219,7 +220,7 @@ describe("makeWorkerNodeRunner — dispatch", () => {
       origin: "workflow",
       metadata: { workflowId: "wf-id", workflowNodeId: "node-id" },
     });
-    expect(result).toEqual({ unitId: "tid-7" });
+    expect(result).toBeUndefined();
     await r.dispose();
   });
 
@@ -296,7 +297,29 @@ describe("makeWorkerNodeRunner — poll loop terminal mapping", () => {
     await r.dispose();
   });
 
-  it("maps task.status='cancelled' → onTerminal({status:'cancelled'})", async () => {
+  it("maps task.status='cancelled' → onTerminal({status:'cancelled', reason})", async () => {
+    const cancellation = { kind: "user", message: "cancelled by user" };
+    const deps = stubDeps({
+      getReturn: { ...fakeTaskRow({ status: "cancelled" }), cancellation },
+    });
+    const onTerminal = vi.fn();
+    const r = makeWorkerNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      pollIntervalMs: 100,
+    });
+    await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTerminal).toHaveBeenCalledTimes(1);
+    expect(onTerminal.mock.calls[0]?.[0]).toEqual({
+      status: "cancelled",
+      reason: "cancelled by user",
+    });
+    await r.dispose();
+  });
+
+  it("falls back to a runner-default reason when cancellation.message is absent", async () => {
     const deps = stubDeps({
       getReturn: fakeTaskRow({ status: "cancelled" }),
     });
@@ -310,7 +333,10 @@ describe("makeWorkerNodeRunner — poll loop terminal mapping", () => {
     await vi.advanceTimersByTimeAsync(150);
     await vi.advanceTimersByTimeAsync(0);
     expect(onTerminal).toHaveBeenCalledTimes(1);
-    expect(onTerminal.mock.calls[0]?.[0]).toEqual({ status: "cancelled" });
+    expect(onTerminal.mock.calls[0]?.[0]).toEqual({
+      status: "cancelled",
+      reason: "task cancelled (no reason recorded)",
+    });
     await r.dispose();
   });
 

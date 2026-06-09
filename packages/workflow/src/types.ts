@@ -209,17 +209,24 @@ export interface WorkflowNodeValidateCtx {
  *
  * The discriminated union is intentionally narrow: the substrate only
  * cares about *which terminal state* the node should land in, plus a
- * human-readable `reason` for the `failed` arm. `output` is a
- * runner-supplied opaque blob (e.g. exit code, runtime metadata)
+ * human-readable `reason` for the `failed` / `cancelled` arms. `output`
+ * is a runner-supplied opaque blob (e.g. exit code, runtime metadata)
  * that the substrate currently logs at debug — it does NOT
  * denormalize it into the `workflow_nodes` row, because that would
  * couple the substrate to per-runner payload shapes. (Result data
  * proper lives on the unit-of-work side, e.g. `tasks.result_json`.)
+ *
+ * The `cancelled.reason` field follows the same convention as
+ * `failed.reason`: the runner supplies a short human-readable phrase
+ * that the dashboard renders via the joined task entity (the
+ * substrate stays kind-agnostic and does not persist the reason on
+ * the workflow node row itself — per-kind units of work are where
+ * it lands).
  */
 export type WorkflowNodeTerminalResult =
   | { readonly status: "succeeded"; readonly output?: unknown }
   | { readonly status: "failed"; readonly reason: string; readonly output?: unknown }
-  | { readonly status: "cancelled" };
+  | { readonly status: "cancelled"; readonly reason: string };
 
 /**
  * Per-kind runner injected at compose time via the `runners`
@@ -280,11 +287,14 @@ export interface WorkflowNodeRunner {
    * transition BEFORE calling `dispatch`, so the substrate's row is
    * always in the right state when `onTerminal` fires.
    *
-   * Returns a substrate-side identifier (e.g. task id) for audit;
-   * the substrate does NOT persist this id — reverse lookup goes
-   * through the unit's metadata, not through a `workflow_nodes`
-   * column. (Persisting it would create a denorm the substrate would
-   * have to keep in sync with the unit-of-work side.)
+   * The runner SHOULD log its substrate-side identifier (e.g. task
+   * id) at info level inside `dispatch` so operators can correlate
+   * substrate events with the unit-of-work. The substrate itself
+   * does NOT persist that id — reverse lookup goes through the
+   * unit's metadata (e.g. `task.metadata.workflowNodeId`), not
+   * through a `workflow_nodes` column. (Persisting it would create a
+   * denorm the substrate would have to keep in sync with the
+   * unit-of-work side.)
    */
   dispatch(opts: {
     readonly workflowId: string;
@@ -292,7 +302,7 @@ export interface WorkflowNodeRunner {
     readonly spec: unknown;
     readonly nodeDir: string;
     readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
-  }): Promise<{ readonly unitId: string }>;
+  }): Promise<void>;
 
   /**
    * Whether this kind currently has a dispatched-but-incomplete

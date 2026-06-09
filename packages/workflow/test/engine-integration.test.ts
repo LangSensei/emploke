@@ -52,7 +52,7 @@ interface RecordingRunner extends WorkflowNodeRunner {
       readonly spec: unknown;
       readonly nodeDir: string;
       readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
-    }) => Promise<{ readonly unitId: string }>,
+    }) => Promise<void>,
   ): void;
   readonly dispatchCalls: ReadonlyArray<{
     readonly workflowId: string;
@@ -71,7 +71,7 @@ function makeAutoSucceedRunner(label: string): RecordingRunner {
     readonly spec: unknown;
     readonly nodeDir: string;
     readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
-  }) => Promise<{ readonly unitId: string }> = async (opts) => {
+  }) => Promise<void> = async (opts) => {
     // Default: succeed immediately. Push the terminal off the
     // microtask queue so the engine has a chance to commit the
     // `ready → running` transition first; this exercises the
@@ -79,7 +79,10 @@ function makeAutoSucceedRunner(label: string): RecordingRunner {
     // common case in production).
     queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
     seq += 1;
-    return { unitId: `${label}-unit-${seq}` };
+    // Stub still tracks a per-call identifier mirroring runner
+    // book-keeping (e.g. logging a task id); the substrate does not
+    // consume it.
+    void `${label}-unit-${seq}`;
   };
   const runner: RecordingRunner = {
     setDispatch(fn) {
@@ -210,7 +213,6 @@ describe("WorkflowEngine integration", () => {
   it("runner reports failed → node marked failed via markNodeTerminal", async () => {
     h.worker.setDispatch(async (opts) => {
       queueMicrotask(() => opts.onTerminal({ status: "failed", reason: "intentional failure" }));
-      return { unitId: "fail-unit" };
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "fail-test",
@@ -236,8 +238,9 @@ describe("WorkflowEngine integration", () => {
 
   it("runner reports cancelled → node marked cancelled", async () => {
     h.worker.setDispatch(async (opts) => {
-      queueMicrotask(() => opts.onTerminal({ status: "cancelled" }));
-      return { unitId: "cancel-unit" };
+      queueMicrotask(() =>
+        opts.onTerminal({ status: "cancelled", reason: "intentional cancel" }),
+      );
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "cancel-test",
@@ -301,7 +304,6 @@ describe("WorkflowEngine integration", () => {
           opts.onTerminal({ status: "failed", reason: "duplicate; should be ignored" });
         });
       });
-      return { unitId: "dup-unit" };
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "dup-test",
@@ -382,7 +384,6 @@ describe("WorkflowEngine integration", () => {
     const slowDispatch: DispatchFn = async (opts) => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
-      return { unitId: `unit-${opts.nodeId}` };
     };
     h.coord.setDispatch(slowDispatch);
     h.worker.setDispatch(slowDispatch);
@@ -441,7 +442,6 @@ describe("WorkflowEngine integration", () => {
     const gatedDispatch: DispatchFn = async (opts) => {
       await gate;
       queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
-      return { unitId: `unit-${opts.nodeId}` };
     };
     h.worker.setDispatch(gatedDispatch);
 

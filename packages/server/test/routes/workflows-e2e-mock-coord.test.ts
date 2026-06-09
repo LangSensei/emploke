@@ -70,7 +70,9 @@ function makeAutoSucceedRunner(label: string): AutoSucceedRunner {
       // timing where dispatch returns before the unit settles).
       queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
       seq += 1;
-      return { unitId: `${label}-unit-${seq}` };
+      // Stub still tracks a per-call identifier mirroring the runner's
+      // task-id log line; the substrate does not consume it.
+      void `${label}-unit-${seq}`;
     },
     async hasInFlightForNode() {
       return false;
