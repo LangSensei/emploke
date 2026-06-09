@@ -19,6 +19,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskRecord, TaskStatus } from "../../../src/api";
 import { TaskListItem } from "../../../src/components/tasks/TaskListItem";
+import { installRectSpy } from "../../_helpers/rectSpy";
 
 function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -423,5 +424,160 @@ describe("TaskListItem — outside-click deferred focus restore", () => {
     // activeElement was no longer body when the timeout fired.
     expect(document.activeElement).toBe(elsewhere);
     expect(document.activeElement).not.toBe(triggerA);
+  });
+});
+
+describe("TaskListItem — row-menu placement", () => {
+  function makeHandlers() {
+    return {
+      onSelect: vi.fn(),
+      onDelete: vi.fn(),
+      onCancel: vi.fn().mockResolvedValue(undefined),
+      onRerun: vi.fn(),
+      onMenuOpenChange: vi.fn(),
+    };
+  }
+
+  it("flips an opened menu to `--above` when the next row's trigger would be overlapped", () => {
+    // Geometry: row A's trigger at the middle of the viewport, row B's
+    // trigger immediately below it, and the panel taller than the gap
+    // between them. With the next-sibling-trigger cap, the panel must
+    // flip to `--above` rather than overlay row B's trigger.
+    const restore = installRectSpy(
+      new Map<string, Partial<DOMRect>>([
+        // Row A's trigger sits mid-viewport (top:50, bottom:100).
+        ["task-row-menu-trigger-task-a", { top: 50, bottom: 100, height: 50 }],
+        // Row B's trigger is 10px below row A's — well under the panel height.
+        ["task-row-menu-trigger-task-b", { top: 110, bottom: 160, height: 50 }],
+        // Panel would need 200px below the trigger to fit; only 10px is
+        // available before row B's trigger, so the cap must flip above.
+        ["task-row-menu-task-a", { height: 200 }],
+      ]),
+    );
+    try {
+      const handlers = makeHandlers();
+      render(
+        <ul>
+          <TaskListItem
+            task={makeTask({ id: "task-a", brief: "Row A" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onDelete={handlers.onDelete}
+            onCancel={handlers.onCancel}
+            onRerun={handlers.onRerun}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={2}
+          />
+          <TaskListItem
+            task={makeTask({ id: "task-b", brief: "Row B" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onDelete={handlers.onDelete}
+            onCancel={handlers.onCancel}
+            onRerun={handlers.onRerun}
+            menuOpen={false}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={2}
+            setsize={2}
+          />
+        </ul>,
+      );
+      const panel = screen.getByTestId("task-row-menu-task-a");
+      expect(panel.className).toContain("task-list__item-menu-panel--above");
+      expect(panel.className).not.toMatch(/task-list__item-menu-panel--below(?:\s|$)/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stays `--below` when the row is last (no next sibling) and there is room beneath the trigger", () => {
+    // Last-row fallback: with no next sibling there is no cap to apply,
+    // so `viewportBottom` collapses to the scroll container's bottom
+    // (or window.innerHeight when no scroll ancestor exists). Trigger
+    // sits in the upper viewport with a panel small enough to fit
+    // beneath, so the original below-when-space-allows branch runs.
+    const restore = installRectSpy(
+      new Map<string, Partial<DOMRect>>([
+        ["task-row-menu-trigger-task-only", { top: 50, bottom: 100, height: 50 }],
+        ["task-row-menu-task-only", { height: 60 }],
+      ]),
+    );
+    try {
+      const handlers = makeHandlers();
+      render(
+        <ul>
+          <TaskListItem
+            task={makeTask({ id: "task-only", brief: "Only row" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onDelete={handlers.onDelete}
+            onCancel={handlers.onCancel}
+            onRerun={handlers.onRerun}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={1}
+          />
+        </ul>,
+      );
+      const panel = screen.getByTestId("task-row-menu-task-only");
+      expect(panel.className).toContain("task-list__item-menu-panel--below");
+      expect(panel.className).not.toMatch(/task-list__item-menu-panel--above(?:\s|$)/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stays `--below` when a next sibling exists but the cap still leaves room for the panel", () => {
+    // Cap-not-binding case: row B's trigger sits far enough below row A
+    // that capping `viewportBottom` at row B's top still leaves ample
+    // space (>= panelHeight + margin) beneath row A's trigger. The cap
+    // is harmless when it isn't binding, so placement stays `--below`.
+    const restore = installRectSpy(
+      new Map<string, Partial<DOMRect>>([
+        ["task-row-menu-trigger-task-a", { top: 50, bottom: 100, height: 50 }],
+        // Row B sits 300px below row A's bottom — well above panelHeight + margin.
+        ["task-row-menu-trigger-task-b", { top: 400, bottom: 450, height: 50 }],
+        ["task-row-menu-task-a", { height: 200 }],
+      ]),
+    );
+    try {
+      const handlers = makeHandlers();
+      render(
+        <ul>
+          <TaskListItem
+            task={makeTask({ id: "task-a", brief: "Row A" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onDelete={handlers.onDelete}
+            onCancel={handlers.onCancel}
+            onRerun={handlers.onRerun}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={2}
+          />
+          <TaskListItem
+            task={makeTask({ id: "task-b", brief: "Row B" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onDelete={handlers.onDelete}
+            onCancel={handlers.onCancel}
+            onRerun={handlers.onRerun}
+            menuOpen={false}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={2}
+            setsize={2}
+          />
+        </ul>,
+      );
+      const panel = screen.getByTestId("task-row-menu-task-a");
+      expect(panel.className).toContain("task-list__item-menu-panel--below");
+      expect(panel.className).not.toMatch(/task-list__item-menu-panel--above(?:\s|$)/);
+    } finally {
+      restore();
+    }
   });
 });

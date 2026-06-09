@@ -38,6 +38,27 @@ describe("WorkflowDagView — empty state", () => {
     render(<WorkflowDagView dag={makeDag([])} />);
     expect(screen.getByTestId("workflow-dag-empty")).toBeTruthy();
   });
+
+  it("the empty-state container is NOT keyboard-focusable", () => {
+    // axe `scrollable-region-focusable` only flags overflow regions; the
+    // empty-state placeholder has no overflowing content, so leaving
+    // `tabindex` off matches the "skip non-interactive landmarks" intent.
+    render(<WorkflowDagView dag={makeDag([])} />);
+    const empty = screen.getByTestId("workflow-dag-empty");
+    expect(empty.hasAttribute("tabindex")).toBe(false);
+  });
+});
+
+describe("WorkflowDagView — keyboard-scrollable region", () => {
+  it("the DAG container exposes tabindex=0 so keyboard users can scroll the overflow", () => {
+    // axe-core flags `scrollable-region-focusable` (Level A, serious) when
+    // a container with overflow:auto/scroll is not keyboard-focusable.
+    // The DAG's `.workflow-dag` rule sets `overflow-x: auto`, so the
+    // container needs `tabIndex={0}` to be reachable via Tab.
+    render(<WorkflowDagView dag={makeDag([makeNode({ id: "n-only", phase: 0 })])} />);
+    const region = screen.getByTestId("workflow-dag");
+    expect(region.getAttribute("tabindex")).toBe("0");
+  });
 });
 
 describe("WorkflowDagView — phase grouping", () => {

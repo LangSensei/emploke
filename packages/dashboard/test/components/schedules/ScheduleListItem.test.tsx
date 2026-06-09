@@ -19,6 +19,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScheduleView } from "../../../src/api";
 import { ScheduleListItem } from "../../../src/components/schedules/ScheduleListItem";
+import { installRectSpy } from "../../_helpers/rectSpy";
 
 function makeView(overrides: Partial<ScheduleView> = {}): ScheduleView {
   return {
@@ -568,6 +569,172 @@ describe("ScheduleListItem — cross-row busy-lock isolation", () => {
     for (const item of items) {
       expect((item as HTMLButtonElement).disabled).toBe(false);
       expect(item.getAttribute("aria-disabled")).not.toBe("true");
+    }
+  });
+});
+
+describe("ScheduleListItem — row-menu placement", () => {
+  function makeHandlers() {
+    return {
+      onSelect: vi.fn(),
+      onEdit: vi.fn(),
+      onToggleEnabled: vi.fn().mockResolvedValue(undefined),
+      onRunNow: vi.fn().mockResolvedValue(undefined),
+      onDelete: vi.fn(),
+      onMenuOpenChange: vi.fn(),
+    };
+  }
+
+  it("flips an opened menu to `--above` when the next row's trigger would be overlapped", () => {
+    // Geometry: row A's trigger at the middle of the viewport, row B's
+    // trigger immediately below it, and the panel taller than the gap
+    // between them. With the next-sibling-trigger cap, the panel must
+    // flip to `--above` rather than overlay row B's trigger.
+    const restore = installRectSpy(
+      new Map<string, Partial<DOMRect>>([
+        // Row A's trigger sits mid-viewport (top:50, bottom:100).
+        ["schedule-row-menu-trigger-sched-a", { top: 50, bottom: 100, height: 50 }],
+        // Row B's trigger is 10px below row A's — well under the panel height.
+        ["schedule-row-menu-trigger-sched-b", { top: 110, bottom: 160, height: 50 }],
+        // Panel would need 200px below the trigger to fit; only 10px is
+        // available before row B's trigger, so the cap must flip above.
+        ["schedule-row-menu-sched-a", { height: 200 }],
+      ]),
+    );
+    try {
+      const handlers = makeHandlers();
+      render(
+        <ul>
+          <ScheduleListItem
+            schedule={makeView({ id: "sched-a", name: "Row A" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onEdit={handlers.onEdit}
+            onToggleEnabled={handlers.onToggleEnabled}
+            onRunNow={handlers.onRunNow}
+            onDelete={handlers.onDelete}
+            busyAction={null}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={2}
+          />
+          <ScheduleListItem
+            schedule={makeView({ id: "sched-b", name: "Row B" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onEdit={handlers.onEdit}
+            onToggleEnabled={handlers.onToggleEnabled}
+            onRunNow={handlers.onRunNow}
+            onDelete={handlers.onDelete}
+            busyAction={null}
+            menuOpen={false}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={2}
+            setsize={2}
+          />
+        </ul>,
+      );
+      const panel = screen.getByTestId("schedule-row-menu-sched-a");
+      expect(panel.className).toContain("task-list__item-menu-panel--above");
+      expect(panel.className).not.toMatch(/task-list__item-menu-panel--below(?:\s|$)/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stays `--below` when the row is last (no next sibling) and there is room beneath the trigger", () => {
+    // Last-row fallback: with no next sibling there is no cap to apply,
+    // so `viewportBottom` collapses to the scroll container's bottom
+    // (or window.innerHeight when no scroll ancestor exists). Trigger
+    // sits in the upper viewport with a panel small enough to fit
+    // beneath, so the original below-when-space-allows branch runs.
+    const restore = installRectSpy(
+      new Map<string, Partial<DOMRect>>([
+        ["schedule-row-menu-trigger-sched-only", { top: 50, bottom: 100, height: 50 }],
+        ["schedule-row-menu-sched-only", { height: 60 }],
+      ]),
+    );
+    try {
+      const handlers = makeHandlers();
+      render(
+        <ul>
+          <ScheduleListItem
+            schedule={makeView({ id: "sched-only", name: "Only row" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onEdit={handlers.onEdit}
+            onToggleEnabled={handlers.onToggleEnabled}
+            onRunNow={handlers.onRunNow}
+            onDelete={handlers.onDelete}
+            busyAction={null}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={1}
+          />
+        </ul>,
+      );
+      const panel = screen.getByTestId("schedule-row-menu-sched-only");
+      expect(panel.className).toContain("task-list__item-menu-panel--below");
+      expect(panel.className).not.toMatch(/task-list__item-menu-panel--above(?:\s|$)/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stays `--below` when a next sibling exists but the cap still leaves room for the panel", () => {
+    // Cap-not-binding case: row B's trigger sits far enough below row A
+    // that capping `viewportBottom` at row B's top still leaves ample
+    // space (>= panelHeight + margin) beneath row A's trigger. The cap
+    // is harmless when it isn't binding, so placement stays `--below`.
+    const restore = installRectSpy(
+      new Map<string, Partial<DOMRect>>([
+        ["schedule-row-menu-trigger-sched-a", { top: 50, bottom: 100, height: 50 }],
+        // Row B sits 300px below row A's bottom — well above panelHeight + margin.
+        ["schedule-row-menu-trigger-sched-b", { top: 400, bottom: 450, height: 50 }],
+        ["schedule-row-menu-sched-a", { height: 200 }],
+      ]),
+    );
+    try {
+      const handlers = makeHandlers();
+      render(
+        <ul>
+          <ScheduleListItem
+            schedule={makeView({ id: "sched-a", name: "Row A" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onEdit={handlers.onEdit}
+            onToggleEnabled={handlers.onToggleEnabled}
+            onRunNow={handlers.onRunNow}
+            onDelete={handlers.onDelete}
+            busyAction={null}
+            menuOpen={true}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={1}
+            setsize={2}
+          />
+          <ScheduleListItem
+            schedule={makeView({ id: "sched-b", name: "Row B" })}
+            selected={false}
+            onSelect={handlers.onSelect}
+            onEdit={handlers.onEdit}
+            onToggleEnabled={handlers.onToggleEnabled}
+            onRunNow={handlers.onRunNow}
+            onDelete={handlers.onDelete}
+            busyAction={null}
+            menuOpen={false}
+            onMenuOpenChange={handlers.onMenuOpenChange}
+            posinset={2}
+            setsize={2}
+          />
+        </ul>,
+      );
+      const panel = screen.getByTestId("schedule-row-menu-sched-a");
+      expect(panel.className).toContain("task-list__item-menu-panel--below");
+      expect(panel.className).not.toMatch(/task-list__item-menu-panel--above(?:\s|$)/);
+    } finally {
+      restore();
     }
   });
 });

@@ -114,6 +114,8 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
       className="workflow-dag workflow-dag--vertical"
       data-testid="workflow-dag"
       aria-label="Workflow DAG (top-to-bottom by phase)"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: `.workflow-dag` sets `overflow: auto`; axe-core's `scrollable-region-focusable` rule (Level A, serious) requires the container to be keyboard-focusable so users without a mouse can pan the overflow. The `aria-label` already gives it an accessible name.
+      tabIndex={0}
     >
       {overlay !== null ? (
         <svg
