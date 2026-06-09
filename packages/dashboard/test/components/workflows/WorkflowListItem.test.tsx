@@ -90,9 +90,9 @@ describe("WorkflowListItem — meta rendering", () => {
   });
 
   it("renders smart relative time (running → 'running for X') in the row meta", () => {
-    // v2.3: row time uses TaskRelativeTime-style branching:
-    // running with `startedAt` → "running for X" (live elapsed),
-    // not the v2.2 "Started X ago" against createdAt.
+    // v2.4: row time uses the shared `RelativeTime` component
+    // (`components/common/RelativeTime`). Branching: running with
+    // `startedAt` → "running for X" (live elapsed), not the v2.2 "Started X ago" against createdAt.
     const { wf } = renderRow({
       status: "running",
       startedAt: new Date(Date.now() - 5 * 60_000).toISOString(),

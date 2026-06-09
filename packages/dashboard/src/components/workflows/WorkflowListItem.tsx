@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { WorkflowHeaderWire } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
-import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
+import { RelativeTime } from "../common/RelativeTime";
 import { MoreHorizontalIcon } from "../Icons";
 import { WorkflowStatusBadge } from "./WorkflowStatusBadge";
 
@@ -281,7 +281,12 @@ export function WorkflowListItem({
             {workflow.coordinatorAgent}
           </span>
           <span className="task-list__sep">·</span>
-          <WorkflowRelativeTime workflow={workflow} />
+          <RelativeTime
+            status={workflow.status}
+            startedAt={workflow.startedAt}
+            endedAt={workflow.endedAt}
+            createdAt={workflow.createdAt}
+          />
         </span>
         <code id={idId} className="task-list__id task-list__id--muted" title={workflow.id}>
           {workflow.id}
@@ -349,41 +354,5 @@ export function WorkflowListItem({
         )}
       </div>
     </li>
-  );
-}
-
-/**
- * Smart relative-time line for a workflow row — mirrors
- * `TaskRelativeTime`. Shows the most informative timestamp for each
- * lifecycle stage:
- *   - running with `startedAt`: "running for 1m 23s" (live elapsed
- *     from start)
- *   - terminal with `startedAt` + `endedAt`: "ran 5m 12s · ended 2h
- *     ago"
- *   - any other shape (queued, terminal-without-start, etc.):
- *     "created X ago" against `createdAt` — the only timestamp every
- *     workflow is guaranteed to carry.
- * Tooltip carries the absolute timestamp for forensic precision.
- */
-function WorkflowRelativeTime({ workflow }: { workflow: WorkflowHeaderWire }) {
-  if (workflow.status === "running" && workflow.startedAt) {
-    return (
-      <span className="muted" title={formatAbsolute(workflow.startedAt)}>
-        running for {formatDuration(workflow.startedAt, null)}
-      </span>
-    );
-  }
-  if (workflow.endedAt && workflow.startedAt) {
-    return (
-      <span className="muted" title={formatAbsolute(workflow.endedAt)}>
-        ran {formatDuration(workflow.startedAt, workflow.endedAt)} · ended{" "}
-        {formatRelative(workflow.endedAt)}
-      </span>
-    );
-  }
-  return (
-    <span className="muted" title={formatAbsolute(workflow.createdAt)}>
-      created {formatRelative(workflow.createdAt)}
-    </span>
   );
 }

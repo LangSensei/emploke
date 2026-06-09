@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { TaskRecord } from "../../api";
 import { useClickOutside } from "../../hooks/useClickOutside";
+import { RelativeTime } from "../common/RelativeTime";
 import { MoreHorizontalIcon } from "../Icons";
 import { StatusBadge } from "./StatusBadge";
 import { readRuntime, STATUS_TONE } from "./shared";
-import { TaskRelativeTime } from "./TaskRelativeTime";
 
 /**
  * Why `closeMenu` takes a reason: the per-row `⋯` menu can close from
@@ -322,7 +322,12 @@ export function TaskListItem({
             </>
           )}
           <span className="task-list__sep">·</span>
-          <TaskRelativeTime task={task} />
+          <RelativeTime
+            status={task.status}
+            startedAt={task.startedAt}
+            endedAt={task.endedAt}
+            createdAt={task.createdAt}
+          />
         </span>
         <code id={idId} className="task-list__id task-list__id--muted" title={task.id}>
           {task.id}
