@@ -1,4 +1,5 @@
 import type { AgentEntry } from "@emploke/contracts";
+import { SearchIcon } from "../common/SearchIcon";
 import { ALL_AGENTS, ALL_RUNTIMES, TIME_PRESETS, type TimePreset } from "./shared";
 
 export interface TaskFiltersProps {
@@ -112,25 +113,5 @@ export function TaskFilters(props: TaskFiltersProps) {
         </div>
       </div>
     </div>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      className="task-filters__search-icon"
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-3.5-3.5" />
-    </svg>
   );
 }
