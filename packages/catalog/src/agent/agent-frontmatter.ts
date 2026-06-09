@@ -23,13 +23,15 @@ import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
  *   dependencies:             # optional
  *     skills: [<origin>, ...]
  *     mcps:   [<origin>, ...]
+ *     agents: [<origin>, ...]
  *   ---
  *   <body markdown>
  *
- * The skill mirror in `skill/skill-frontmatter.ts` is byte-equivalent
- * to this codec apart from the error class, anchor filename, and the
- * SKILL_DEP_SPECS `skipSelf: true` on the `skills` bucket. Maintainers
- * MUST NOT extract a shared factory.
+ * The skill mirror in `skill/skill-frontmatter.ts` diverges by intent:
+ * `SkillDepKind` is `"skills" | "mcps"` (no `agents`), the `skills`
+ * bucket carries `skipSelf: true`, and the error class differs. That
+ * divergence happens here, not in a shared module. Maintainers MUST
+ * NOT extract a shared factory.
  *
  * `dependencies.<kind>[*]` items must be bare origin URI strings.
  * Object forms like `{ origin: "..." }` are rejected with
@@ -37,12 +39,13 @@ import { DEFAULT_SCOPE, validateScope, validateShortName } from "./validate.js";
  * both kinds share the wire shape.)
  */
 
-export type AgentDepKind = "skills" | "mcps";
+export type AgentDepKind = "skills" | "mcps" | "agents";
 
 /**
  * Per-kind dep-spec set — the single source of truth for the agent
  * kind. The entity, repository, and service files all import this
- * directly; nothing redeclares the `{skills, mcps}` shape elsewhere.
+ * directly; nothing redeclares the `{skills, mcps, agents}` shape
+ * elsewhere.
  *
  * Lives in `agent-frontmatter.ts` (not `agent-entity.ts`) because the
  * frontmatter codec already needs these specs to derive its accepted
@@ -55,10 +58,18 @@ export type AgentDepKind = "skills" | "mcps";
  * `agent-deps.ts` file — either reintroduces the cycle
  * (entity ↔ frontmatter), and the third-file split adds a module
  * for no semantic gain.
+ *
+ * The `agents` bucket intentionally has no `skipSelf` flag: agents
+ * can now technically declare themselves as deps (since agent→agent
+ * edges exist), but the resolve-pipeline's cycle walker catches that
+ * back-edge with a `CyclicDependencyError`. `skipSelf` is for silently
+ * dropping a typo'd self-edge at write time (skills do this); for
+ * agents we prefer to surface the cycle.
  */
 export const AGENT_DEP_SPECS: readonly DepSpec<AgentDepKind>[] = defineDepSpecs<AgentDepKind>(
   { kind: "skills" },
   { kind: "mcps" },
+  { kind: "agents" },
 );
 
 /** A dep reference as it appears in the AGENTS.md wire shape: a bare origin URI. */
@@ -164,7 +175,12 @@ function parseDependencies(
   const obj = raw as Record<string, unknown>;
   const out: Partial<Record<AgentDepKind, readonly AgentDependencyRef[]>> = {};
   for (const k of Object.keys(obj)) {
-    if (!KNOWN_DEP_KEYS.has(k)) continue;
+    if (!KNOWN_DEP_KEYS.has(k)) {
+      throw new AgentFrontmatterError(
+        sourceLabel,
+        `unknown \`dependencies.${k}\` key; accepted keys: ${[...KNOWN_DEP_KEYS].join(", ")}`,
+      );
+    }
     const items = obj[k];
     if (items === undefined) continue;
     out[k as AgentDepKind] = parseDependencyList(items, k, sourceLabel);

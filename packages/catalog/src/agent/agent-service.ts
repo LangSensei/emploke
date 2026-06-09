@@ -330,11 +330,16 @@ export class AgentService {
    *
    * Inlined per kind (agent owns this lookup loop) — no shared
    * sibling-lookup helper exists, by design.
+   *
+   * Agent→agent edges resolve against `this.repo` (the agent owns
+   * its own self-reference table; there is no separate "agents
+   * sibling repo" — agents resolve via the same `AgentRepository`).
    */
   private async resolveDepOrigins(refs: {
     readonly skills: readonly string[];
     readonly mcps: readonly string[];
-  }): Promise<{ skills: string[]; mcps: string[] }> {
+    readonly agents: readonly string[];
+  }): Promise<{ skills: string[]; mcps: string[]; agents: string[] }> {
     const skills: string[] = [];
     if (this.siblings.skills !== undefined) {
       const repo = this.siblings.skills;
@@ -351,7 +356,12 @@ export class AgentService {
         if (sib !== null) mcps.push(sib.fqn);
       }
     }
-    return { skills, mcps };
+    const agents: string[] = [];
+    for (const origin of refs.agents) {
+      const sib = await this.repo.findByOrigin(origin);
+      if (sib !== null) agents.push(sib.fqn);
+    }
+    return { skills, mcps, agents };
   }
 }
 

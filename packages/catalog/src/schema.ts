@@ -85,6 +85,20 @@ export const agentSkillDeps = sqliteTable(
   ],
 );
 
+export const agentAgentDeps = sqliteTable(
+  "agent_agent_dependencies",
+  {
+    rowId: integer("row_id").primaryKey({ autoIncrement: true }),
+    sourceFqn: text("source_fqn").notNull(),
+    targetFqn: text("target_fqn").notNull(),
+  },
+  (t) => [
+    index("agent_agent_deps_src_idx").on(t.sourceFqn),
+    index("agent_agent_deps_tgt_idx").on(t.targetFqn),
+    uniqueIndex("agent_agent_deps_uniq").on(t.sourceFqn, t.targetFqn),
+  ],
+);
+
 export const agentMcpDeps = sqliteTable(
   "agent_mcp_dependencies",
   {

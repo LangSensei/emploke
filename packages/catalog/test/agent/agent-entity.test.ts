@@ -19,8 +19,8 @@ describe("AgentEntity.create", () => {
     expect(a.origin).toBe("file:/abs/agents/researcher");
     expect(a.description).toBe("Helpful researcher");
     expect(a.version).toBe("1.0.0");
-    expect(a.dependencies).toEqual({ skills: [], mcps: [] });
-    expect(a.depsRefs).toEqual({ skills: [], mcps: [] });
+    expect(a.dependencies).toEqual({ skills: [], mcps: [], agents: [] });
+    expect(a.depsRefs).toEqual({ skills: [], mcps: [], agents: [] });
     expect(a.installedAt).toBeTypeOf("string");
   });
 
@@ -50,7 +50,7 @@ describe("AgentEntity.fromStored", () => {
       description: "y",
       version: "2.0.0",
       prereqs: undefined,
-      dependencies: { skills: [], mcps: [] },
+      dependencies: { skills: [], mcps: [], agents: [] },
       prereqsAck: true,
       disabledByUser: false,
       installedAt: now,
@@ -69,7 +69,7 @@ describe("AgentEntity.fromStored", () => {
         description: "x",
         version: "1.0.0",
         prereqs: undefined,
-        dependencies: { skills: [], mcps: [] },
+        dependencies: { skills: [], mcps: [], agents: [] },
         prereqsAck: true,
         disabledByUser: false,
         installedAt: "2026-05-19T00:00:00.000Z",

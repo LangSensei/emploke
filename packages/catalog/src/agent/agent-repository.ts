@@ -2,8 +2,9 @@ import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import { emptyDeps } from "../_shared/dep-keys.js";
+import { HasDependentsError } from "../_shared/dependents-error.js";
 import type * as schema from "../schema.js";
-import { agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
+import { agentAgentDeps, agentFiles, agentMcpDeps, agentSkillDeps, agents } from "../schema.js";
 import { type AgentDependencies, AgentEntity } from "./agent-entity.js";
 import { AGENT_DEP_SPECS } from "./agent-frontmatter.js";
 import { AgentNotFoundError } from "./errors.js";
@@ -20,6 +21,7 @@ export interface AgentFile {
 export interface AgentRepoAddDeps {
   readonly skills: readonly string[];
   readonly mcps: readonly string[];
+  readonly agents: readonly string[];
 }
 
 type Db = BetterSQLite3Database<typeof schema>;
@@ -86,13 +88,16 @@ export class AgentRepository {
       }
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, agent.fqn)).run();
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, agent.fqn)).run();
+      tx.delete(agentAgentDeps).where(eq(agentAgentDeps.sourceFqn, agent.fqn)).run();
       // Per-kind dedupe + skipSelf-apply, fanned out to the typed
       // dep tables. The `skipSelf` branch is dead for agent today
       // (no AGENT_DEP_SPEC sets `skipSelf`), but kept so agents
       // gaining a self-edge-bearing dep-kind in the future can opt
       // in by flipping spec.skipSelf — no surgery here.
       for (const spec of AGENT_DEP_SPECS) {
-        const list = (spec.kind === "skills" ? deps.skills : deps.mcps) ?? [];
+        const list =
+          (spec.kind === "skills" ? deps.skills : spec.kind === "mcps" ? deps.mcps : deps.agents) ??
+          [];
         const seen = new Set<string>();
         for (const targetFqn of list) {
           if (spec.skipSelf === true && targetFqn === agent.fqn) continue;
@@ -100,8 +105,10 @@ export class AgentRepository {
           seen.add(targetFqn);
           if (spec.kind === "skills") {
             tx.insert(agentSkillDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
-          } else {
+          } else if (spec.kind === "mcps") {
             tx.insert(agentMcpDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
+          } else {
+            tx.insert(agentAgentDeps).values({ sourceFqn: agent.fqn, targetFqn }).run();
           }
         }
       }
@@ -141,17 +148,33 @@ export class AgentRepository {
   }
 
   async delete(fqn: string): Promise<void> {
-    // No dep-count check: nothing in the catalog model depends on an
-    // agent (agents are top-of-graph). Compare with
-    // `SkillRepository.delete` / `McpRepository.delete` which guard
-    // against dependent skills / mcps via in-repo `count()` checks
-    // (the count-then-throw pattern that stands in for missing FK
-    // constraints in those tables). For agents there is no analogous
-    // guard to apply.
+    // Race-free: collect agent dependents + delete in one transaction
+    // so a concurrent `installAgent` that adds an agent→agent edge on
+    // this fqn can't slip between our check and the row removal.
+    // Stands in for missing FK constraints. Throwing
+    // `HasDependentsError` inside the transaction rolls back the empty
+    // delete and propagates to the caller.
+    //
+    // Skills/mcps cannot depend on agents (skill codec has no
+    // `agents` kind, and agents are not a CatalogKind for mcp deps),
+    // so the only reverse-dep table to scan is `agent_agent_dependencies`.
     this.db.transaction((tx) => {
+      const agentDeps = tx
+        .select({ sourceFqn: agentAgentDeps.sourceFqn })
+        .from(agentAgentDeps)
+        .where(eq(agentAgentDeps.targetFqn, fqn))
+        .orderBy(agentAgentDeps.sourceFqn)
+        .all();
+      if (agentDeps.length > 0) {
+        throw new HasDependentsError(
+          fqn,
+          agentDeps.map((r) => ({ kind: "agent" as const, name: r.sourceFqn })),
+        );
+      }
       tx.delete(agentFiles).where(eq(agentFiles.agentFqn, fqn)).run();
       tx.delete(agentSkillDeps).where(eq(agentSkillDeps.sourceFqn, fqn)).run();
       tx.delete(agentMcpDeps).where(eq(agentMcpDeps.sourceFqn, fqn)).run();
+      tx.delete(agentAgentDeps).where(eq(agentAgentDeps.sourceFqn, fqn)).run();
       tx.delete(agents).where(eq(agents.fqn, fqn)).run();
     });
   }
@@ -186,10 +209,33 @@ export class AgentRepository {
       .where(eq(agentMcpDeps.sourceFqn, fqn))
       .orderBy(agentMcpDeps.targetFqn)
       .all();
+    const agentRows = this.db
+      .select({ targetFqn: agentAgentDeps.targetFqn })
+      .from(agentAgentDeps)
+      .where(eq(agentAgentDeps.sourceFqn, fqn))
+      .orderBy(agentAgentDeps.targetFqn)
+      .all();
     return {
       skills: skillRows.map((r) => ({ fqn: r.targetFqn })),
       mcps: mcpRows.map((r) => ({ fqn: r.targetFqn })),
+      agents: agentRows.map((r) => ({ fqn: r.targetFqn })),
     };
+  }
+
+  /**
+   * Reverse-dep lookup for agents that depend on `targetFqn` via the
+   * `dependencies.agents` field. Mirrors `SkillRepository.findDependentAgents`
+   * by intent — agent and skill keep independent reverse-dep helpers
+   * per the per-kind autonomy axiom.
+   */
+  async findDependentAgents(targetFqn: string): Promise<string[]> {
+    const rows = this.db
+      .select({ sourceFqn: agentAgentDeps.sourceFqn })
+      .from(agentAgentDeps)
+      .where(eq(agentAgentDeps.targetFqn, targetFqn))
+      .orderBy(agentAgentDeps.sourceFqn)
+      .all();
+    return rows.map((r) => r.sourceFqn);
   }
 
   async setFlags(
@@ -221,21 +267,35 @@ export class AgentRepository {
       .from(agentMcpDeps)
       .orderBy(agentMcpDeps.sourceFqn, agentMcpDeps.targetFqn)
       .all();
+    const agentRows = this.db
+      .select({
+        sourceFqn: agentAgentDeps.sourceFqn,
+        targetFqn: agentAgentDeps.targetFqn,
+      })
+      .from(agentAgentDeps)
+      .orderBy(agentAgentDeps.sourceFqn, agentAgentDeps.targetFqn)
+      .all();
     // Aggregate flat dep rows into `Map<sourceFqn, AgentDependencies>`.
     // Per-kind inlining (groupBy-style) — the only shared module is
     // `_shared/dep-keys.ts` which names no agent-specific concept.
-    // Both source lists are already ordered by (sourceFqn, targetFqn),
+    // All three source lists are already ordered by (sourceFqn, targetFqn),
     // so the per-source arrays stay sorted.
-    const out = new Map<string, { skills: { fqn: string }[]; mcps: { fqn: string }[] }>();
-    function ensure(sourceFqn: string): { skills: { fqn: string }[]; mcps: { fqn: string }[] } {
+    type Bucket = {
+      skills: { fqn: string }[];
+      mcps: { fqn: string }[];
+      agents: { fqn: string }[];
+    };
+    const out = new Map<string, Bucket>();
+    function ensure(sourceFqn: string): Bucket {
       const existing = out.get(sourceFqn);
       if (existing !== undefined) return existing;
-      const fresh = { skills: [] as { fqn: string }[], mcps: [] as { fqn: string }[] };
+      const fresh: Bucket = { skills: [], mcps: [], agents: [] };
       out.set(sourceFqn, fresh);
       return fresh;
     }
     for (const r of skillRows) ensure(r.sourceFqn).skills.push({ fqn: r.targetFqn });
     for (const r of mcpRows) ensure(r.sourceFqn).mcps.push({ fqn: r.targetFqn });
+    for (const r of agentRows) ensure(r.sourceFqn).agents.push({ fqn: r.targetFqn });
     return out as Map<string, AgentDependencies>;
   }
 }

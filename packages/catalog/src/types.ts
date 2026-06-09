@@ -129,6 +129,12 @@ export interface Agent {
   readonly dependencies?: {
     readonly skills?: readonly DependencyRef[];
     readonly mcps?: readonly DependencyRef[];
+    /**
+     * Agent → agent edges. Top-level agents can declare other agents
+     * as deps (the resolve pipeline cascade-installs them). Skills
+     * cannot declare agent deps — only agents can.
+     */
+    readonly agents?: readonly DependencyRef[];
   };
 }
 
@@ -215,6 +221,7 @@ export interface AgentMetadataPatch {
   readonly dependencies?: {
     readonly skills?: readonly string[];
     readonly mcps?: readonly string[];
+    readonly agents?: readonly string[];
   } | null;
 }
 

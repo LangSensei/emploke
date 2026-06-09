@@ -8,6 +8,13 @@
       "when": 1779421178607,
       "tag": "0000_optimal_paibok",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1780996791614,
+      "tag": "0001_organic_william_stryker",
+      "breakpoints": true
     }
   ]
 }

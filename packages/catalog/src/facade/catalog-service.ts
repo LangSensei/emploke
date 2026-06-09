@@ -571,11 +571,20 @@ export class CatalogService {
     ];
   }
 
+  async findAgentDependents(
+    targetFqn: string,
+  ): Promise<{ kind: "skill" | "agent"; name: string }[]> {
+    const agents = await this.rt.agentRepo.findDependentAgents(targetFqn);
+    return agents.map((name) => ({ kind: "agent" as const, name }));
+  }
+
   async findDependents(targetFqn: string): Promise<{ kind: "skill" | "agent"; name: string }[]> {
     const mcp = await this.rt.mcp.get(targetFqn);
     if (mcp !== null) return this.findMcpDependents(targetFqn);
     const skill = await this.rt.skill.get(targetFqn);
     if (skill !== null) return this.findSkillDependents(targetFqn);
+    const agent = await this.rt.agent.get(targetFqn);
+    if (agent !== null) return this.findAgentDependents(targetFqn);
     return [];
   }
 
@@ -675,6 +684,13 @@ export class CatalogService {
 
 function planRefs(planNode: CatalogPlanNode): string[] {
   if (planNode.kind === "mcp") return [];
+  if (planNode.kind === "agent") {
+    return [
+      ...planNode.node.depsRefs.skills,
+      ...planNode.node.depsRefs.mcps,
+      ...planNode.node.depsRefs.agents,
+    ];
+  }
   return [...planNode.node.depsRefs.skills, ...planNode.node.depsRefs.mcps];
 }
 
