@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 (2026-06-09)
+
+### Added
+
+- New `references/workflow-commands.md` covering the full `emploke workflow …` subcommand surface (13 subcommands: `list`, `create`, `show`, `dag`, `node-show`, `add-node`, `add-subgraph`, `add-edge`, `remove-node`, `remove-edge`, `replace-spec`, `cancel`, `cancel-node`, `finish`) — flags, HTTP routes, body schemas, response shapes, plus coord introspection / batch-mutation snippets.
+- New top-level `## Workflow subcommands` section in `SKILL.md` that points to the new reference file and lists the subcommands at a glance.
+- `## Common workflows` index entry retained; workflow CLI gets its own first-class section because it's a distinct caller surface (coord-facing) from the ad-hoc playbooks under `references/workflows.md`.
+
+### Notes
+
+- Reference targets the workflow v2.5 wire surface: `kind: "worker"` (full word) on both write and read paths, `iterationCount?` omitted from the list response, `add-edge` returns `toPhase`, `finish` body uses `failure.kind: "coordinator"`, and the new `node-show` subcommand is included. This skill bump should be merged AFTER the workflow v2.5 cleanup PR lands on `main`.
+
 ## 1.0.2 — 2026-06-04
 
 ### Fixed
