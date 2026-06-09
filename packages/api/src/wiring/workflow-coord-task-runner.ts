@@ -1,3 +1,8 @@
+// "task" in this filename refers to the @emploke/task dispatch
+// mechanism this runner uses (visible at the deps.tasks.dispatch call
+// inside dispatch()), not the workflow-node wire `kind` — which is
+// "coordinator" (this runner) or "worker" (sibling runner).
+
 /**
  * `makeCoordNodeRunner` — the coordinator-kind {@link
  * WorkflowNodeRunner} that maps a workflow coordinator node to a

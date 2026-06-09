@@ -100,12 +100,13 @@ export class WorkflowEntity {
    *
    * **Tolerance branch for legacy rows**: a row with a terminal
    * `status` ('succeeded' / 'failed' / 'cancelled') but a NULL
-   * matching-payload column does NOT throw. Pre-v2.2 rows (terminal,
-   * payload columns NULL) are valid and the corresponding getter
-   * returns `undefined`; the dashboard renders a "legacy-note" muted
-   * message rather than failing the read. The cross-field invariant
-   * "if a payload exists, its column must match the status" still
-   * fires when a payload IS present.
+   * matching-payload column does NOT throw. Rows whose terminal
+   * state was written before the payload columns existed (terminal
+   * status, payload columns NULL) are valid and the corresponding
+   * getter returns `undefined`; the dashboard renders a "legacy-note"
+   * muted message rather than failing the read. The cross-field
+   * invariant "if a payload exists, its column must match the status"
+   * still fires when a payload IS present.
    */
   static fromRow(row: WorkflowRow): WorkflowEntity {
     assertValidWorkflowId(row.id);
@@ -131,9 +132,11 @@ export class WorkflowEntity {
     );
     // Cross-field invariant: a payload belongs to its own terminal
     // status (and only its own). A non-terminal row with any payload
-    // attached is corrupt. Pre-v2.2 terminal rows with NULL payloads
-    // are tolerated (see method JSDoc) — the matching-payload
-    // requirement is conditional on the column being non-null.
+    // attached is corrupt. Terminal rows whose payload columns are
+    // NULL (because their terminal state was written before those
+    // columns existed) are tolerated (see method JSDoc) — the
+    // matching-payload requirement is conditional on the column
+    // being non-null.
     if (row.status === "succeeded" && (failure !== undefined || cancellation !== undefined)) {
       throw new WorkflowError(
         `Workflow "${row.id}" corrupted: status='succeeded' row carries failure/cancellation payload`,

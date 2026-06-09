@@ -38,9 +38,10 @@ import type {
 // ─── Id grammars ────────────────────────────────────────────────────
 
 // UUID v4. Same shape `crypto.randomUUID()` produces. Read-side
-// accepted for workflow ids so pre-v2.2 rows still round-trip; new
-// workflow ids are always emitted in the `<YYYYMMDD>-<8 hex>` shape
-// by `generateWorkflowId`. Node ids remain UUIDv4 only.
+// accepted for workflow ids so historical rows whose ids predate the
+// dated-hex grammar still round-trip; new workflow ids are always
+// emitted in the `<YYYYMMDD>-<8 hex>` shape by `generateWorkflowId`.
+// Node ids remain UUIDv4 only.
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // `<YYYYMMDD>-<8 hex>` shape mirrored from `@emploke/task` for
@@ -54,9 +55,10 @@ const LEGACY_DATED_HEX_RE = /^\d{8}-[0-9a-f]{8}$/;
 
 /**
  * Workflow id grammar — `<YYYYMMDD>-<8 hex>` OR UUIDv4. Both are
- * accepted for read APIs so pre-v2.2 workflows continue to round-trip;
- * new workflows are always created with the dated-hex shape
- * (`generateWorkflowId` emits that form).
+ * accepted for read APIs so historical workflows whose ids predate
+ * the dated-hex grammar continue to round-trip; new workflows are
+ * always created with the dated-hex shape (`generateWorkflowId`
+ * emits that form).
  */
 export function assertValidWorkflowId(id: unknown): asserts id is string {
   if (typeof id !== "string" || (!UUID_V4_RE.test(id) && !LEGACY_DATED_HEX_RE.test(id))) {

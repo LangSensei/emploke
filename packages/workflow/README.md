@@ -6,16 +6,6 @@ layer that round-trips them, the error catalog, and the
 `WorkflowNodeRunner` interface that callers implement once per
 `NodeKind` and inject at compose time.
 
-> **Status: rewrite in progress.** This branch is a ground-up rewrite
-> of the v0.6.0 append-only-DAG substrate. The data layer (schema,
-> migrations, entities, errors, validate, types, paths) is final and
-> exported. The service / repository / engine wiring is stubbed and
-> throws on call. Active dev tracker: [PR #320]. Design discussion:
-> [issue #321].
->
-> [PR #320]: https://github.com/LangSensei/emploke/pull/320
-> [issue #321]: https://github.com/LangSensei/emploke/issues/321
-
 ## Substrate model
 
 The substrate is a **smart DAG database with FSM**. A coordinator
@@ -93,9 +83,10 @@ Both runners live in `packages/api/src/wiring/` because they bridge
 
 ## Coord-callback API
 
-The 8 mutation primitives on `WorkflowService` are exposed over HTTP
-on `/api/workspaces/:id/workflows/:wfid/*` so a coordinator agent's
-task can grow / shrink the DAG from its own process. HTTP routes
+The 8 mutation primitives on `WorkflowService`, plus the per-node
+`getNode` structural read, are exposed over HTTP on
+`/api/workspaces/:id/workflows/:wfid/*` so a coordinator agent's task
+can grow / shrink / inspect the DAG from its own process. HTTP routes
 forward `workflowId` from the URL path and nothing else; the
 substrate's only lifecycle gate is the workflow's own status — a
 mutation against a terminal workflow surfaces
@@ -107,7 +98,8 @@ and surface as their own typed errors.
 | Verb     | Path                                       | Service method     | Body                                                                                                          | Response                                       |
 | -------- | ------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | `POST`   | `/:wfid/nodes`                             | `addNode`          | `{ kind, spec, parents[] }`                                                                                   | `{ nodeId, phase }`                            |
-| `POST`   | `/:wfid/edges`                             | `addEdge`          | `{ fromNodeId, toNodeId }`                                                                                    | `{ fromNodeId, toNodeId }`                     |
+| `GET`    | `/:wfid/nodes/:nid`                        | `getNode`          | _none_                                                                                                        | `WorkflowNodeWire`                             |
+| `POST`   | `/:wfid/edges`                             | `addEdge`          | `{ fromNodeId, toNodeId }`                                                                                    | `{ fromNodeId, toNodeId, toPhase }`            |
 | `POST`   | `/:wfid/subgraph`                          | `addSubgraph`      | `{ nodes:[{tempId,kind,spec,existingParents?}], edges:[{from,to}] }` — `from`/`to` are `{nodeId}` or `{tempId}` | `{ insertedNodes:[{tempId,nodeId,phase}] }`    |
 | `POST`   | `/:wfid/nodes/:nid/cancel`                 | `cancelNode`       | _none_                                                                                                        | `WorkflowNodeWire` (post-cancel projection)    |
 | `POST`   | `/:wfid/finish`                            | `finishWorkflow`   | `{ outcome: "succeeded" \| "failed" }`                                                                        | `WorkflowHeaderWire` (post-finish projection)  |
@@ -143,8 +135,9 @@ calling the service.
 | `WorkflowRemoveEdgeOrphansChildError`    | 409  | delete would orphan the to-node                                |
 
 The CLI surface mirrors the HTTP surface 1:1 — every route has a
-`emploke workflow <verb>` subcommand (`add-node`, `add-edge`,
+matching `emploke workflow <verb>` subcommand: `add-node`, `add-edge`,
 `add-subgraph`, `remove-node`, `remove-edge`, `replace-spec`,
-`cancel-node`, `finish`). Spec payloads are read from `--spec-file
-<path>` so multi-line JSON survives shell quoting. See
+`cancel-node`, `finish` (the eight mutations), plus `node-show` for the
+`getNode` read. Spec payloads are read from `--spec-file <path>` so
+multi-line JSON survives shell quoting. See
 `packages/cli/src/commands/workflow.ts` for the per-flag rationale.

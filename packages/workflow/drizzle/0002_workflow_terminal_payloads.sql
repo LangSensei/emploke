@@ -3,14 +3,14 @@
 -- payload shape (each terminal status carries its own typed JSON
 -- blob; running rows have all three null).
 --
--- No backfill needed: every existing row is already terminal-with-
--- no-payload (pre-v2.2 behaviour). They surface in the dashboard
+-- No backfill needed: any row predating these columns is already
+-- terminal with no payload attached. They surface in the dashboard
 -- via the read-path tolerance branch ("the row is terminal but
 -- carries no payload — render a placeholder").
 --
 -- Columns added in alphabetical order to match the schema.ts
--- declaration order; the drizzle drift guard (gh #322) checks
--- column ordering and rejects a mismatch.
+-- declaration order so the drizzle drift guard (which compares
+-- introspected column ordering against the schema) keeps passing.
 ALTER TABLE `workflows` ADD COLUMN `cancellation` text;--> statement-breakpoint
 ALTER TABLE `workflows` ADD COLUMN `failure` text;--> statement-breakpoint
 ALTER TABLE `workflows` ADD COLUMN `success` text;

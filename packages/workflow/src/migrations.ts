@@ -44,13 +44,13 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
   },
   {
     sql: [
-      "-- Adds typed terminal payload columns to workflows. Mirrors\n-- @emploke/task's success / failure / cancellation discriminated\n-- payload shape (each terminal status carries its own typed JSON\n-- blob; running rows have all three null).\n--\n-- No backfill needed: every existing row is already terminal-with-\n-- no-payload (pre-v2.2 behaviour). They surface in the dashboard\n-- via the read-path tolerance branch (\"the row is terminal but\n-- carries no payload — render a placeholder\").\n--\n-- Columns added in alphabetical order to match the schema.ts\n-- declaration order; the drizzle drift guard (gh #322) checks\n-- column ordering and rejects a mismatch.\nALTER TABLE `workflows` ADD COLUMN `cancellation` text;",
+      "-- Adds typed terminal payload columns to workflows. Mirrors\n-- @emploke/task's success / failure / cancellation discriminated\n-- payload shape (each terminal status carries its own typed JSON\n-- blob; running rows have all three null).\n--\n-- No backfill needed: any row predating these columns is already\n-- terminal with no payload attached. They surface in the dashboard\n-- via the read-path tolerance branch (\"the row is terminal but\n-- carries no payload — render a placeholder\").\n--\n-- Columns added in alphabetical order to match the schema.ts\n-- declaration order so the drizzle drift guard (which compares\n-- introspected column ordering against the schema) keeps passing.\nALTER TABLE `workflows` ADD COLUMN `cancellation` text;",
       "\nALTER TABLE `workflows` ADD COLUMN `failure` text;",
       "\nALTER TABLE `workflows` ADD COLUMN `success` text;\n"
     ],
     bps: true,
     folderMillis: 3,
-    hash: "56471195da1f1db080211f14c1f5088553ae9d268afe377885e08081b19c1712",
+    hash: "6e80c5539b117bb6e1405ef711d0dcefe4dcd2266376f992ff48283029fdac97",
   },
   {
     sql: [
