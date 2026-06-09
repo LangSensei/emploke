@@ -6,11 +6,20 @@ interface ModalProps {
   onClose: () => void;
   /**
    * Modal title. Used as the default header content (rendered as an
-   * `<h3 class="modal__title">`). Ignored when `header` is provided —
-   * but it's still required as the dialog's `aria-label` and as a
-   * fallback value for screen readers.
+   * `<h3 class="modal__title">`) and as the dialog's accessible name
+   * via `aria-label` unless {@link ariaLabelledBy} is provided.
    */
   title: string;
+  /**
+   * Optional id of an element whose text should become the dialog's
+   * accessible name. Reach for this when the modal's header includes
+   * programmatic content beyond a plain title (e.g. kind icon + fqn +
+   * status pill) that screen-reader users should hear. When set,
+   * `aria-labelledby` wins and `aria-label` is omitted — the two
+   * attributes conflict (`aria-labelledby` takes precedence per spec),
+   * so we defensively drop the redundant one.
+   */
+  ariaLabelledBy?: string;
   /**
    * Optional rich header content. When provided, renders in place of
    * the default `<h3>{title}</h3>` and lets callers compose hero
@@ -26,7 +35,15 @@ interface ModalProps {
  * Thin wrapper around the native <dialog> element. Gives us focus trap,
  * ESC-to-close, and backdrop styling without importing any UI library.
  */
-export function Modal({ open, onClose, title, header, children, size = "default" }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  ariaLabelledBy,
+  header,
+  children,
+  size = "default",
+}: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -41,6 +58,8 @@ export function Modal({ open, onClose, title, header, children, size = "default"
     <dialog
       ref={ref}
       className={`modal modal--${size}`}
+      aria-label={ariaLabelledBy === undefined ? title : undefined}
+      aria-labelledby={ariaLabelledBy}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
