@@ -110,6 +110,32 @@ export class WorkflowWorkerSpecError extends Error {
   override readonly name = "WorkflowWorkerSpecError";
 }
 
+/**
+ * Capability error for a worker node whose `spec.agent` is not a
+ * member of the workflow coordinator's `dependencies.agents` dispatch
+ * menu (W3 of the workflow-coord-capability rules). The coord FQN
+ * arrives via `ctx.coordinatorAgent` — denormalized from the workflow
+ * row by the substrate — and the coord's menu is fetched via the
+ * catalog at validate time. Lives next to {@link WorkflowWorkerSpecError}
+ * so all worker-runner validate-time rejections sit at one canonical
+ * match point for downstream error policy.
+ */
+export class WorkflowWorkerNotInCoordMenuError extends Error {
+  override readonly name = "WorkflowWorkerNotInCoordMenuError";
+  constructor(
+    public readonly workerAgentFqn: string,
+    public readonly coordAgentFqn: string,
+    public readonly coordMenu: readonly string[],
+  ) {
+    super(
+      `Worker node spec agent "${workerAgentFqn}" is not in coordinator ` +
+        `"${coordAgentFqn}"'s dispatch menu (\`dependencies.agents\`: ` +
+        `[${coordMenu.map((m) => `"${m}"`).join(", ")}]). Add the agent to ` +
+        `the coord's frontmatter, or pick an agent already in the menu.`,
+    );
+  }
+}
+
 export interface MakeWorkerNodeRunnerDeps {
   readonly tasks: TaskService;
   readonly catalog: CatalogService;
@@ -182,7 +208,7 @@ export function makeWorkerNodeRunner(
   };
 
   return {
-    async validate(spec: unknown, _ctx: WorkflowNodeValidateCtx): Promise<WorkerNodeSpec> {
+    async validate(spec: unknown, ctx: WorkflowNodeValidateCtx): Promise<WorkerNodeSpec> {
       if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
         throw new WorkflowWorkerSpecError("Worker node spec must be an object");
       }
@@ -224,6 +250,32 @@ export function makeWorkerNodeRunner(
         throw new AgentResolutionFailedError(obj.agent, err);
       }
       if (found === null) throw new AgentNotFoundError(obj.agent);
+
+      // W3 (workflow coordinator capability discipline): a worker's
+      // spec.agent MUST be a member of the workflow's coord's
+      // `dependencies.agents` dispatch menu. The coord FQN is threaded
+      // in via `ctx.coordinatorAgent` (denormalized from
+      // `workflow.coordinator_agent` by the substrate). Worker runners
+      // re-fetch the coord agent here rather than receiving the
+      // pre-resolved menu so the workflow pkg can stay kind-agnostic
+      // (no catalog import upstream).
+      let coordAgent: Awaited<ReturnType<typeof deps.catalog.getAgent>>;
+      try {
+        coordAgent = await deps.catalog.getAgent(ctx.coordinatorAgent);
+      } catch (err) {
+        throw new AgentResolutionFailedError(ctx.coordinatorAgent, err);
+      }
+      if (coordAgent === null) {
+        // Defensive: the substrate denorm should have kept this in
+        // sync, but if the coord was uninstalled mid-workflow we
+        // surface as not-found rather than mis-attribute as a
+        // menu-membership failure.
+        throw new AgentNotFoundError(ctx.coordinatorAgent);
+      }
+      const menu = (coordAgent.dependencies?.agents ?? []).map((d) => d.fqn);
+      if (!menu.includes(obj.agent)) {
+        throw new WorkflowWorkerNotInCoordMenuError(obj.agent, ctx.coordinatorAgent, menu);
+      }
 
       const validated: WorkerNodeSpec = {
         agent: obj.agent,

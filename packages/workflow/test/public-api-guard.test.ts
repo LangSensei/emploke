@@ -160,6 +160,12 @@ describe("@emploke/workflow public API guard", () => {
 
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowId");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
+    // W3 plumbing: validate-ctx threads the workflow header's
+    // `coordinatorAgent` FQN through to runners so the worker
+    // runner can do a menu-membership lookup against the coord
+    // agent's `dependencies.agents`. Lock the field here so the
+    // substrate contract that delivers it stays explicit.
+    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("coordinatorAgent");
   });
 
   it("M1 (#325 D1): exposes WorkflowNodeTerminalResult discriminated union", () => {

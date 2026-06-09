@@ -91,6 +91,13 @@ describe("WorkflowService.createWorkflow", () => {
     expect(v.spec).toEqual({ agent: "coord-a" });
     expect(v.ctx.workflowId).toBe(workflowId);
     expect(v.ctx.workflowStatus).toBe("running");
+    // W3 plumbing: the ctx must carry the coord FQN so any
+    // downstream runner (here the coord runner itself; in the
+    // worker case the substrate threads the same value from the
+    // workflow header) can do menu-membership checks. On
+    // bootstrap createWorkflow uses `args.coordinatorAgent`
+    // directly because the workflow row doesn't exist yet.
+    expect(v.ctx.coordinatorAgent).toBe("coord-a");
     // The persisted spec is what the handler returned.
     const coord = await h.service.getNode(initialCoordNodeId);
     expect(coord.spec).toEqual({ agent: "coord-a", validated: true });

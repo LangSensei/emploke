@@ -78,7 +78,15 @@ async function makeHarness(opts: MakeHarnessOpts = {}): Promise<Harness> {
     cancel,
   } as unknown as TaskService;
 
-  const getAgent = vi.fn(async (_fqn: string) => ({ name: "coord-agent" }));
+  const getAgent = vi.fn(async (_fqn: string) => ({
+    name: "coord-agent",
+    // W2: the coord runner requires a non-empty `dependencies.agents`
+    // dispatch menu on the resolved coord agent. The integration
+    // harness doesn't dispatch any workers (worker runner is a
+    // passthrough stub), but the fixture still has to satisfy W2 so
+    // `createWorkflow` can construct the initial coord node.
+    dependencies: { agents: [{ fqn: "worker" }] },
+  }));
   const catalog = { getAgent } as unknown as CatalogService;
 
   // Two-phase init holder. Populated after `composeWorkflowModule`

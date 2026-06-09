@@ -60,6 +60,12 @@ describe("WorkflowService.addNode", () => {
     const v = h.workerRunner.validateCalls[0]!;
     expect(v.ctx.workflowId).toBe(workflowId);
     expect(v.ctx.workflowStatus).toBe("running");
+    // W3 plumbing: post-bootstrap mutations read the workflow row
+    // and propagate its denormalized `coordinator_agent` into the
+    // runner ctx. `bootstrap()` defaults the coord FQN to
+    // "coord-agent" — the substrate must echo that here regardless
+    // of which kind of node we're adding.
+    expect(v.ctx.coordinatorAgent).toBe("coord-agent");
   });
 
   // ─── Kind-aware parent-state restriction ─────────────────
