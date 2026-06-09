@@ -126,10 +126,10 @@ describe("workflows schema", () => {
     // coordinator_agent.
     expect(names).toContain("workflows_status_idx");
     expect(names).toContain("workflows_coordinator_agent_idx");
-    // Per-workflow scans + the UI's ORDER BY phase rendering query.
+    // Per-workflow scans + status-filtered scans.
     expect(names).toContain("workflow_nodes_workflow_idx");
     expect(names).toContain("workflow_nodes_status_idx");
-    expect(names).toContain("workflow_nodes_phase_idx");
+    expect(names).not.toContain("workflow_nodes_phase_idx");
     // Edge lookups in both directions for the readiness check.
     expect(names).toContain("workflow_edges_from_idx");
     expect(names).toContain("workflow_edges_to_idx");
