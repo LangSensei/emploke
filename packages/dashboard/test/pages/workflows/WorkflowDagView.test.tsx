@@ -144,6 +144,117 @@ describe("WorkflowDagView — kind-driven styling and content", () => {
   });
 });
 
+describe("WorkflowDagView — node card content", () => {
+  // Constant `runningAt` baseline so the relative-time output is stable
+  // across machines. `formatRelative` shows "Xd ago" until 30 days then
+  // falls back to a locale date string, so dates far enough in the past
+  // produce text that contains the absolute year — sufficient to assert
+  // the element rendered without depending on exact wall-clock seconds.
+  const RUNNING_AT = "2025-01-01T00:00:00.000Z";
+  const ENDED_AT = "2025-01-01T00:05:30.000Z";
+
+  it("worker node shows brief + status when not_started (no started/runtime yet)", () => {
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-pending",
+            phase: 0,
+            status: "not_started",
+            spec: { kind: "worker", agent: "emploke/dev", brief: "fix the parser" },
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByTestId("dag-brief-n-pending").textContent).toContain("fix the parser");
+    expect(screen.queryByTestId("dag-started-n-pending")).toBeNull();
+    expect(screen.queryByTestId("dag-runtime-n-pending")).toBeNull();
+  });
+
+  it("running worker node shows brief + started-at + live runtime", () => {
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-running",
+            phase: 0,
+            status: "running",
+            runningAt: RUNNING_AT,
+            spec: { kind: "worker", agent: "emploke/dev", brief: "in flight" },
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByTestId("dag-brief-n-running").textContent).toContain("in flight");
+    expect(screen.getByTestId("dag-started-n-running").textContent).toContain("started");
+    const runtime = screen.getByTestId("dag-runtime-n-running");
+    // Live runtime uses the "running" verb (vs terminal "ran") so a glance
+    // distinguishes the lifecycle without colour cues.
+    expect(runtime.textContent).toMatch(/^running\s+/);
+  });
+
+  it("succeeded worker node shows final 'ran <duration>' runtime", () => {
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-ok",
+            phase: 0,
+            status: "succeeded",
+            runningAt: RUNNING_AT,
+            endedAt: ENDED_AT,
+            spec: { kind: "worker", agent: "emploke/dev", brief: "done" },
+          }),
+        ])}
+      />,
+    );
+    const runtime = screen.getByTestId("dag-runtime-n-ok");
+    expect(runtime.textContent).toContain("ran");
+    // 5m 30s elapsed between RUNNING_AT and ENDED_AT — formatDuration emits
+    // "5m 30s" for the two-unit window.
+    expect(runtime.textContent).toContain("5m 30s");
+  });
+
+  it("failed worker node still shows started + final runtime (terminal but had run)", () => {
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-fail",
+            phase: 0,
+            status: "failed",
+            runningAt: RUNNING_AT,
+            endedAt: ENDED_AT,
+            spec: { kind: "worker", agent: "emploke/dev", brief: "bad" },
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByTestId("dag-started-n-fail")).toBeTruthy();
+    expect(screen.getByTestId("dag-runtime-n-fail").textContent).toContain("ran");
+  });
+
+  it("coordinator node omits the brief (no spec.brief) but still renders started + runtime when running", () => {
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-coord",
+            phase: 0,
+            status: "running",
+            runningAt: RUNNING_AT,
+            spec: { kind: "coordinator", agent: "emploke/dev" },
+          }),
+        ])}
+      />,
+    );
+    // No brief surface for coords (their spec has no `brief` field).
+    expect(screen.queryByTestId("dag-brief-n-coord")).toBeNull();
+    expect(screen.getByTestId("dag-started-n-coord")).toBeTruthy();
+    expect(screen.getByTestId("dag-runtime-n-coord")).toBeTruthy();
+  });
+});
+
 describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
   it("renders nodes as <button> when onSelectNode is provided and fires the callback on click", () => {
     const onSelectNode = vi.fn();

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowDagWire, WorkflowNodeWire } from "../../api";
+import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
 import {
   buildSlotMap,
   type EdgeEndpoints,
@@ -183,16 +184,73 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
                 // is a no-op today, kept as belt-and-braces.
                 const idShort = node.id.slice(0, 8).replace(/-+$/, "");
                 const agent = extractAgent(node);
+                const brief = extractBrief(node);
+                const startedAt = node.runningAt;
+                const runtime = startedAt ? formatDuration(startedAt, node.endedAt ?? null) : null;
+                const startedTitle = startedAt ? formatAbsolute(startedAt) : null;
                 const inner = (
                   <>
                     <span className="dag-node__kind-icon" aria-hidden="true">
                       {kind === "coordinator" ? "🧠" : "⚙"}
                     </span>
                     <span className="dag-node__id">{idShort}</span>
-                    <span className="dag-node__agent">{agent}</span>
+                    {/*
+                      Status comes before agent in the header row so it's the
+                      primary glanceable signal — matches the "status first,
+                      agent secondary" convention used by `TaskListItem` /
+                      `WorkflowListItem` row headers. Reorder is deliberate
+                      (vs the pre-v2.5 alphabetical id/agent/status sequence).
+                    */}
                     <span className={`dag-node__status dag-node__status--${node.status}`}>
                       {node.status}
                     </span>
+                    <span className="dag-node__agent">{agent}</span>
+                    {brief !== null ? (
+                      <span
+                        className="dag-node__brief"
+                        title={brief}
+                        data-testid={`dag-brief-${node.id}`}
+                      >
+                        {brief}
+                      </span>
+                    ) : null}
+                    {/*
+                      Why not `<RelativeTime>` (src/components/common/RelativeTime.tsx):
+                      the canonical helper renders one of "running for Y", "ran Y · ended Z",
+                      or "created Z" — none match the DAG card's required "started X · {running|ran} Y"
+                      shape, and it always renders something (falling back to `createdAt`) whereas
+                      the DAG card omits the row entirely for not-started nodes. The two formatting
+                      primitives (`formatRelative`, `formatDuration`) ARE reused — both come from
+                      `utils/time.ts`, so the relative-time / duration logic itself lives in exactly
+                      one place. If a third caller needs the "started · {running|ran}" split format,
+                      promote it to a `RelativeTime` variant in a follow-up.
+                    */}
+                    {(startedAt || runtime !== null) && (
+                      <span className="dag-node__timing muted">
+                        {startedAt ? (
+                          <span
+                            className="dag-node__started"
+                            title={startedTitle ?? undefined}
+                            data-testid={`dag-started-${node.id}`}
+                          >
+                            started {formatRelative(startedAt)}
+                          </span>
+                        ) : null}
+                        {startedAt && runtime !== null ? (
+                          <span className="dag-node__timing-sep" aria-hidden="true">
+                            {" · "}
+                          </span>
+                        ) : null}
+                        {runtime !== null ? (
+                          <span
+                            className="dag-node__runtime"
+                            data-testid={`dag-runtime-${node.id}`}
+                          >
+                            {node.endedAt ? "ran" : "running"} {runtime}
+                          </span>
+                        ) : null}
+                      </span>
+                    )}
                   </>
                 );
                 if (onSelectNode === undefined) {
@@ -254,6 +312,27 @@ function extractAgent(node: WorkflowNodeWire): string {
     return spec.agent;
   }
   return "—";
+}
+
+/**
+ * Worker brief extraction. Worker nodes carry a user-authored single
+ * line in `spec.brief` that names what the task is doing; coordinator
+ * nodes have no brief (they are auto-spawned by the substrate and
+ * their identity is already named by the agent FQN), so this returns
+ * `null` for them. Returning null lets the caller skip rendering the
+ * brief row entirely rather than reserving empty vertical space.
+ *
+ * The contract (`WorkflowWorkerNodeSpec` in
+ * `packages/contracts/src/workflows.ts`) guarantees `brief` is a
+ * non-empty single line of ≤ 200 chars, so no empty-string guard is
+ * required at this seam.
+ */
+function extractBrief(node: WorkflowNodeWire): string | null {
+  const spec = node.spec;
+  if (spec.kind === "worker" && "brief" in spec && typeof spec.brief === "string") {
+    return spec.brief;
+  }
+  return null;
 }
 
 /**

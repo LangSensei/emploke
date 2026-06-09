@@ -17,8 +17,10 @@ import {
 } from "../components/tasks/shared";
 import { CreateWorkflowModal } from "../components/workflows/CreateWorkflowModal";
 import { CancelWorkflowModal } from "../components/workflows/WorkflowConfirmModals";
+import { WorkflowDetailSkeleton } from "../components/workflows/WorkflowDetailSkeleton";
 import { WorkflowFilters } from "../components/workflows/WorkflowFilters";
 import { WorkflowList } from "../components/workflows/WorkflowList";
+import { WorkflowListSkeleton } from "../components/workflows/WorkflowListSkeleton";
 import { useMounted } from "../hooks/useMounted";
 import { useUrlSearchValue } from "../hooks/useUrlState";
 import { useWorkflowDetail } from "../hooks/useWorkflowDetail";
@@ -326,9 +328,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
               />
               <div className="tasks-pane__list-scroll">
                 {!loaded ? (
-                  <div className="empty">
-                    <p className="empty__title">Loading workflows…</p>
-                  </div>
+                  <WorkflowListSkeleton />
                 ) : visible.length === 0 ? (
                   <div className="empty" data-testid="workflows-empty-filtered">
                     <p className="empty__title">No matches</p>
@@ -383,13 +383,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
                 );
               }
               if (effectiveSelectedId !== null) {
-                return (
-                  <aside className="tasks-pane__detail tasks-pane__detail--empty">
-                    <div className="empty">
-                      <p className="empty__title">Loading workflow…</p>
-                    </div>
-                  </aside>
-                );
+                return <WorkflowDetailSkeleton />;
               }
               if (visible.length === 0) return null;
               return (
