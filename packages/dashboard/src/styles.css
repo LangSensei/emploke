@@ -5451,7 +5451,7 @@ button {
 .dag-node--coordinator {
   border-left-color: var(--color-accent);
 }
-.dag-node--task {
+.dag-node--worker {
   border-left-color: var(--color-border-strong);
 }
 

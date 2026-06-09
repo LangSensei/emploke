@@ -11,29 +11,20 @@
  */
 
 /**
- * Task-kind node spec payload. Flat, matches the body shape minus
+ * Worker-kind node spec payload. Flat, matches the body shape minus
  * the discriminator. Persisted opaquely as `workflow_nodes.spec_json`
  * via the substrate's envelope; consumed flatly on the wire.
  *
- * The task-kind handler enforces (at insert time):
+ * The worker-kind handler enforces (at insert time):
  *
- *   1. `agent` non-empty string AND exists in the catalog AND appears
- *      in the caller coord agent's `dependencies.agents` declaration.
- *      The last clause means a coordinator can only dispatch task
- *      nodes for agents it has statically declared a dependency on,
- *      so the static dependency graph is also the runtime
- *      dispatch-permission graph.
+ *   1. `agent` non-empty string AND exists in the catalog.
  *   2. `brief` non-empty string, no `\n`/`\r`, length ≤ 200 (matches
  *      `@emploke/task` `DispatchOpts.brief`).
  *   3. `details` when present, must be string (empty allowed).
  *   4. `runtime` when present, must be non-empty string.
  */
-export interface WorkflowTaskNodeSpec {
-  /**
-   * Worker agent FQN. MUST appear in the most-recent coord node's
-   * `spec.agent`'s `dependencies.agents` (validated by the
-   * task-kind handler at insert time).
-   */
+export interface WorkflowWorkerNodeSpec {
+  /** Worker agent FQN. */
   readonly agent: string;
   /** Worker brief: single line, ≤ 200 chars (no `\n` / `\r`). */
   readonly brief: string;
@@ -67,13 +58,13 @@ export interface WorkflowCoordinatorNodeSpec {
 }
 
 /**
- * Flat wire projection for a task-kind workflow node spec. The
- * internal envelope `{ kind: "task", spec: { agent, brief, ... } }`
- * is flattened to `{ kind: "task", agent, brief, ... }` for HTTP
+ * Flat wire projection for a worker-kind workflow node spec. The
+ * internal envelope `{ kind: "worker", spec: { agent, brief, ... } }`
+ * is flattened to `{ kind: "worker", agent, brief, ... }` for HTTP
  * responses so dashboard / CLI code can read `node.spec.agent`
  * without unwrapping `spec`.
  */
-export type WorkflowTaskNodeSpecWire = { readonly kind: "task" } & WorkflowTaskNodeSpec;
+export type WorkflowWorkerNodeSpecWire = { readonly kind: "worker" } & WorkflowWorkerNodeSpec;
 
 /** Flat wire projection for a coordinator-kind workflow node spec. */
 export type WorkflowCoordinatorNodeSpecWire = {
@@ -82,13 +73,13 @@ export type WorkflowCoordinatorNodeSpecWire = {
 
 /**
  * Wire-shape spec on workflow node responses. Flat for the two
- * shipped kinds (`task` / `coordinator`); opaque envelope for any
+ * shipped kinds (`worker` / `coordinator`); opaque envelope for any
  * future kind the server projects through unchanged. When a third
  * concrete kind ships, add its flat wire shape here as another
  * union member.
  */
 export type WorkflowNodeWireSpec =
-  | WorkflowTaskNodeSpecWire
+  | WorkflowWorkerNodeSpecWire
   | WorkflowCoordinatorNodeSpecWire
   | { readonly kind: string; readonly spec: unknown };
 
@@ -272,12 +263,10 @@ export interface WorkflowListQuery {
 // body. Wire shapes are JSON-safe — plain literal-union strings (no
 // `Date`, `Map`, `Set`, `Symbol`).
 //
-// Auth is substrate-derived: the unique `kind='coordinator' AND
-// status='running'` row in the workflow IS the caller. HTTP routes
-// forward `workflowId` from the path; they do NOT accept a
-// `callerCoordNodeId` body field, header, or query param. A request
-// from outside any coord task gets `WorkflowMutationUnauthorizedError`
-// → 403.
+// The substrate does not derive any caller identity from mutation
+// bodies; the only lifecycle gate is the workflow's own status, which
+// is re-checked atomically inside each write tx. A request against a
+// terminal workflow surfaces `WorkflowAlreadyTerminalError` → 409.
 
 /**
  * Per-node kind discriminator on every mutation body that allocates a

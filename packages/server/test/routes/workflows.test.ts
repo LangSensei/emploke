@@ -335,9 +335,9 @@ describe("workflowsRoutes — dag", () => {
     const coordNode = body.nodes.find((n) => n.id === COORD_NID);
     expect(coordNode?.spec).toEqual({ kind: "coordinator", agent: "coord-agent" });
 
-    // Worker spec: kind "worker" → flat wire kind "task" with agent + brief
+    // Worker spec: kind "worker" → flat wire kind "worker" with agent + brief
     const workerNode = body.nodes.find((n) => n.id === WORKER_NID);
-    expect(workerNode?.spec).toEqual({ kind: "task", agent: "writer", brief: "draft" });
+    expect(workerNode?.spec).toEqual({ kind: "worker", agent: "writer", brief: "draft" });
   });
 
   it("GET /:wfid/dag maps WorkflowNotFoundError to 404", async () => {
@@ -925,7 +925,7 @@ describe("workflowsRoutes — replaceNodeSpec (PATCH /:wfid/nodes/:nid/spec)", (
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { spec: Record<string, unknown> };
-    expect(body.spec).toEqual({ kind: "task", agent: "writer", brief: "revised" });
+    expect(body.spec).toEqual({ kind: "worker", agent: "writer", brief: "revised" });
     expect(replaceNodeSpec).toHaveBeenCalledWith({
       workflowId: WID,
       nodeId: WORKER_NID,

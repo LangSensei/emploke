@@ -355,7 +355,7 @@ const sampleDag = {
       phase: 1,
       status: "running",
       spec: {
-        kind: "task",
+        kind: "worker",
         agent: "emploke/dev",
         brief: "implement parser",
       },
@@ -603,7 +603,7 @@ const sampleNode = {
   workflowId: WFID,
   phase: 2,
   status: "not_started" as const,
-  spec: { kind: "task" as const, agent: "writer", brief: "thing" },
+  spec: { kind: "worker" as const, agent: "writer", brief: "thing" },
   createdAt: "2026-06-01T00:00:00.000Z",
 };
 

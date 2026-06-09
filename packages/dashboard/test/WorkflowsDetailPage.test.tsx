@@ -115,7 +115,7 @@ describe("WorkflowsPage — detail header", () => {
           workflowId: wf.id,
           status: "running",
           phase: 1,
-          spec: { kind: "task", agent: "emploke/dev", brief: "x" },
+          spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
           createdAt: wf.createdAt,
         },
       ],

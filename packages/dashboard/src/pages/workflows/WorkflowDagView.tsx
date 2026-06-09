@@ -237,7 +237,7 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
 }
 
 /**
- * Best-effort agent extraction from a node spec. Coordinator and task
+ * Best-effort agent extraction from a node spec. Coordinator and worker
  * specs both carry an `agent` field; unknown spec kinds fall back to
  * "—" so the row still renders a placeholder rather than an empty
  * span (visual stability).
@@ -245,7 +245,7 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
 function extractAgent(node: WorkflowNodeWire): string {
   const spec = node.spec;
   if (
-    (spec.kind === "coordinator" || spec.kind === "task") &&
+    (spec.kind === "coordinator" || spec.kind === "worker") &&
     "agent" in spec &&
     typeof spec.agent === "string"
   ) {
@@ -259,8 +259,8 @@ function extractAgent(node: WorkflowNodeWire): string {
  * styling vocabulary. The contracts wire shape carries kind ONLY on
  * `spec.kind` (the substrate's opaque envelope is flattened by the
  * server-side projection); unknown / future kinds fall back to
- * `"task"` so the visual still renders a recognisable node.
+ * `"worker"` so the visual still renders a recognisable node.
  */
-function nodeKind(node: WorkflowNodeWire): "coordinator" | "task" {
-  return node.spec.kind === "coordinator" ? "coordinator" : "task";
+function nodeKind(node: WorkflowNodeWire): "coordinator" | "worker" {
+  return node.spec.kind === "coordinator" ? "coordinator" : "worker";
 }

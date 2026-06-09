@@ -75,14 +75,14 @@ export function projectWorkflowHeader(
  *
  * The cast to the per-kind wire shape is safe because the substrate's
  * per-kind handler validates `spec` shape at insert time (see
- * `workflowTaskNodeHandler` / `workflowCoordinatorNodeHandler` in
+ * `workflowWorkerNodeHandler` / `workflowCoordinatorNodeHandler` in
  * `@emploke/api/wiring`). A schema-corrupted row would surface as a
  * runtime parse error from `WorkflowNodeEntity.fromRow` before
  * reaching this projection.
  */
 function projectNodeSpec(node: WorkflowNodeEntity): WorkflowNodeWireSpec {
   if (node.kind === "worker") {
-    return { kind: "task", ...(node.spec as object) } as WorkflowNodeWireSpec;
+    return { kind: "worker", ...(node.spec as object) } as WorkflowNodeWireSpec;
   }
   if (node.kind === "coordinator") {
     return { kind: "coordinator", ...(node.spec as object) } as WorkflowNodeWireSpec;

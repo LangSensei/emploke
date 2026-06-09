@@ -27,7 +27,7 @@ function makeNode(overrides: Partial<WorkflowNodeWire>): WorkflowNodeWire {
     workflowId: "wf-1",
     status: "running",
     phase: 0,
-    spec: { kind: "task", agent: "emploke/dev", brief: "x" },
+    spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
     createdAt: "2026-05-28T00:00:00.000Z",
     ...overrides,
   };
