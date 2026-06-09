@@ -34,8 +34,14 @@ export function sortByCreatedDesc(rows: readonly WorkflowHeaderWire[]): Workflow
  * tint). Exhaustive switch with a `never` fall-through so any future
  * status addition becomes a compile error here instead of silently
  * rendering as the default tone.
+ *
+ * Mapping is locked to the Tasks page's `STATUS_TONE` (see
+ * `components/tasks/shared.ts`) — same status, same colour. In
+ * particular `cancelled` maps to `muted` (gray) so the workflow
+ * CANCELLED badge does not visually collide with the Schedules
+ * PAUSED badge (amber/warn).
  */
-export type WorkflowStatusTone = "info" | "success" | "danger" | "warn";
+export type WorkflowStatusTone = "info" | "success" | "danger" | "muted";
 
 export function workflowStatusTone(status: WorkflowHeaderWire["status"]): WorkflowStatusTone {
   switch (status) {
@@ -46,7 +52,7 @@ export function workflowStatusTone(status: WorkflowHeaderWire["status"]): Workfl
     case "failed":
       return "danger";
     case "cancelled":
-      return "warn";
+      return "muted";
     default: {
       const _exhaustive: never = status;
       return _exhaustive;

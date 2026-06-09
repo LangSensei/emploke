@@ -27,10 +27,10 @@ describe("WorkflowStatusBadge — tone mapping", () => {
     expect(badge.className).toContain("badge--danger");
   });
 
-  it("cancelled maps to the warn tone", () => {
+  it("cancelled maps to the muted tone (parity with Tasks; avoids amber collision with Schedules PAUSED)", () => {
     render(<WorkflowStatusBadge status="cancelled" />);
     const badge = screen.getByTestId("workflow-status-badge-cancelled");
-    expect(badge.className).toContain("badge--warn");
+    expect(badge.className).toContain("badge--muted");
   });
 });
 
