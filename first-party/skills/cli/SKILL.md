@@ -1,8 +1,8 @@
 ---
 name: cli
 scope: emploke
-description: "Control an emploke server from the CLI — workspaces, agents, tasks, sessions, catalog"
-version: 1.0.2
+description: "Control an emploke server from the CLI — workspaces, agents, tasks, sessions, catalog, workflows"
+version: 1.1.0
 ---
 
 # emploke/cli skill
@@ -72,6 +72,18 @@ Detailed playbooks live in `references/workflows.md`. Quick index:
 - **Set up a fresh workspace with a standard agent set** — atomic onboarding script.
 - **Create a local agent on the fly** — write `AGENTS.md`, `catalog agent install --file /abs/path`, dispatch.
 
+## Workflow subcommands
+
+`emploke workflow …` is the surface a `kind: coordinator` task uses to seed a workflow, walk its live DAG, and mutate it (add / remove nodes and edges, replace specs, cancel, finish). Workers do not call into it — they just exit, and the substrate joins their result back to the DAG via `task.metadata.workflowNodeId`.
+
+The full per-subcommand reference (flags, HTTP route, body schema, response shape, exit-code notes, plus coord introspection / batch-mutation snippets) lives in `references/workflow-commands.md`. The 14 subcommands at a glance:
+
+| Read-only | Coord-only mutation | Terminal |
+| --- | --- | --- |
+| `list`, `show`, `dag`, `node-show` | `add-node`, `add-subgraph`, `add-edge`, `remove-node`, `remove-edge`, `replace-spec`, `cancel-node` | `create`, `cancel`, `finish` |
+
+All workflow subcommands accept the same `--server / --home / --workspace / --output / --json` flags and follow the exit-code table below. The reference doc only calls out per-command additions.
+
 ## Exit codes
 
 | code | meaning | what to do |
@@ -120,4 +132,5 @@ emploke task activity <tid> --follow --after "$N" | jq -c
 ## See also
 
 - `references/workflows.md` — multi-step playbooks for the common goals
+- `references/workflow-commands.md` — full per-subcommand reference for `emploke workflow …`
 - `references/error-codes.md` — every `code` value the server emits + the matching `emploke` command to fix it
