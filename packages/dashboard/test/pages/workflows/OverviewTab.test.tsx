@@ -67,7 +67,7 @@ describe("OverviewTab — typed state strips", () => {
       />,
     );
     const callout = screen.getByTestId("workflow-overview-failure-callout");
-    expect(callout.textContent).toContain("coord");
+    expect(callout.textContent).toContain("coordinator");
     expect(screen.getByTestId("workflow-overview-failure-message").textContent).toContain(
       "coordinator returned non-zero",
     );
