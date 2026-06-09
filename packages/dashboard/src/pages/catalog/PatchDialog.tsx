@@ -11,6 +11,11 @@ interface PatchDialogProps {
   // Available names for chip autocomplete in the metadata form.
   availableSkills: string[];
   availableMcps: string[];
+  /**
+   * Installed agent FQNs (excluding the entry being edited) for the
+   * agent-deps chip autocomplete. Only used when `kind === "agent"`.
+   */
+  availableAgents: string[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -37,6 +42,7 @@ export function PatchDialog({
   name,
   availableSkills,
   availableMcps,
+  availableAgents,
   onClose,
   onSaved,
 }: PatchDialogProps) {
@@ -56,6 +62,7 @@ export function PatchDialog({
     prereqs: "",
     skills: [],
     mcps: [],
+    agents: [],
   });
   // Captured at load time for agents so the lifecycle button knows
   // which direction the toggle should go. `null` ⇒ kind has no
@@ -86,6 +93,7 @@ export function PatchDialog({
           prereqs: detail.meta.prereqs,
           skills: detail.meta.skills,
           mcps: detail.meta.mcps,
+          agents: detail.meta.agents,
         });
       }
       setAgentDisabledByUser(detail.agentDisabledByUser);
@@ -114,15 +122,26 @@ export function PatchDialog({
       } else {
         // Form mode: PATCH metadata fields only. Per-kind adapters in
         // CATALOG_VERBS strip the fields the backend ignores
-        // (agents have no `prereqs`).
+        // (agents have no `prereqs`; skills cannot carry `agents`).
+        //
+        // null-when-all-empty preservation is intentional — the server
+        // distinguishes "explicitly empty deps" from "deps field omitted".
+        // We include `agents` in the emptiness check only for agent
+        // kind; for skills `form.agents` is always [] so it never
+        // changes the outcome but we keep the gate explicit for clarity.
+        const agentsEmpty = kind !== "agent" || form.agents.length === 0;
+        const allDepsEmpty = form.skills.length === 0 && form.mcps.length === 0 && agentsEmpty;
         const patch: CatalogMetadataPatch = {
           description: form.description,
           version: form.version,
           prereqs: form.prereqs.trim() === "" ? null : form.prereqs,
-          dependencies:
-            form.skills.length === 0 && form.mcps.length === 0
-              ? null
-              : { skills: form.skills, mcps: form.mcps },
+          dependencies: allDepsEmpty
+            ? null
+            : {
+                skills: form.skills,
+                mcps: form.mcps,
+                ...(kind === "agent" ? { agents: form.agents } : {}),
+              },
         };
         // `mode === "form"` and we only flipped past `supportsForm` so
         // `verbs.patchMetadata !== null` by construction.
@@ -184,6 +203,15 @@ export function PatchDialog({
             onChange={setForm}
             availableSkills={availableSkills.filter((n) => n !== name)}
             availableMcps={availableMcps}
+            // Only thread agent-deps autocomplete + missing highlight
+            // for agent forms — skills never render the agent-deps
+            // chip group, so passing them would be inert noise.
+            {...(kind === "agent"
+              ? {
+                  availableAgents,
+                  missingAgents: form.agents.filter((a) => !availableAgents.includes(a)),
+                }
+              : {})}
             // form.skills/mcps are fqn strings (catalog v2); surface
             // ones not in the installed set as missing.
             missingSkills={form.skills.filter((s) => !availableSkills.includes(s))}

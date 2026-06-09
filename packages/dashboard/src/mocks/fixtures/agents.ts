@@ -20,12 +20,20 @@ function makeAgent(partial: Partial<Agent> & Pick<Agent, "fqn" | "description">)
  * (`GET /api/workspaces/:wsId/catalog/agents`). Each entry pairs the
  * agent DTO with a status + optional blockedReason, exactly like
  * `@emploke/catalog`'s `AgentEntry`.
+ *
+ * One fixture (`emploke/dev`) carries a non-empty `dependencies.agents`
+ * to exercise the read path through MSW (designer mode + tests that
+ * iterate the fixture set). The referenced FQN (`emploke/review`) is
+ * also a fixture entry, so resolve-time validation passes.
  */
 export const fixtureAgents: AgentEntry[] = [
   {
     agent: makeAgent({
       fqn: "emploke/dev",
       description: "Self-development agent for the emploke control plane.",
+      dependencies: {
+        agents: [{ fqn: "emploke/review" }],
+      },
     }),
     status: "ready",
   },

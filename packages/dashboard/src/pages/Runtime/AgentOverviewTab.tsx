@@ -38,12 +38,12 @@ interface AgentOverviewTabProps {
  *   └───────────────────────┴───────────────────────┘
  *
  * The "Capabilities" cell from the mockup is **omitted entirely** this
- * round — the catalog API exposes `agent.dependencies.skills` and
- * `agent.dependencies.mcps`, but those are install metadata, not
- * runtime capabilities the agent "speaks". Surfacing them as
- * "Capabilities" would conflate two unrelated things. The grid
- * degrades to 2x1 (Current activity spans the bottom row) when the
- * cell is absent.
+ * round — the catalog API exposes `agent.dependencies.skills`,
+ * `agent.dependencies.mcps`, and `agent.dependencies.agents`, but those
+ * are install metadata, not runtime capabilities the agent "speaks".
+ * Surfacing them as "Capabilities" would conflate two unrelated
+ * things. The grid degrades to 2x1 (Current activity spans the bottom
+ * row) when the cell is absent.
  *
  * Empty-agent state (zero tasks + zero sessions) keeps the PR #189
  * polish-round single-`.empty` panel — applied **before** the grid so

@@ -14,6 +14,12 @@ export interface MetadataFormValues {
    */
   skills: string[];
   mcps: string[];
+  /**
+   * Agent → agent dep FQNs. Always empty for skills (skills cannot
+   * declare agent deps); kept as a required field so callers don't
+   * need to discriminate on `kind`.
+   */
+  agents: string[];
 }
 
 interface MetadataFormProps {
@@ -22,9 +28,17 @@ interface MetadataFormProps {
   onChange: (next: MetadataFormValues) => void;
   availableSkills: string[];
   availableMcps: string[];
+  /**
+   * Installed agent FQNs for the agent-deps chip group. Only meaningful
+   * for `kind === "agent"`; omit for skills (skill forms never render
+   * the agent-deps group).
+   */
+  availableAgents?: string[];
   /** Currently-listed deps that aren't in the catalog — shown red. */
   missingSkills?: readonly string[];
   missingMcps?: readonly string[];
+  /** See {@link availableAgents}. */
+  missingAgents?: readonly string[];
   disabled?: boolean;
 }
 
@@ -34,8 +48,10 @@ export function MetadataForm({
   onChange,
   availableSkills: _availableSkills,
   availableMcps: _availableMcps,
+  availableAgents: _availableAgents,
   missingSkills,
   missingMcps,
+  missingAgents,
   disabled,
 }: MetadataFormProps) {
   const update = <K extends keyof MetadataFormValues>(key: K, val: MetadataFormValues[K]) =>
@@ -46,6 +62,7 @@ export function MetadataForm({
   // origin-URI authoring path lives in the markdown frontmatter).
   const skillLabels = values.skills;
   const mcpLabels = values.mcps;
+  const agentLabels = values.agents;
   const onSkillsChange = (next: string[]) => {
     const kept = next.filter((label) => values.skills.includes(label));
     update("skills", kept);
@@ -53,6 +70,10 @@ export function MetadataForm({
   const onMcpsChange = (next: string[]) => {
     const kept = next.filter((label) => values.mcps.includes(label));
     update("mcps", kept);
+  };
+  const onAgentsChange = (next: string[]) => {
+    const kept = next.filter((label) => values.agents.includes(label));
+    update("agents", kept);
   };
 
   return (
@@ -112,6 +133,26 @@ export function MetadataForm({
           invalidValues={missingMcps}
         />
       </div>
+
+      {kind === "agent" && (
+        <div className="form-field">
+          <label htmlFor="md-agents">Agent dependencies</label>
+          <ChipsInput
+            inputId="md-agents"
+            values={agentLabels}
+            onChange={onAgentsChange}
+            options={[]}
+            placeholder="Edit in source mode to add new dependencies"
+            disabled={disabled}
+            emptyText="No agent dependencies"
+            invalidValues={missingAgents}
+          />
+          <p className="form-hint">
+            Remove with × on each chip. To add new dependencies (which require an origin URI),
+            switch to source mode.
+          </p>
+        </div>
+      )}
 
       {kind === "skill" && (
         <div className="form-field">

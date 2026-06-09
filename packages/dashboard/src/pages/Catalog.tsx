@@ -248,6 +248,7 @@ export function CatalogPage({
                 missingDeps: a.missingDeps,
                 skillsCount: a.agent.dependencies?.skills?.length ?? 0,
                 mcpsCount: a.agent.dependencies?.mcps?.length ?? 0,
+                agentsCount: a.agent.dependencies?.agents?.length ?? 0,
               }))}
               emptyTitle="No agents installed"
               emptyHint={<>Agents wrap skills + MCPs into runnable templates.</>}
@@ -327,6 +328,7 @@ export function CatalogPage({
                 name={edit.name}
                 availableSkills={skills.map((s) => s.skill.fqn)}
                 availableMcps={mcps.map((m) => m.fqn)}
+                availableAgents={agents.map((a) => a.agent.fqn)}
                 onClose={() => setEdit(null)}
                 onSaved={() => {
                   setEdit(null);

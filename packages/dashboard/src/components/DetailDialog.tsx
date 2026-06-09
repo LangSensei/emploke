@@ -74,7 +74,7 @@ interface LoadedDetail {
   disabledByUser?: boolean;
   /** Skills/mcps only. */
   orphaned?: boolean;
-  deps: { skills: string[]; mcps: string[] };
+  deps: { skills: string[]; mcps: string[]; agents: string[] };
   /** Raw anchor content (SKILL.md / AGENTS.md / mcp.json bytes). */
   source: string;
   /** True if `target.kind === "mcp"` so the source is rendered as JSON. */
@@ -484,6 +484,23 @@ function OverviewTab({ target, detail }: OverviewTabProps) {
               <DepList items={detail.deps.mcps} />
             )}
           </dd>
+          {/* Agents row only renders for agent details — skills cannot
+              declare agent deps, so the row would always be "None" and
+              add noise without semantic meaning. Placed after MCPs to
+              mirror the dependency block order in `Agent.dependencies`
+              (skills, mcps, agents). */}
+          {target.kind === "agent" && (
+            <>
+              <dt>Agents</dt>
+              <dd>
+                {detail.deps.agents.length === 0 ? (
+                  <span className="detail-dialog__empty">None</span>
+                ) : (
+                  <DepList items={detail.deps.agents} />
+                )}
+              </dd>
+            </>
+          )}
         </>
       )}
 
@@ -579,6 +596,9 @@ function projectSkill(d: SkillDetail): LoadedDetail {
     deps: {
       skills: (meta.dependencies?.skills ?? []).map((d) => d.fqn),
       mcps: (meta.dependencies?.mcps ?? []).map((d) => d.fqn),
+      // Skills cannot declare agent deps; populate empty so the
+      // LoadedDetail.deps shape stays uniform across kinds.
+      agents: [],
     },
     source: d.content,
     sourceLanguage: "markdown",
@@ -599,6 +619,7 @@ function projectAgent(d: AgentDetail): LoadedDetail {
     deps: {
       skills: (meta.dependencies?.skills ?? []).map((d) => d.fqn),
       mcps: (meta.dependencies?.mcps ?? []).map((d) => d.fqn),
+      agents: (meta.dependencies?.agents ?? []).map((d) => d.fqn),
     },
     source: d.content,
     sourceLanguage: "markdown",
@@ -612,7 +633,7 @@ function projectMcp(d: McpDetail): LoadedDetail {
     ...(d.orphaned ? { blockedReason: { orphaned: true as const } } : {}),
     prereqsAck: true,
     orphaned: d.orphaned,
-    deps: { skills: [], mcps: [] },
+    deps: { skills: [], mcps: [], agents: [] },
     source: d.content,
     sourceLanguage: "json",
   };

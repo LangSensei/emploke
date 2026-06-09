@@ -468,6 +468,11 @@ export interface AgentMetadataPatch {
   dependencies?: {
     skills?: string[];
     mcps?: string[];
+    /**
+     * Agent → agent edges. Only agents can declare other agents as
+     * deps; the skill patch shape deliberately omits this field.
+     */
+    agents?: string[];
   } | null;
 }
 
