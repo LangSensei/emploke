@@ -147,6 +147,26 @@ describe("WorkflowListItem — row `⋯` menu", () => {
     expect(screen.getByTestId(`workflow-row-menu-copy-id-${wf.id}`)).toBeTruthy();
   });
 
+  it("row-menu Cancel label is bare 'Cancel' (Tasks parity, not 'Cancel workflow')", () => {
+    // v2.4.2: the row-menu label matches the Tasks pattern exactly
+    // (`TaskListItem.tsx` row menu uses bare "Cancel"). The noun is
+    // reintroduced in the modal title + primary button where the
+    // popover-from-anywhere context makes the disambiguation useful.
+    const { wf } = renderRow({ status: "running" }, { menuOpen: true });
+    expect(
+      screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`).textContent?.trim(),
+    ).toBe("Cancel");
+  });
+
+  it("row-menu Cancel label on terminal status is 'Cancel — already terminal'", () => {
+    // Terminal-state disabled label keeps the same Tasks-parity shape
+    // (bare "Cancel" + dash-prefixed status hint).
+    const { wf } = renderRow({ status: "succeeded" }, { menuOpen: true });
+    expect(
+      screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`).textContent?.trim(),
+    ).toBe("Cancel — already terminal");
+  });
+
   it("Cancel menuitem fires onCancel(workflow) when status is running", () => {
     const { wf, onCancel, onMenuOpenChange } = renderRow({ status: "running" }, { menuOpen: true });
     fireEvent.click(screen.getByTestId(`workflow-row-menu-cancel-${wf.id}`));

@@ -69,8 +69,11 @@ export interface WorkflowListItemProps {
  * `WorkflowMetaStats` instead.
  *
  * Menuitems for v2.2:
- *   - "Cancel workflow" — `aria-disabled="true"` when status is
- *     terminal; fires `onCancel(workflow)` otherwise.
+ *   - "Cancel" — `aria-disabled="true"` when status is terminal; fires
+ *     `onCancel(workflow)` otherwise. Bare "Cancel" matches the Tasks
+ *     row-menu label exactly (see `TaskListItem.tsx`); the noun is
+ *     reintroduced in the modal title + primary button where the
+ *     popover-from-anywhere context makes the disambiguation useful.
  *   - "Copy ID" — always enabled; clipboard write with silent fallback.
  */
 export function WorkflowListItem({
@@ -336,7 +339,7 @@ export function WorkflowListItem({
                 onCancel(workflow);
               }}
             >
-              {canCancel ? "Cancel workflow" : "Cancel workflow — already terminal"}
+              {canCancel ? "Cancel" : "Cancel — already terminal"}
             </button>
             <button
               type="button"
