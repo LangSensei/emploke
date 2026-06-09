@@ -7,30 +7,18 @@
  * status codes for the live (substrate-backed) round-trip — distinct
  * from `workflows.test.ts` whose stubs assert only the route layer.
  *
- * The substrate's auth gate is bypassed via `trustedCallerForTesting:
- * true` for the growth primitives (`addNode` / `addEdge` /
- * `addSubgraph`); the "finalize / shrink" primitives (`finishWorkflow`
- * / `removeNode` / `removeEdge` / `replaceNodeSpec` / `cancelNode`)
- * still require a real caller-coord context — that's an intentional
- * substrate boundary and we verify the 403 mapping fires through the
- * full HTTP pipeline. To terminate the workflow without a real coord
- * caller, the test uses the operator-only `cancelWorkflow` route
- * (no auth gate), which is the production analogue of an external
- * dashboard / CLI "Stop" button.
- *
  * Coverage:
  *   1. HTTP `POST /workflows` seeds a workflow + coord row.
  *   2. Engine ticks coord to `succeeded` via mock runner.
  *   3. HTTP `POST /workflows/:wfid/subgraph` inserts a worker
  *      attached to the (now-terminal) coord via `existingParents`.
  *   4. Engine ticks worker to `succeeded`.
- *   5. HTTP `POST /workflows/:wfid/finish` from outside any coord
- *      task surfaces 403 with `code='WorkflowMutationUnauthorizedError'`
- *      — proves the auth gate fires through the HTTP→policy
- *      pipeline (the route-level tests use stubs; this exercises the
- *      live substrate).
- *   6. HTTP `POST /workflows/:wfid/cancel` (operator-only, no auth
- *      gate) flips the workflow to `cancelled`.
+ *   5. HTTP `POST /workflows/:wfid/finish` succeeds — the substrate's
+ *      workflow-lifecycle gate is satisfied (the workflow is still
+ *      `running`) and the call flips it to `succeeded`.
+ *   6. HTTP `POST /workflows/:wfid/cancel` after `finish` surfaces
+ *      409 with `code='WorkflowAlreadyTerminalError'` — proves the
+ *      lifecycle gate fires through the HTTP→policy pipeline.
  *
  * Why this lives in `routes/` (not in a separate `e2e/`): it asserts
  * route-level wiring (URL paths, status codes, body shapes) against a
@@ -110,7 +98,6 @@ async function makeHarness(): Promise<Harness> {
     workspaceDir,
     runners: { coordinator: coord, worker },
     logger: silentLogger,
-    trustedCallerForTesting: true,
   });
   const app = workflowsRoutes(
     () => module.service,
@@ -248,34 +235,27 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
       "worker auto-succeeds",
     );
 
-    // 5. POST /finish from outside any coord task → 403 from the auth
-    //    gate. Verifies the WorkflowMutationUnauthorizedError → 403
-    //    mapping fires through the live substrate → error policy →
-    //    HTTP response pipeline (the route-layer tests use stubs and
-    //    can't catch a regression in the substrate's gate logic).
+    // 5. POST /finish succeeds — the workflow is still `running` and
+    //    the substrate's lifecycle gate is satisfied.
     const finishRes = await h.app.request(`/${wfid}/finish`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ outcome: "succeeded" }),
     });
-    expect(finishRes.status).toBe(403);
-    const finishErr = (await finishRes.json()) as { code?: string };
-    expect(finishErr.code).toBe("WorkflowMutationUnauthorizedError");
+    expect(finishRes.status).toBe(200);
 
-    // 6. Terminate via the operator-only `cancelWorkflow` route (no
-    //    auth gate — `cancelWorkflow` is the dashboard/CLI "Stop"
-    //    button). The substrate flips the workflow to `cancelled` and
-    //    reconciles any non-terminal nodes (none here, both already
-    //    succeeded).
+    // 6. A follow-up cancel surfaces 409 with the
+    //    WorkflowAlreadyTerminalError code — proves the substrate's
+    //    lifecycle gate fires through the live substrate → error
+    //    policy → HTTP response pipeline.
     const cancelRes = await h.app.request(`/${wfid}/cancel`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ cancellation: { message: "e2e test stop" } }),
     });
-    expect(cancelRes.status).toBe(200);
-    const cancelled = (await cancelRes.json()) as { status: string; endedAt?: string };
-    expect(cancelled.status).toBe("cancelled");
-    expect(typeof cancelled.endedAt).toBe("string");
+    expect(cancelRes.status).toBe(409);
+    const cancelErr = (await cancelRes.json()) as { code?: string };
+    expect(cancelErr.code).toBe("WorkflowAlreadyTerminalError");
 
     // 7. Sanity-check the runner call counts — the flow exercised one
     //    coord dispatch + one worker dispatch.

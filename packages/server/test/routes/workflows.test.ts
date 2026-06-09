@@ -12,7 +12,6 @@
  *   - 409 mapping for `WorkflowAlreadyTerminalError` /
  *     `WorkflowNodeNotMutableError` / `WorkflowEdgeCycleError` /
  *     `WorkflowRemoveNodeOrphansChildError`
- *   - 403 mapping for `WorkflowMutationUnauthorizedError`
  *   - wire-shape projection (flat per-kind node specs, ISO timestamps
  *     forwarded verbatim)
  *   - `iterationCount` derivation: 0 on list, coord-count-based on
@@ -28,7 +27,6 @@ import {
   WorkflowEdgeCycleError,
   WorkflowEdgeEntity,
   WorkflowEntity,
-  WorkflowMutationUnauthorizedError,
   WorkflowNodeEntity,
   WorkflowNodeNotMutableError,
   WorkflowNotFoundError,
@@ -488,7 +486,6 @@ describe("workflowsRoutes — cancel", () => {
 // ─── M2.5 coord-callback mutation surface ───────────────────────────
 
 const NEW_NID = "550e8400-e29b-41d4-a716-446655440099";
-const MUTATION_DENIED_REASON = "no coord";
 
 describe("workflowsRoutes — addNode (POST /:wfid/nodes)", () => {
   it("forwards body to substrate and returns AddNodeResult", async () => {
@@ -537,10 +534,10 @@ describe("workflowsRoutes — addNode (POST /:wfid/nodes)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("maps WorkflowMutationUnauthorizedError to 403", async () => {
+  it("maps WorkflowAlreadyTerminalError to 409", async () => {
     const svc = stubService({
       addNode: vi.fn(async () => {
-        throw new WorkflowMutationUnauthorizedError(WID, COORD_NID, MUTATION_DENIED_REASON);
+        throw new WorkflowAlreadyTerminalError(WID);
       }),
     });
     const res = await mountRoutes(svc).request(`/${WID}/nodes`, {
@@ -548,9 +545,9 @@ describe("workflowsRoutes — addNode (POST /:wfid/nodes)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind: "worker", spec: {}, parents: [COORD_NID] }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.code).toBe("WorkflowMutationUnauthorizedError");
+    expect(body.code).toBe("WorkflowAlreadyTerminalError");
   });
 
   it("maps WorkflowNotFoundError to 404", async () => {
@@ -833,10 +830,10 @@ describe("workflowsRoutes — finish (POST /:wfid/finish)", () => {
     });
   });
 
-  it("maps WorkflowMutationUnauthorizedError to 403", async () => {
+  it("maps WorkflowAlreadyTerminalError to 409", async () => {
     const svc = stubService({
       finishWorkflow: vi.fn(async () => {
-        throw new WorkflowMutationUnauthorizedError(WID, COORD_NID, MUTATION_DENIED_REASON);
+        throw new WorkflowAlreadyTerminalError(WID);
       }),
     });
     const res = await mountRoutes(svc).request(`/${WID}/finish`, {
@@ -844,7 +841,7 @@ describe("workflowsRoutes — finish (POST /:wfid/finish)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ outcome: "failed", failure: { message: "x" } }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(409);
   });
 });
 

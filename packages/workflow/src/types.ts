@@ -180,51 +180,24 @@ export interface WorkflowNodeSpecEnvelope {
 }
 
 /**
- * Context threaded into `WorkflowNodeRunner.validate`. Carries
- * caller-coord identity so per-kind runners can enforce cross-coord
- * rules — most notably the worker-kind rule that a node's `agent`
- * FQN must appear in the caller coord agent's `dependencies.agents`
- * declaration. Without this context the substrate would either have
- * to know about catalog dependencies (breaking layering) or skip the
- * check (losing the static guarantee that a coord can only dispatch
- * agents it's declared a dependency on).
+ * Context threaded into `WorkflowNodeRunner.validate`. Carries the
+ * workflow id and the workflow's current status so per-kind runners
+ * can do cross-workflow-state checks if needed; the substrate stays
+ * kind-agnostic and does NOT pass any caller identity. Runners that
+ * need to check catalog references on `spec` do so against the
+ * catalog directly.
  *
- * For ordinary mutation paths, the substrate **derives** the caller
- * coord at the top of the mutation tx (the unique
- * `kind='coordinator'` row with `status='running'` in this workflow
- * — per invariant #2) and populates `callerCoordNodeId` +
- * `callerCoordSpec` from that derived row. Callers do NOT supply
- * caller identity in mutation args; the public mutation surface
- * takes only `workflowId`.
- *
- * Bootstrap cases (the initial coord insert by `createWorkflow`, and
- * the silent-retry coord insert) bypass the derivation and populate
- * ctx with the just-inserted coord's identity (callerCoordNodeId =
- * self id; callerCoordSpec = self spec). This keeps the validate
- * API uniform: there is always a caller, even when the caller IS
- * the node being validated.
+ * For ordinary mutation paths the substrate calls `validate` with
+ * `workflowStatus: 'running'` (mutations are only legal on running
+ * workflows). The bootstrap path inside `createWorkflow` also passes
+ * `'running'` because the new workflow is constructed in that state.
  */
 export interface WorkflowNodeValidateCtx {
   readonly workflowId: string;
   /**
-   * The coord node calling the mutation primitive — i.e. the parent
-   * in the auth/causality sense. For ordinary mutations the
-   * substrate derives this from `workflowId` (the unique
-   * `kind='coordinator'`, `status='running'` row). For the initial
-   * coord insert and the silent-retry insert, this is the
-   * just-inserted node's own id (self).
-   */
-  readonly callerCoordNodeId: string;
-  /**
-   * The caller coord's persisted spec. The worker-kind runner reads
-   * `callerCoordSpec.agent` to enforce that the worker's FQN appears
-   * in the coord agent's `dependencies.agents`.
-   */
-  readonly callerCoordSpec: { readonly agent: string };
-  /**
-   * Useful for cross-workflow-state checks; rarely needed. Always
-   * `'running'` when called from a mutation primitive (the
-   * mutation-auth gate rejects mutations on terminal workflows).
+   * Workflow status at the time `validate` is called. Always
+   * `'running'` for ordinary mutations — the substrate refuses
+   * mutations on terminal workflows before `validate` runs.
    */
   readonly workflowStatus: WorkflowStatus;
 }

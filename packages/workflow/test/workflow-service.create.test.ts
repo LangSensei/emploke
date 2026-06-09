@@ -80,7 +80,7 @@ describe("WorkflowService.createWorkflow", () => {
     expect(coord.status).toBe("running");
   });
 
-  it("validate ctx: routes the initial coord through runner.validate with self-bootstrap identity", async () => {
+  it("validate ctx: routes the initial coord through runner.validate", async () => {
     h.coordRunner.validateReturnValue = { agent: "coord-a", validated: true };
     const { initialCoordNodeId, workflowId } = await h.service.createWorkflow({
       brief: "x",
@@ -89,9 +89,7 @@ describe("WorkflowService.createWorkflow", () => {
     expect(h.coordRunner.validateCalls).toHaveLength(1);
     const v = h.coordRunner.validateCalls[0]!;
     expect(v.spec).toEqual({ agent: "coord-a" });
-    expect(v.ctx.callerCoordNodeId).toBe(initialCoordNodeId);
     expect(v.ctx.workflowId).toBe(workflowId);
-    expect(v.ctx.callerCoordSpec).toEqual({ agent: "coord-a" });
     expect(v.ctx.workflowStatus).toBe("running");
     // The persisted spec is what the handler returned.
     const coord = await h.service.getNode(initialCoordNodeId);

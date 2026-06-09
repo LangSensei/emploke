@@ -67,7 +67,6 @@ import {
   WorkflowError,
   type WorkflowModule,
   type WorkflowModuleOptions,
-  WorkflowMutationUnauthorizedError,
   type WorkflowNodeEntity,
   WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
@@ -106,7 +105,6 @@ describe("@emploke/workflow public API guard", () => {
       new InvalidWorkflowIdError("bad"),
       new InvalidWorkflowNodeIdError("bad"),
       new WorkflowAlreadyTerminalError("wf-id"),
-      new WorkflowMutationUnauthorizedError("wf-id", "caller-id", "not coord"),
       new WorkflowNodeNotMutableError("wf-id", "node-id", "running", "removeNode"),
       new WorkflowEdgeCycleError("wf-id", "node-a", "node-b"),
       // Defensive guard — fires only when a persisted row carries a
@@ -116,11 +114,11 @@ describe("@emploke/workflow public API guard", () => {
       new WorkflowNodeKindUnknownError("evaluator"),
       new WorkflowNodeKindShapeError(""),
       new WorkflowNodeSpecError("worker", "agent missing"),
-      new MultipleSuccessorCoordsError("wf-id", "caller-id"),
-      new OrphanCoordInsertError("wf-id", "caller-id"),
+      new MultipleSuccessorCoordsError("wf-id", "coord-parent-id"),
+      new OrphanCoordInsertError("wf-id"),
       new ParentStateError("wf-id", "worker", "parent-id", "failed"),
       // Zero-arg now: structural precondition (≥1 parent) is workflow-
-      // and caller-independent, so the error doesn't take an id.
+      // independent, so the error doesn't take an id.
       new EmptyParentsError(),
       new WorkflowEnumValueError("status", "archived", ["running", "succeeded"]),
     ];
@@ -161,8 +159,6 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowNodeRunner>().toHaveProperty("cancel");
 
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowId");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordNodeId");
-    expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("callerCoordSpec");
     expectTypeOf<WorkflowNodeValidateCtx>().toHaveProperty("workflowStatus");
   });
 
@@ -266,23 +262,6 @@ describe("@emploke/workflow public API guard", () => {
     // consumers should not import the engine directly; they
     // interact through the module.
     expectTypeOf<WorkflowModule>().toHaveProperty("engine");
-  });
-
-  it("M1 (#325 D7): WorkflowModuleOptions exposes test-only trustedCallerForTesting", () => {
-    // This OPTIONAL field bypasses the caller-coord auth gate on
-    // addNode/addEdge/addSubgraph for tests that don't have a coord
-    // runner. The field is documented as TESTING ONLY; the api-pkg
-    // public-API guard asserts the field is NOT plumbed through
-    // `@emploke/api`'s surface so production paths cannot
-    // accidentally enable it.
-    expectTypeOf<WorkflowModuleOptions>().toHaveProperty("trustedCallerForTesting");
-    // Compile-time check that the field is shaped as a boolean,
-    // not (say) a config object. We don't lock optionality here
-    // because `exactOptionalPropertyTypes` makes the indexed-access
-    // assertion brittle; the `?` on the source declaration is
-    // covered by the `toHaveProperty` above.
-    type FlagType = NonNullable<WorkflowModuleOptions["trustedCallerForTesting"]>;
-    expectTypeOf<FlagType>().toEqualTypeOf<boolean>();
   });
 
   it("preserves the service class", () => {

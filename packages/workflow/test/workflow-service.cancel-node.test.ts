@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  WorkflowMutationUnauthorizedError,
-  WorkflowNodeNotFoundError,
-  WorkflowNodeNotMutableError,
-} from "../src/errors.js";
+import { WorkflowNodeNotFoundError, WorkflowNodeNotMutableError } from "../src/errors.js";
 import {
   bootstrap,
   fixedRandomUUID,
@@ -134,10 +130,9 @@ describe("WorkflowService.cancelNode", () => {
   });
 
   it("REJECTS when the target node belongs to a different workflow than `args.workflowId`", async () => {
-    // R4: the caller is derived from `args.workflowId` (the
-    // workflow's unique running coord); attempting to cancel a node
-    // in workflow B from `workflowId=A` is rejected by the
-    // cross-workflow check inside the cancelNode tx.
+    // The substrate looks up the target node by id; if it's in
+    // workflow B but the caller named workflow A, the node is
+    // reported as not-found (it's not present *in workflow A*).
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Bootstrap a second workflow with its own task.
     const { workflowId: otherWfId, initialCoordNodeId: otherCoord } =
@@ -152,7 +147,7 @@ describe("WorkflowService.cancelNode", () => {
       parents: [otherCoord],
     });
     await expect(h.service.cancelNode({ workflowId, nodeId: otherTask })).rejects.toBeInstanceOf(
-      WorkflowMutationUnauthorizedError,
+      WorkflowNodeNotFoundError,
     );
     void initialCoordNodeId;
   });

@@ -55,7 +55,6 @@ import {
   WorkflowEdgeNotFoundError,
   WorkflowEnumValueError,
   WorkflowError,
-  WorkflowMutationUnauthorizedError,
   WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,
@@ -81,9 +80,6 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowNotFoundError, 404],
     [WorkflowNodeNotFoundError, 404],
     [WorkflowEdgeNotFoundError, 404],
-
-    // 403 — caller is not an authorised mutator (auth gate failure)
-    [WorkflowMutationUnauthorizedError, 403],
 
     // 400 — caller-fixable structural validation
     [InvalidWorkflowIdError, 400],

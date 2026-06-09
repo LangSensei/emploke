@@ -44,12 +44,11 @@ prerogative.
 
 Two tiers on the service:
 
-- **8 mutation primitives** (coord-only auth): `addNode`, `addEdge`,
+- **8 mutation primitives**: `addNode`, `addEdge`,
   `addSubgraph`, `removeNode`, `removeEdge`, `replaceNodeSpec`,
   `cancelNode`, `finishWorkflow`. Each is independently atomic; the
   substrate has no monolithic-batch API.
-- **4 read APIs** (unauthed, in-DAG eval workers can call):
-  `getWorkflow`, `getDag`, `getNode`, `getNodeDir`.
+- **4 read APIs**: `getWorkflow`, `getDag`, `getNode`, `getNodeDir`.
 
 ## Layout
 
@@ -96,13 +95,14 @@ Both runners live in `packages/api/src/wiring/` because they bridge
 
 The 8 mutation primitives on `WorkflowService` are exposed over HTTP
 on `/api/workspaces/:id/workflows/:wfid/*` so a coordinator agent's
-task can grow / shrink the DAG from its own process. The auth gate
-is substrate-derived (the unique `kind='coordinator' AND
-status='running'` row in this workflow IS the caller) — HTTP routes
-forward `workflowId` from the URL path and nothing else; there is
-no `callerCoordNodeId` body / header / query slot. A request from
-outside any coord task gets `WorkflowMutationUnauthorizedError` →
-HTTP 403.
+task can grow / shrink the DAG from its own process. HTTP routes
+forward `workflowId` from the URL path and nothing else; the
+substrate's only lifecycle gate is the workflow's own status — a
+mutation against a terminal workflow surfaces
+`WorkflowAlreadyTerminalError` → HTTP 409. Structural invariants
+(coord-chain orphan / single-successor, parent-state rules,
+sealing-rule rejection on non-`not_started` targets) still apply
+and surface as their own typed errors.
 
 | Verb     | Path                                       | Service method     | Body                                                                                                          | Response                                       |
 | -------- | ------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
@@ -129,7 +129,6 @@ calling the service.
 | `WorkflowNotFoundError`                  | 404  | addressing miss                                                |
 | `WorkflowNodeNotFoundError`              | 404  | addressing miss                                                |
 | `WorkflowEdgeNotFoundError`              | 404  | addressing miss                                                |
-| `WorkflowMutationUnauthorizedError`      | 403  | caller is not the running coord in this workflow               |
 | `InvalidWorkflowIdError` / id grammar    | 400  | caller-fixable structural validation                           |
 | `WorkflowNodeSpecError` (per-kind)       | 400  | caller-fixable spec validation                                 |
 | `EmptyParentsError`                      | 400  | mutation body empty                                            |

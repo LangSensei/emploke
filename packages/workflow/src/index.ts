@@ -38,7 +38,6 @@ export {
   WorkflowEdgeNotFoundError,
   WorkflowEnumValueError,
   WorkflowError,
-  WorkflowMutationUnauthorizedError,
   WorkflowNodeKindShapeError,
   WorkflowNodeKindUnknownError,
   WorkflowNodeNotFoundError,

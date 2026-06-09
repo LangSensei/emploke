@@ -127,7 +127,6 @@ const SAFE_ERROR_NAMES = new Set<string>([
   "InvalidWorkflowIdError",
   "InvalidWorkflowNodeIdError",
   "WorkflowAlreadyTerminalError",
-  "WorkflowMutationUnauthorizedError",
   "WorkflowNodeNotMutableError",
   "WorkflowEdgeCycleError",
   "WorkflowEdgeNotFoundError",

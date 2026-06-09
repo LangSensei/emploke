@@ -35,14 +35,13 @@
  *   - `DELETE /:wfid/edges/:from/:to`     — delete a not_started edge (M2.5)
  *   - `PATCH  /:wfid/nodes/:nid/spec`     — re-validate + replace spec (M2.5)
  *
- * ## Auth gate (mutation routes)
+ * ## Workflow lifecycle gate (mutation routes)
  *
  * Every mutation route forwards `workflowId` from the URL path and
- * NOTHING ELSE about the caller. The substrate derives the calling
- * coordinator (the unique `kind='coordinator' AND status='running'`
- * row in this workflow) inside its mutation tx. A request that does
- * not originate from inside a coord task gets
- * `WorkflowMutationUnauthorizedError` → 403 from the policy below.
+ * NOTHING ELSE about the caller. The substrate re-checks the workflow's
+ * lifecycle status inside its mutation tx and rejects mutations against
+ * a terminal workflow with `WorkflowAlreadyTerminalError` → 409 from the
+ * policy below.
  *
  * ## iterationCount derivation
  *

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  WorkflowAlreadyTerminalError,
   WorkflowEdgeNotFoundError,
-  WorkflowMutationUnauthorizedError,
   WorkflowNodeNotFoundError,
   WorkflowNodeNotMutableError,
   WorkflowNotFoundError,
@@ -178,10 +178,10 @@ describe("WorkflowService.removeEdge", () => {
         fromNodeId: initialCoordNodeId,
         toNodeId: otherTask,
       }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
+    ).rejects.toBeInstanceOf(WorkflowNodeNotFoundError);
   });
 
-  // ─── Auth gate ───────────────────────────────────────────
+  // ─── Workflow lifecycle gate ─────────────────────────────
 
   it("REJECTS when workflowId does not exist", async () => {
     await bootstrap(h);
@@ -192,32 +192,6 @@ describe("WorkflowService.removeEdge", () => {
         toNodeId: VALID_UUIDS[14]!,
       }),
     ).rejects.toBeInstanceOf(WorkflowNotFoundError);
-  });
-
-  it("REJECTS when no coord is running", async () => {
-    const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    const { nodeId: a } = await h.service.addNode({
-      workflowId,
-      kind: "worker",
-      spec: { agent: "w", brief: "a" },
-      parents: [initialCoordNodeId],
-    });
-    const { nodeId: b } = await h.service.addNode({
-      workflowId,
-      kind: "worker",
-      spec: { agent: "w", brief: "b" },
-      parents: [initialCoordNodeId, a],
-    });
-    h.db.db.transaction((tx) => {
-      h.repo.updateNodeLifecycle(tx, {
-        id: initialCoordNodeId,
-        status: "succeeded",
-        endedAt: "2026-06-07T01:00:00.000Z",
-      });
-    });
-    await expect(
-      h.service.removeEdge({ workflowId, fromNodeId: a, toNodeId: b }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
   });
 
   it("REJECTS when workflow is terminal", async () => {
@@ -237,38 +211,6 @@ describe("WorkflowService.removeEdge", () => {
     await h.service.cancelWorkflow({ workflowId, cancellation: { kind: "user", message: "" } });
     await expect(
       h.service.removeEdge({ workflowId, fromNodeId: a, toNodeId: b }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
-  });
-
-  it("REJECTS when 2+ coords are running (invariant #2)", async () => {
-    const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    const { nodeId: a } = await h.service.addNode({
-      workflowId,
-      kind: "worker",
-      spec: { agent: "w", brief: "a" },
-      parents: [initialCoordNodeId],
-    });
-    const { nodeId: b } = await h.service.addNode({
-      workflowId,
-      kind: "worker",
-      spec: { agent: "w", brief: "b" },
-      parents: [initialCoordNodeId, a],
-    });
-    const { nodeId: extraCoord } = await h.service.addNode({
-      workflowId,
-      kind: "coordinator",
-      spec: { agent: "coord-extra" },
-      parents: [initialCoordNodeId],
-    });
-    h.db.db.transaction((tx) => {
-      h.repo.updateNodeLifecycle(tx, {
-        id: extraCoord,
-        status: "running",
-        runningAt: "2026-06-07T01:00:00.000Z",
-      });
-    });
-    await expect(
-      h.service.removeEdge({ workflowId, fromNodeId: a, toNodeId: b }),
-    ).rejects.toBeInstanceOf(WorkflowMutationUnauthorizedError);
+    ).rejects.toBeInstanceOf(WorkflowAlreadyTerminalError);
   });
 });

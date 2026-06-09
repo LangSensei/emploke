@@ -4,11 +4,9 @@
  * to-end using FAKE runners (no real `@emploke/task` dependency) so
  * the assertions stay focused on engine ↔ substrate behavior.
  *
- * The test escape hatch (`trustedCallerForTesting: true`) is used
- * here to add worker nodes directly without standing up a coord
- * runner. The fake coord runner is a passthrough stub whose
- * `dispatch` immediately fires `onTerminal({succeeded})` so workflow
- * lifecycle assertions can land cleanly.
+ * The fake coord runner is a passthrough stub whose `dispatch`
+ * immediately fires `onTerminal({succeeded})` so workflow lifecycle
+ * assertions can land cleanly.
  *
  * Scenarios (one `it` block each):
  *   1. happy path: create → coord auto-succeeds → add worker →
@@ -23,7 +21,7 @@
  *   7. cross-workflow parallelism → two workflows progress
  *      independently
  *   8. engine.stop() drains in-flight ticks
- *   9. trustedCallerForTesting bypass still runs structural rules
+ *   9. structural rules still fire (worker requires ≥1 parent)
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -124,7 +122,6 @@ async function makeHarness(): Promise<Harness> {
     workspaceDir,
     runners: { coordinator: coord, worker },
     logger: silentLogger,
-    trustedCallerForTesting: true,
   });
   return {
     module,
@@ -186,12 +183,10 @@ describe("WorkflowEngine integration", () => {
       "initial coord becomes succeeded",
     );
 
-    // Add a worker node with the now-terminal coord as parent. With
-    // `trustedCallerForTesting: true` we bypass the caller-coord auth
-    // gate (there is no running coord). The structural rule for
-    // worker parents is "at least one parent in non-failed terminal"
-    // — the coord just succeeded, so the worker is immediately
-    // eligible.
+    // Add a worker node with the now-terminal coord as parent. The
+    // structural rule for worker parents is "at least one parent in
+    // non-failed terminal" — the coord just succeeded, so the worker
+    // is immediately eligible.
     const { nodeId: workerId } = await h.module.service.addNode({
       workflowId,
       kind: "worker",
@@ -542,15 +537,14 @@ describe("WorkflowEngine integration", () => {
     expect(h.coord.dispatchCalls.length).toBe(dispatchesBefore);
   });
 
-  it("trustedCallerForTesting bypass still runs structural rules (worker requires ≥1 parent)", async () => {
+  it("structural rules still fire (worker requires ≥1 parent)", async () => {
     const { workflowId } = await h.module.service.createWorkflow({
       brief: "structural-test",
       coordinatorAgent: "coord-agent",
     });
-    // Worker with zero parents — structural rule rejects regardless
-    // of the auth bypass. The error class is EmptyParentsError; we
-    // assert via instanceof / message rather than importing yet
-    // another error class.
+    // Worker with zero parents — substrate rejects via
+    // EmptyParentsError; we assert via instanceof / message rather
+    // than importing yet another error class.
     await expect(
       h.module.service.addNode({
         workflowId,

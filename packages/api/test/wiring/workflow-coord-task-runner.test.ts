@@ -131,8 +131,6 @@ function stubDeps(
 
 const NODE_VALIDATE_CTX = {
   workflowId: "wf-id",
-  callerCoordNodeId: "caller",
-  callerCoordSpec: { agent: "coord-agent" },
   workflowStatus: "running" as const,
 };
 

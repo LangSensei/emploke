@@ -69,24 +69,6 @@ export class WorkflowAlreadyTerminalError extends WorkflowError {
 }
 
 /**
- * Thrown when a mutation primitive is called by a caller that does
- * NOT satisfy the cross-cut auth predicate: the caller node must be
- * `kind='coordinator' AND status='running'`, AND the workflow itself
- * must be `status='running'`. The single auth gate shared by every
- * mutation primitive on the substrate.
- */
-export class WorkflowMutationUnauthorizedError extends WorkflowError {
-  override readonly name = "WorkflowMutationUnauthorizedError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly callerNodeId: string,
-    public readonly reason: string,
-  ) {
-    super(`Workflow "${workflowId}" mutation by node "${callerNodeId}" denied: ${reason}`);
-  }
-}
-
-/**
  * Thrown when a mutation targets a node whose status disallows the
  * change. The "structural sealing" rule: `replaceNodeSpec` /
  * `removeNode` reject anything not `not_started`; `addEdge` /
@@ -167,10 +149,11 @@ export class WorkflowNodeSpecError extends WorkflowError {
 }
 
 /**
- * Thrown by `addNode(kind='coordinator')` / `addSubgraph` when the
- * caller coord already has ≥1 coordinator-kind child node.
+ * Thrown by `addNode(kind='coordinator')` / `addSubgraph` when a
+ * coord-kind parent named in the insert's parent set already has a
+ * coord-kind child node.
  *
- * Combined with the "inserted coord must list the caller as a parent"
+ * Combined with the "inserted coord must have a coord-kind parent"
  * rule (see {@link OrphanCoordInsertError}), this structurally
  * guarantees the substrate's "non-terminal coord chain has length 1
  * or 2" invariant: at any moment, the live coords form a chain of
@@ -181,32 +164,29 @@ export class MultipleSuccessorCoordsError extends WorkflowError {
   override readonly name = "MultipleSuccessorCoordsError";
   constructor(
     public readonly workflowId: string,
-    public readonly callerCoordNodeId: string,
+    public readonly coordParentNodeId: string,
   ) {
     super(
-      `Coordinator node "${callerCoordNodeId}" in workflow "${workflowId}" already has a coord-kind child; cannot add a second`,
+      `Coordinator node "${coordParentNodeId}" in workflow "${workflowId}" already has a coord-kind child; cannot add a second`,
     );
   }
 }
 
 /**
  * Thrown by `addNode(kind='coordinator')` / `addSubgraph` when the
- * inserted coordinator-kind node does NOT have the caller coord's id
- * in its parent set.
+ * inserted coordinator-kind node does NOT have any coordinator-kind
+ * node in its parent set.
  *
  * Required for the coord-chain invariant: without this rule the
  * "≤1 coord successor per coord" check could be bypassed by adding
  * coord children to non-coord nodes. With this rule, every new coord
- * is structurally chained off its predecessor.
+ * is structurally chained off an existing coord predecessor.
  */
 export class OrphanCoordInsertError extends WorkflowError {
   override readonly name = "OrphanCoordInsertError";
-  constructor(
-    public readonly workflowId: string,
-    public readonly callerCoordNodeId: string,
-  ) {
+  constructor(public readonly workflowId: string) {
     super(
-      `Inserted coord node must have caller coord "${callerCoordNodeId}" in its parent set in workflow "${workflowId}"`,
+      `Inserted coord node must have at least one coord-kind parent in workflow "${workflowId}"`,
     );
   }
 }
@@ -239,8 +219,7 @@ export class ParentStateError extends WorkflowError {
  * mandates `parents.length ≥ 1` on every primitive insert: the
  * initial coord (created via `createWorkflow`) is the unique
  * phase-0 entry point, and every subsequent node roots in the
- * existing DAG. Structural rejection — fires before the auth gate
- * so the precondition is order-independent of caller state.
+ * existing DAG.
  */
 export class EmptyParentsError extends WorkflowError {
   override readonly name = "EmptyParentsError";
@@ -351,8 +330,8 @@ export class WorkflowRemoveEdgeOrphansChildError extends WorkflowError {
 /**
  * Thrown by `addSubgraph` when the `nodes` array is empty. Batch
  * inserts of zero nodes have no defensible interpretation — the
- * primitive would be a no-op that still consumed a write tx and
- * an auth gate. Rejecting at the boundary keeps callers honest.
+ * primitive would be a no-op that still consumed a write tx.
+ * Rejecting at the boundary keeps callers honest.
  */
 export class WorkflowSubgraphEmptyError extends WorkflowError {
   override readonly name = "WorkflowSubgraphEmptyError";
@@ -440,13 +419,11 @@ export class WorkflowSubgraphCyclicError extends WorkflowError {
 /**
  * Thrown by `addSubgraph` when the batch declares more than one
  * coordinator-kind temp. Per the substrate's coord-chain invariant,
- * the caller coord may enqueue at most one successor coord per
- * dispatch; a batch with 2 coord temps would violate that even if
- * one of them isn't a structural successor (the caller has no
- * partial-batch escape hatch). Stricter than the inter-batch
- * single-successor rule (which {@link MultipleSuccessorCoordsError}
- * covers) because the inter-batch rule looks at the caller's
- * existing coord children only, not at the batch's own contents.
+ * each dispatch may enqueue at most one successor coord; a batch
+ * with 2 coord temps would violate that. Stricter than the inter-
+ * batch single-successor rule (which {@link MultipleSuccessorCoordsError}
+ * covers) because the inter-batch rule looks at each coord parent's
+ * existing children only, not at the batch's own contents.
  */
 export class WorkflowSubgraphMultipleCoordTempsError extends WorkflowError {
   override readonly name = "WorkflowSubgraphMultipleCoordTempsError";
