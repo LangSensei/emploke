@@ -2,7 +2,7 @@
 name: coordinator
 scope: emploke
 description: "Generic workflow-coordinator framework — operating model, DAG introspection patterns, verdict.json schema, brief-plumbing meta-pattern, and authoring guidance for strategy skills"
-version: 1.1.0
+version: 1.0.0
 ---
 
 # Emploke Coordinator Skill
@@ -20,7 +20,7 @@ between wake-ups.
 **This skill is strategy-agnostic.** It does NOT contain any concrete
 case bank, brief template, or stop condition. Those live in **strategy
 skills** (sibling skills the coord agent also declares as deps), one per
-strategy. For v1 the only strategy skill is `emploke/development-loop`.
+strategy. For v1 the only strategy skill is `emploke/dev-review-loop`.
 Future strategies (`emploke/research-synth`, `emploke/data-pipeline`,
 etc.) ship as additional sibling skills — never by editing this skill.
 
@@ -81,7 +81,7 @@ Discipline:
 Step 5 above resolves the strategy in priority order:
 
 1. `workflow.metadata.strategy` — if the workflow creator set an explicit
-   strategy FQN (e.g. `"emploke/development-loop"`), use it.
+   strategy FQN (e.g. `"emploke/dev-review-loop"`), use it.
 2. `workflow.brief` — if the brief contains an explicit hint
    ("strategy: emploke/research-synth"), use it.
 3. The only strategy declared in the coord agent's `dependencies.skills` —
@@ -134,11 +134,11 @@ nodes; `taskId` is empty until the node has been dispatched.
 
 ### Find prior-iter siblings (same agent, lower phase)
 
-When a strategy needs to propagate verdicts across iterations (e.g.
-"iteration 2 review should fetch iteration 1's verdict to confirm prior
-findings are resolved"), the canonical way to find the prior-iter sibling
-is: same `spec.agent`, lower `phase` (or lower position in topological
-order), nearest match.
+When a strategy needs to propagate context across iterations (e.g.
+iteration N reads iteration N−1's output to confirm prior findings are
+addressed), the canonical way to find the prior-iter sibling is: same
+`spec.agent`, lower `phase` (or lower position in topological order),
+nearest match.
 
 ```
 PRIOR=$(jq -r --arg agent "$WORKER_AGENT" --argjson myPhase "$MY_PHASE" '
@@ -254,8 +254,7 @@ brief and need not load this skill).
 
 ## §D — Brief plumbing meta-pattern
 
-Workers (`emploke/dev`, `emploke/review`, `emploke/frontend-designer`,
-etc.) are pure specialists. They MUST NOT depend on any
+Workers (implementer agents, reviewer agents, etc.) are pure specialists. They MUST NOT depend on any
 workflow-specific skill or know they're running inside a workflow. All
 workflow context is plumbed to them via the **task brief** coord writes
 when dispatching them.
@@ -270,10 +269,11 @@ Every worker brief a strategy template emits MUST follow this pattern:
    - The workflow details, verbatim from `workflow.details` (substitute
      empty string if `null`).
    - Where to fetch prior-iter outputs, expressed as concrete task ids
-     the worker reads itself (e.g. "fetch prior review verdict via
-     `emploke task show --tid ${PRIOR_REVIEW_TASK_ID}` then read
-     `<task-workdir>/verdict.json`"). Workers do their own fetching;
-     coord does not pre-digest.
+     the worker reads itself (e.g. "fetch the prior reviewer's verdict via
+     `emploke task show --tid ${PRIOR_<role>_TASK_ID}` then read
+     `<task-workdir>/verdict.json`" — the concrete slot name comes from the
+     strategy skill's placeholder resolution table). Workers do their own
+     fetching; coord does not pre-digest.
 
 2. **Never include**:
    - Technical content (quality bars, fix suggestions, implementation
@@ -317,7 +317,7 @@ can coexist; the coord agent picks one per workflow per §A step 5.
 
 ```yaml
 ---
-name: <strategy-short-name>          # kebab-case, e.g. development-loop
+name: <strategy-short-name>          # kebab-case, e.g. dev-review-loop
 scope: emploke                       # or your catalog's scope
 description: "<one short sentence describing what the strategy orchestrates>"
 version: 1.0.0                       # 3-segment semver
@@ -446,7 +446,7 @@ ${one paragraph}
 ## What this skill is NOT
 
 - **Not a strategy.** This skill defines the framework. The matching
-  strategy skill (e.g. `emploke/development-loop`) defines the case
+  strategy skill (e.g. `emploke/dev-review-loop`) defines the case
   bank and brief templates the framework dispatches.
 - **Not a CLI reference.** The `emploke/cli` skill (loaded alongside)
   carries the per-subcommand surface for `emploke workflow …`. Consult
@@ -463,7 +463,7 @@ ${one paragraph}
 - `emploke/cli` skill — flags, routes, and bodies for every `emploke
   workflow …` subcommand referenced here, plus the `--json` /
   workspace-scoping discipline this skill's pseudocode assumes.
-- `emploke/development-loop` skill — the v1 strategy skill (case bank,
+- `emploke/dev-review-loop` skill — the v1 strategy skill (case bank,
   brief templates, placeholder table, stop condition, failure-mode
   coverage for the dev → review+designer iterate-to-clean strategy).
 - `emploke/coordinator` agent — loads this skill and one strategy skill

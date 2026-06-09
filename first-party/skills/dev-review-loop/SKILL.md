@@ -1,5 +1,5 @@
 ---
-name: development-loop
+name: dev-review-loop
 scope: emploke
 description: "Strategy skill for emploke/coordinator — the dev → review+designer iterate-to-clean orchestration: case bank, brief templates, placeholder resolution, stop condition, failure-mode coverage"
 version: 1.0.0
@@ -34,7 +34,7 @@ Match own direct parents against these cases. Exactly one case matches
 per coord wake-up — the case bank is total over the strategy's expected
 parent shapes (see "Failure-mode coverage" below). If none match,
 terminate the workflow with `workflow finish --outcome failed --message
-"coord saw unexpected DAG shape under emploke/development-loop: <describe>"`.
+"coord saw unexpected DAG shape under emploke/dev-review-loop: <describe>"`.
 
 ```
 CASE "no parents" (initial coord node):
@@ -313,7 +313,7 @@ Unexpected shapes (e.g. 3 parents, or a parent whose agent is none of
 the three the strategy uses) are not covered by the case bank by
 design — those are bugs in the workflow's construction, and the coord
 should `workflow finish --outcome failed --message "coord saw
-unexpected DAG shape under emploke/development-loop: <describe>"` per
+unexpected DAG shape under emploke/dev-review-loop: <describe>"` per
 the case-bank preamble.
 
 ---

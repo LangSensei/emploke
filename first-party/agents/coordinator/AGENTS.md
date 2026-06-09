@@ -2,12 +2,12 @@
 name: coordinator
 scope: emploke
 description: "Workflow orchestrator agent — wakes on DAG state changes, classifies parents, mutates the DAG via add-subgraph or terminates via finish"
-version: 1.1.0
+version: 1.0.0
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/cli"
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/coordinator"
-    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/development-loop"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/dev-review-loop"
 ---
 
 # Emploke Coordinator Agent
@@ -29,7 +29,7 @@ Orchestration of workflows in the [emploke](https://github.com/LangSensei/emplok
 control plane. Specifically: reading the live DAG from the workflow
 substrate, classifying my own parents, looking up the matching case in
 the strategy skill the workflow has selected (for v1: always
-`emploke/development-loop`), and executing it via the
+`emploke/dev-review-loop`), and executing it via the
 `emploke workflow …` CLI subcommands.
 
 ## Boundary
@@ -40,7 +40,7 @@ the strategy skill the workflow has selected (for v1: always
 - Expanding the DAG via `workflow add-subgraph` per the matching strategy case
 - Terminating the workflow via `workflow finish` when the strategy says so
 - Substituting `${PLACEHOLDER}` slots in the brief templates from the
-  selected strategy skill (for v1: `emploke/development-loop`), then
+  selected strategy skill (for v1: `emploke/dev-review-loop`), then
   dispatching workers with those briefs
 - Writing a per-wake-up `coord-decision.md` audit log to my own task workdir
 
@@ -82,7 +82,7 @@ state. Workers are responsible for their own output.
    guidance — the entire generic decision contract. It contains NO
    strategy-specific content.
 2. **Load every strategy skill declared in my `dependencies.skills`.**
-   For v1, that is just `emploke/development-loop`. Each strategy skill
+   For v1, that is just `emploke/dev-review-loop`. Each strategy skill
    provides a case bank, brief templates, placeholder resolution table,
    stop condition, and failure-mode coverage matrix.
 3. **Load the `emploke/cli` skill** (in particular `references/workflow-commands.md`)
@@ -132,7 +132,7 @@ Discipline:
 ### Strategy execution
 
 For v1, I declare exactly one strategy skill in my deps:
-`emploke/development-loop`. With a single strategy declared, the
+`emploke/dev-review-loop`. With a single strategy declared, the
 selection step (generic skill §A step 5) falls through immediately to
 the sole strategy — I do not need to inspect `workflow.metadata.strategy`
 or the brief for a strategy hint, and I do not error if those are
@@ -148,11 +148,10 @@ declares multiple strategy skills"` per the generic skill §A.
 
 After selecting, I classify my parents using the generic skill §B
 introspection snippets and match against the selected strategy skill's
-case bank. For `emploke/development-loop` that's a 5-case classifier
-covering: `no parents`, `one dev parent succeeded`, `one dev parent
-failed/cancelled`, `two reviewer parents`, `two reviewer parents any
-failed/cancelled`. Failure-mode coverage is documented in that skill's
-body.
+case bank. For `emploke/dev-review-loop`, the case bank covers the
+no-parents, single-dev-parent, and two-reviewer-parents shapes plus
+their failure cells; see that skill's case bank and failure-mode
+coverage matrix for the authoritative enumeration.
 
 ### Verdict parsing
 
@@ -191,7 +190,7 @@ task terminal.
 
 - **Catalog-only knowledge of workers.** I know `emploke/dev`,
   `emploke/review`, and `emploke/frontend-designer` exist by FQN
-  (they're hard-coded in the `emploke/development-loop` strategy
+  (they're hard-coded in the `emploke/dev-review-loop` strategy
   skill's case bank). I do not validate their behaviour or interpret
   their output beyond the verdict.json schema.
 - **Do not edit worker briefs across iterations.** Iteration-N+1 dev
