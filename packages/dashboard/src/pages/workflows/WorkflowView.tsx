@@ -145,7 +145,7 @@ export function WorkflowView({
       </header>
 
       <div
-        className="workflow-tabs"
+        className="task-tabs"
         role="tablist"
         aria-label="Workflow detail sections"
         data-testid="workflow-tabs"
@@ -162,7 +162,7 @@ export function WorkflowView({
               aria-selected={selected}
               aria-controls={`workflow-tabpanel-${tab}`}
               tabIndex={selected ? 0 : -1}
-              className={`workflow-tabs__btn${selected ? " workflow-tabs__btn--active" : ""}`}
+              className={`task-tabs__btn${selected ? " task-tabs__btn--active" : ""}`}
               data-testid={`workflow-tab-${tab}`}
               onClick={() => setActive(tab)}
               onKeyDown={onTabKeyDown}

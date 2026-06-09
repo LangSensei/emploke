@@ -5510,38 +5510,22 @@ button {
  * dedicated chip selectors that existed in v2.3 were removed in v2.4
  * to keep visual parity with Tasks' flat statbar. */
 
-/* WAI-ARIA tablist */
-.workflow-tabs {
-  display: flex;
-  flex-direction: row;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--color-border);
-}
-.workflow-tabs__btn {
-  appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
-  font: inherit;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-.workflow-tabs__btn:hover {
-  background: var(--color-surface-hover);
-}
-.workflow-tabs__btn:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-.workflow-tabs__btn--active {
-  color: var(--color-text);
-  background: var(--color-accent-bg);
-  border-color: var(--color-accent);
-}
+/* WAI-ARIA tablist chrome — visuals share `.task-tabs*` (see
+ * `TaskView.tsx`); the workflow tab bar adds the full tablist
+ * semantics (role=tab + aria-selected + aria-controls + roving
+ * tabindex + Arrow/Home/End keys) on top of the same flat
+ * underline visual. Tasks' tab bar uses a simpler `aria-pressed`
+ * pattern, but the CSS chrome is identical, so the visuals are
+ * collapsed onto a single selector and the a11y wiring stays
+ * per-component. */
 
 .workflow-tabpanel {
+  /* Workflows wraps its tab body in an explicit `role="tabpanel"`
+   * element so the WAI-ARIA tablist contract is complete. Tasks
+   * inlines its tab body as a sibling of the tab bar (no panel
+   * wrapper, no panel role), so there is no shared `.task-tabpanel`
+   * selector to fold into — `.workflow-tabpanel` stays as a thin
+   * shape-only selector for the panel padding + focus ring. */
   padding: var(--space-3) 0;
 }
 .workflow-tabpanel:focus-visible {
