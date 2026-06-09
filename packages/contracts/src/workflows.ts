@@ -148,28 +148,30 @@ export interface WorkflowSuccessWire {
 
 /**
  * Wire projection of a failed workflow's terminal payload.
- * Discriminated on `kind`:
+ * Single-arm interface — `kind` retained as a discriminator so future
+ * substrate-detected failure modes can be added without breaking the
+ * wire shape.
  *
- *   - `coord`    — coordinator explicitly called `/finish` with
- *                  `outcome: 'failed'` and a message.
- *   - `internal` — substrate self-terminated the workflow (reserved
- *                  for future use; v2.2 emits only `coord`).
+ *   - `coordinator` — the coordinator explicitly called `/finish`
+ *                     with `outcome: 'failed'` and a message.
  */
-export type WorkflowFailureWire =
-  | { readonly kind: "coord"; readonly message: string }
-  | { readonly kind: "internal"; readonly message: string };
+export type WorkflowFailureWire = {
+  readonly kind: "coordinator";
+  readonly message: string;
+};
 
 /**
  * Wire projection of a cancelled workflow's terminal payload.
- * Discriminated on `kind`:
+ * Single-arm interface — `kind` retained as a discriminator so future
+ * cancellation sources (e.g. parent-workflow cascade) can be added
+ * without breaking the wire shape.
  *
- *   - `user`    — operator called `/cancel` from the dashboard / CLI.
- *   - `cascade` — substrate cancelled this workflow as collateral
- *                 (reserved for future use; v2.2 emits only `user`).
+ *   - `user` — operator called `/cancel` from the dashboard / CLI.
  */
-export type WorkflowCancellationWire =
-  | { readonly kind: "user"; readonly message: string }
-  | { readonly kind: "cascade"; readonly message: string };
+export type WorkflowCancellationWire = {
+  readonly kind: "user";
+  readonly message: string;
+};
 
 /**
  * Wire projection of a single workflow node. Per-kind `spec` is
@@ -392,8 +394,8 @@ export interface ReplaceNodeSpecBody {
  *   - `succeeded` — `success` is optional. When omitted, the server
  *     defaults the persisted payload to `{ output: null }`.
  *   - `failed`    — `failure` is REQUIRED. `kind` defaults to
- *     `"coord"` at the server boundary when omitted; `message` is
- *     a free-form string (empty allowed).
+ *     `"coordinator"` at the server boundary when omitted; `message`
+ *     is a free-form string (empty allowed).
  *
  * Workflow-level cancellation is a separate route
  * (`POST .../cancel`) — see {@link CancelWorkflowBody}.
@@ -405,7 +407,7 @@ export type FinishWorkflowBody =
     }
   | {
       readonly outcome: "failed";
-      readonly failure: { readonly kind?: "coord"; readonly message: string };
+      readonly failure: { readonly kind?: "coordinator"; readonly message: string };
     };
 
 /**

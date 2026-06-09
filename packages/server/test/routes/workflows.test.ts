@@ -826,7 +826,7 @@ describe("workflowsRoutes — finish (POST /:wfid/finish)", () => {
     expect(finishWorkflow).toHaveBeenCalledWith({
       workflowId: WID,
       outcome: "failed",
-      failure: { kind: "coord", message: "budget out" },
+      failure: { kind: "coordinator", message: "budget out" },
     });
   });
 

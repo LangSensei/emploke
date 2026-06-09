@@ -29,7 +29,7 @@ function makeWf(over?: Partial<{ status: string; coordinatorAgent: string }>): W
     startedAt: NOW,
     endedAt: null,
     success: status === "succeeded" ? JSON.stringify({ output: null }) : null,
-    failure: status === "failed" ? JSON.stringify({ kind: "coord", message: "" }) : null,
+    failure: status === "failed" ? JSON.stringify({ kind: "coordinator", message: "" }) : null,
     cancellation: status === "cancelled" ? JSON.stringify({ kind: "user", message: "" }) : null,
   });
 }

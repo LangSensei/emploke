@@ -229,16 +229,15 @@ export interface WorkflowCancelOpts extends CommonFlags {
   /**
    * Free-text operator-supplied message persisted into the
    * workflow's `cancellation` JSON column. Empty string is allowed
-   * but the flag itself MUST be present in v2.2 — the route rejects
-   * `{}` with a 400 because the `cancellation.message` field is
-   * required by the wire contract.
+   * but the flag itself MUST be present — the route rejects `{}` with
+   * a 400 because the `cancellation.message` field is required by the
+   * wire contract.
    */
   readonly message?: string;
   /**
-   * Cancellation kind. v2.2 only emits `"user"`; the flag is
-   * accepted for forward compatibility with future kinds (e.g.
-   * `"cascade"` once the substrate cascades cancels from a parent
-   * workflow). Defaults to `"user"` when omitted.
+   * Cancellation kind. Currently only `"user"` is emitted; the flag is
+   * accepted as a forward-compatibility seam for future kinds.
+   * Defaults to `"user"` when omitted.
    */
   readonly kind?: string;
 }
@@ -656,7 +655,7 @@ export async function workflowFinish(opts: WorkflowFinishOpts): Promise<CommandR
     const body: FinishWorkflowBody =
       opts.outcome === "succeeded"
         ? { outcome: "succeeded", success: { output: opts.summary ?? null } }
-        : { outcome: "failed", failure: { kind: "coord", message: opts.message ?? "" } };
+        : { outcome: "failed", failure: { kind: "coordinator", message: opts.message ?? "" } };
     const updated = await client.call("workflows.finish", {
       params: { id, wfid: opts.wfid },
       body,

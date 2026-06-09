@@ -62,7 +62,7 @@ describe("OverviewTab — typed state strips", () => {
       <OverviewTab
         workflow={makeWf({
           status: "failed",
-          failure: { kind: "coord", message: "coordinator returned non-zero" },
+          failure: { kind: "coordinator", message: "coordinator returned non-zero" },
         })}
       />,
     );

@@ -407,8 +407,8 @@ function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkfl
     }
   }
   const kind = (failure as { kind?: unknown }).kind;
-  if (kind !== undefined && kind !== "coord") {
-    return { ok: false, error: 'failure.kind must be "coord" when supplied' };
+  if (kind !== undefined && kind !== "coordinator") {
+    return { ok: false, error: 'failure.kind must be "coordinator" when supplied' };
   }
   const message = (failure as { message?: unknown }).message;
   if (typeof message !== "string") {
@@ -418,7 +418,7 @@ function validateFinishWorkflowBody(raw: unknown): ValidationResult<FinishWorkfl
     ok: true,
     value: {
       outcome: "failed",
-      failure: { kind: "coord", message },
+      failure: { kind: "coordinator", message },
     },
   };
 }
@@ -966,7 +966,7 @@ export function workflowsRoutes(
         await resolve(c).finishWorkflow({
           workflowId: wfid,
           outcome: "failed",
-          failure: { kind: "coord", message: body.failure.message },
+          failure: { kind: "coordinator", message: body.failure.message },
         });
       }
       const dag = await resolve(c).getDag(wfid);

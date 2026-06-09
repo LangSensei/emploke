@@ -331,9 +331,17 @@ function parseSpecJson(nodeId: string, raw: string): unknown {
 /**
  * Parse one of the optional terminal-payload columns. Returns
  * `undefined` when the column is null/undefined (the tolerance branch
- * for pre-v2.2 rows). When the column is a string, parses it as JSON
- * and runs the supplied shape validator; a parse error or shape
- * mismatch surfaces as `WorkflowError`.
+ * for pre-existing rows). When the column is a string, parses it as
+ * JSON, coerces legacy discriminator values onto the current
+ * single-arm vocabulary, and runs the supplied shape validator; a
+ * parse error or shape mismatch surfaces as `WorkflowError`.
+ *
+ * Legacy coercions (tolerance read path):
+ *   - `failure.kind` ∈ {`coord`, `internal`} → `coordinator`
+ *   - `cancellation.kind` === `cascade` → `user`
+ *
+ * The corresponding write path is migration-aware: see
+ * `packages/workflow/drizzle/0003_v2_5_cleanup.sql`.
  */
 function parseTerminalPayload<T>(
   rowId: string,
@@ -349,6 +357,17 @@ function parseTerminalPayload<T>(
     throw new WorkflowError(
       `Workflow "${rowId}" corrupted: ${field} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+  if (field === "failure" && parsed !== null && typeof parsed === "object") {
+    const v = parsed as { kind?: unknown };
+    if (v.kind === "coord" || v.kind === "internal") {
+      (parsed as { kind: string }).kind = "coordinator";
+    }
+  } else if (field === "cancellation" && parsed !== null && typeof parsed === "object") {
+    const v = parsed as { kind?: unknown };
+    if (v.kind === "cascade") {
+      (parsed as { kind: string }).kind = "user";
+    }
   }
   assertShape(rowId, parsed as T);
   return parsed as T;

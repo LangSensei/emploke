@@ -168,8 +168,8 @@ export function assertValidWorkflowNodeKind(kind: unknown): asserts kind is Node
 
 // ─── Terminal-payload shape validators ──────────────────────────────
 
-const FAILURE_KINDS = new Set(["coord", "internal"]);
-const CANCELLATION_KINDS = new Set(["user", "cascade"]);
+const FAILURE_KINDS = new Set(["coordinator"]);
+const CANCELLATION_KINDS = new Set(["user"]);
 
 /**
  * Shape check for {@link WorkflowSuccess}. Used by

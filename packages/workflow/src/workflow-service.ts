@@ -838,8 +838,8 @@ export class WorkflowService {
       if (typeof args.failure.message !== "string") {
         throw new WorkflowError("finishWorkflow: failure.message must be a string");
       }
-      if (args.failure.kind !== "coord" && args.failure.kind !== "internal") {
-        throw new WorkflowError("finishWorkflow: failure.kind must be 'coord' or 'internal'");
+      if (args.failure.kind !== "coordinator") {
+        throw new WorkflowError("finishWorkflow: failure.kind must be 'coordinator'");
       }
       failureJson = JSON.stringify(args.failure);
     }
@@ -891,8 +891,8 @@ export class WorkflowService {
     if (typeof args.cancellation.message !== "string") {
       throw new WorkflowError("cancelWorkflow: cancellation.message must be a string");
     }
-    if (args.cancellation.kind !== "user" && args.cancellation.kind !== "cascade") {
-      throw new WorkflowError("cancelWorkflow: cancellation.kind must be 'user' or 'cascade'");
+    if (args.cancellation.kind !== "user") {
+      throw new WorkflowError("cancelWorkflow: cancellation.kind must be 'user'");
     }
     const cancellationJson = JSON.stringify(args.cancellation);
 

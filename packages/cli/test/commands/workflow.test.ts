@@ -941,7 +941,7 @@ describe("workflowFinish", () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(calls[0]?.body).toEqual({
       outcome: "failed",
-      failure: { kind: "coord", message: "budget exhausted" },
+      failure: { kind: "coordinator", message: "budget exhausted" },
     });
   });
 

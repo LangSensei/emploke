@@ -90,7 +90,7 @@ describe("WorkflowService.finishWorkflow", () => {
     await h.service.finishWorkflow({
       workflowId,
       outcome: "failed",
-      failure: { kind: "coord", message: "ran out of budget" },
+      failure: { kind: "coordinator", message: "ran out of budget" },
     });
 
     expect(h.workerRunner.cancelCalls).toContain(runningTask);
@@ -117,7 +117,7 @@ describe("WorkflowService.finishWorkflow", () => {
       h.service.finishWorkflow({
         workflowId,
         outcome: "failed",
-        failure: { kind: "coord", message: "x" },
+        failure: { kind: "coordinator", message: "x" },
       }),
     ).rejects.toBeInstanceOf(WorkflowAlreadyTerminalError);
   });
@@ -147,10 +147,10 @@ describe("WorkflowService.finishWorkflow", () => {
     await h.service.finishWorkflow({
       workflowId,
       outcome: "failed",
-      failure: { kind: "coord", message: "budget exhausted" },
+      failure: { kind: "coordinator", message: "budget exhausted" },
     });
     const wf = await h.service.getWorkflow(workflowId);
-    expect(wf.failure).toEqual({ kind: "coord", message: "budget exhausted" });
+    expect(wf.failure).toEqual({ kind: "coordinator", message: "budget exhausted" });
     expect(wf.success).toBeUndefined();
   });
 

@@ -53,7 +53,7 @@ describe("WorkflowEntity — v2.2 terminal payload columns", () => {
           rowBase({
             status: "succeeded",
             endedAt: NOW,
-            failure: JSON.stringify({ kind: "coord", message: "x" }),
+            failure: JSON.stringify({ kind: "coordinator", message: "x" }),
           }),
         ),
       ).toThrow();
@@ -66,10 +66,10 @@ describe("WorkflowEntity — v2.2 terminal payload columns", () => {
         rowBase({
           status: "failed",
           endedAt: NOW,
-          failure: JSON.stringify({ kind: "coord", message: "budget out" }),
+          failure: JSON.stringify({ kind: "coordinator", message: "budget out" }),
         }),
       );
-      expect(e.failure).toEqual({ kind: "coord", message: "budget out" });
+      expect(e.failure).toEqual({ kind: "coordinator", message: "budget out" });
       expect(e.success).toBeUndefined();
     });
 
@@ -102,6 +102,28 @@ describe("WorkflowEntity — v2.2 terminal payload columns", () => {
         ),
       ).toThrow();
     });
+
+    it("coerces legacy failure.kind 'coord' to 'coordinator' on read", () => {
+      const e = WorkflowEntity.fromRow(
+        rowBase({
+          status: "failed",
+          endedAt: NOW,
+          failure: JSON.stringify({ kind: "coord", message: "legacy" }),
+        }),
+      );
+      expect(e.failure).toEqual({ kind: "coordinator", message: "legacy" });
+    });
+
+    it("coerces legacy failure.kind 'internal' to 'coordinator' on read", () => {
+      const e = WorkflowEntity.fromRow(
+        rowBase({
+          status: "failed",
+          endedAt: NOW,
+          failure: JSON.stringify({ kind: "internal", message: "engine" }),
+        }),
+      );
+      expect(e.failure).toEqual({ kind: "coordinator", message: "engine" });
+    });
   });
 
   describe("cancelled", () => {
@@ -132,6 +154,17 @@ describe("WorkflowEntity — v2.2 terminal payload columns", () => {
         ),
       ).toThrow();
     });
+
+    it("coerces legacy cancellation.kind 'cascade' to 'user' on read", () => {
+      const e = WorkflowEntity.fromRow(
+        rowBase({
+          status: "cancelled",
+          endedAt: NOW,
+          cancellation: JSON.stringify({ kind: "cascade", message: "parent gone" }),
+        }),
+      );
+      expect(e.cancellation).toEqual({ kind: "user", message: "parent gone" });
+    });
   });
 
   describe("running", () => {
@@ -141,7 +174,7 @@ describe("WorkflowEntity — v2.2 terminal payload columns", () => {
       ).toThrow();
       expect(() =>
         WorkflowEntity.fromRow(
-          rowBase({ failure: JSON.stringify({ kind: "coord", message: "x" }) }),
+          rowBase({ failure: JSON.stringify({ kind: "coordinator", message: "x" }) }),
         ),
       ).toThrow();
       expect(() =>
