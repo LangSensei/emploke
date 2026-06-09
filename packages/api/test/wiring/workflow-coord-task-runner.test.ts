@@ -55,7 +55,7 @@ function fakeTaskRow(overrides: Partial<{ id: string; status: string }> = {}): a
 // biome-ignore lint/suspicious/noExplicitAny: minimal WorkflowEntity stub; full entity has more fields the runner does not read.
 function fakeWorkflowRow(overrides: { brief?: string; details?: string | undefined } = {}): any {
   return {
-    id: "wf-id",
+    id: "20260101-deadbeef",
     brief: overrides.brief ?? "wf brief",
     details: "details" in overrides ? overrides.details : "wf details",
     coordinatorAgent: "coord-agent",
@@ -130,16 +130,26 @@ function stubDeps(
 }
 
 const NODE_VALIDATE_CTX = {
-  workflowId: "wf-id",
+  workflowId: "20260101-deadbeef",
   workflowStatus: "running" as const,
 };
 
 const DISPATCH_OPTS_BASE = {
-  workflowId: "wf-id",
-  nodeId: "node-id",
+  workflowId: "20260101-deadbeef",
+  nodeId: "deadbeef-cafe-4bab-89ab-cafebabe1234",
   spec: { agent: "coord-agent" } as unknown,
   nodeDir: "/tmp/node-dir",
 };
+
+/**
+ * `workspaceDir` is a new required dep on {@link makeCoordNodeRunner}.
+ * The coord runner resolves `EMPLOKE_WORKFLOW_DIR` from this base
+ * via the workflow pkg's `workflowDir(workspaceDir, workflowId)`
+ * helper, so the env-injection assertions in
+ * `describe("makeCoordNodeRunner — dispatch")` use this to predict
+ * the value the runner emits.
+ */
+const TEST_WORKSPACE_DIR = "/tmp/test-workspace";
 
 describe("makeCoordNodeRunner — validate", () => {
   it("U1: accepts a minimal valid spec and returns the normalized shape", async () => {
@@ -148,6 +158,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     const result = await r.validate({ agent: "x" }, NODE_VALIDATE_CTX);
     expect(result).toEqual({ agent: "x" });
@@ -161,6 +172,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate({}, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(WorkflowCoordSpecError);
     await expect(r.validate({}, NODE_VALIDATE_CTX)).rejects.toThrow(/agent/);
@@ -173,6 +185,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate({ agent: "" }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
       WorkflowCoordSpecError,
@@ -187,6 +200,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate({ agent: "   " }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
       WorkflowCoordSpecError,
@@ -200,6 +214,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate({ agent: "x", extra: 1 }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
       WorkflowCoordSpecError,
@@ -213,6 +228,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate(null, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
       WorkflowCoordSpecError,
@@ -226,6 +242,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate("x", NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(WorkflowCoordSpecError);
     await r.dispose();
@@ -237,6 +254,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate([], NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(WorkflowCoordSpecError);
     await r.dispose();
@@ -248,6 +266,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     await expect(r.validate({ agent: "missing" }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
       AgentNotFoundError,
@@ -262,6 +281,7 @@ describe("makeCoordNodeRunner — validate", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     let captured: unknown;
     try {
@@ -291,6 +311,7 @@ describe("makeCoordNodeRunner — dispatch", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100_000, // never poll during this test
     });
     const result = await r.dispatch({
@@ -298,15 +319,92 @@ describe("makeCoordNodeRunner — dispatch", () => {
       onTerminal: () => {},
     });
     expect(deps.getService).toHaveBeenCalledTimes(1);
-    expect(deps.getWorkflow).toHaveBeenCalledWith("wf-id");
+    expect(deps.getWorkflow).toHaveBeenCalledWith("20260101-deadbeef");
     expect(deps.dispatch).toHaveBeenCalledWith({
       agent: "coord-agent",
       brief: "wf brief",
       details: "wf details",
       origin: "workflow",
-      metadata: { workflowId: "wf-id", workflowNodeId: "node-id" },
+      metadata: {
+        workflowId: "20260101-deadbeef",
+        workflowNodeId: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      },
+      // Coord-kind framing prompt — replaces the default
+      // `TASK_FRAMING_PROMPT_COPILOT`. Asserted as
+      // `expect.stringContaining` so the test pins the agent-
+      // visible contract (the three env-key banner items)
+      // rather than the exact phrasing — a copy edit doesn't
+      // break the suite, but a contract change does.
+      prompt: expect.stringContaining("EMPLOKE_WORKFLOW_ID") as unknown as string,
+      // All three workflow env keys are present on the coord
+      // dispatch — `EMPLOKE_WORKFLOW_DIR` is coord-only (worker
+      // dispatch omits it; see the worker runner tests).
+      subprocessEnv: {
+        EMPLOKE_WORKFLOW_ID: "20260101-deadbeef",
+        EMPLOKE_NODE_ID: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+        EMPLOKE_WORKFLOW_DIR: expect.stringMatching(/20260101-deadbeef/) as unknown as string,
+      },
     });
     expect(result).toBeUndefined();
+    await r.dispose();
+  });
+
+  it("U11b: subprocessEnv.EMPLOKE_WORKFLOW_DIR composes from deps.workspaceDir + workflowId", async () => {
+    const deps = stubDeps({ getWorkflowReturn: fakeWorkflowRow() });
+    const r = makeCoordNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      getService: deps.getService,
+      // Concrete deterministic value so the assertion below can pin
+      // the exact resolved path rather than only a contains-match.
+      workspaceDir: "/concrete-ws",
+      pollIntervalMs: 100_000,
+    });
+    await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal: () => {} });
+
+    const calls = deps.dispatch.mock.calls as unknown as ReadonlyArray<
+      readonly [Record<string, unknown>]
+    >;
+    const env = (calls[0]?.[0] as { subprocessEnv?: Record<string, string> }).subprocessEnv;
+    expect(env).toBeDefined();
+    // Path shape: `<workspaceDir>/workflows/<wfid>` via
+    // `workflowDir` from `@emploke/workflow`. The path separator
+    // varies across OSes — accept both for portability of the test.
+    expect(env?.EMPLOKE_WORKFLOW_DIR).toMatch(
+      /[\\/]concrete-ws[\\/]workflows[\\/]20260101-deadbeef$/,
+    );
+    await r.dispose();
+  });
+
+  it("U11c: subprocessEnv contains exactly the 3 coord workflow keys (no kernel key leak)", async () => {
+    const deps = stubDeps({ getWorkflowReturn: fakeWorkflowRow() });
+    const r = makeCoordNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
+      pollIntervalMs: 100_000,
+    });
+    await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal: () => {} });
+
+    const calls = deps.dispatch.mock.calls as unknown as ReadonlyArray<
+      readonly [Record<string, unknown>]
+    >;
+    const env = (calls[0]?.[0] as { subprocessEnv?: Record<string, string> }).subprocessEnv;
+    expect(env).toBeDefined();
+    expect(Object.keys(env ?? {}).sort()).toEqual([
+      "EMPLOKE_NODE_ID",
+      "EMPLOKE_WORKFLOW_DIR",
+      "EMPLOKE_WORKFLOW_ID",
+    ]);
+    // The 5 kernel keys must NOT be present (they are owned by the
+    // task pkg; collision would be caught by
+    // `DispatchKernelEnvCollisionError`).
+    expect(env).not.toHaveProperty("EMPLOKE_WORKSPACE");
+    expect(env).not.toHaveProperty("EMPLOKE_WORKSPACE_DIR");
+    expect(env).not.toHaveProperty("EMPLOKE_WORK_KIND");
+    expect(env).not.toHaveProperty("EMPLOKE_WORK_ID");
+    expect(env).not.toHaveProperty("EMPLOKE_WORK_DIR");
     await r.dispose();
   });
 
@@ -318,6 +416,7 @@ describe("makeCoordNodeRunner — dispatch", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100_000,
     });
     await r.dispatch({
@@ -328,7 +427,20 @@ describe("makeCoordNodeRunner — dispatch", () => {
       agent: "coord-agent",
       brief: "only brief",
       origin: "workflow",
-      metadata: { workflowId: "wf-id", workflowNodeId: "node-id" },
+      metadata: {
+        workflowId: "20260101-deadbeef",
+        workflowNodeId: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      },
+      // Prompt + subprocessEnv are emitted by the coord runner
+      // regardless of whether wf.details is set — the env shape
+      // and framing override are independent of the optional
+      // `details` field.
+      prompt: expect.stringContaining("workflow coordinator") as unknown as string,
+      subprocessEnv: {
+        EMPLOKE_WORKFLOW_ID: "20260101-deadbeef",
+        EMPLOKE_NODE_ID: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+        EMPLOKE_WORKFLOW_DIR: expect.stringMatching(/20260101-deadbeef/) as unknown as string,
+      },
     });
     // Defense-in-depth: assert the literal absence of the `details`
     // key — the runner's conditional spread must not pass
@@ -351,6 +463,7 @@ describe("makeCoordNodeRunner — dispatch", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100_000,
     });
     let captured: unknown;
@@ -383,6 +496,7 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100,
     });
     await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
@@ -404,6 +518,7 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100,
     });
     await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
@@ -426,6 +541,7 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100,
     });
     await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
@@ -448,6 +564,7 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100,
     });
     await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
@@ -468,6 +585,7 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100,
       maxPollErrors: 3,
     });
@@ -489,6 +607,7 @@ describe("makeCoordNodeRunner — poll loop terminal mapping", () => {
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
       pollIntervalMs: 100,
     });
     await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
@@ -509,10 +628,13 @@ describe("makeCoordNodeRunner — hasInFlightForNode + cancel + dispose", () => 
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
-    const result = await r.hasInFlightForNode("node-id");
+    const result = await r.hasInFlightForNode("deadbeef-cafe-4bab-89ab-cafebabe1234");
     expect(result).toBe(true);
-    expect(deps.hasInFlightForWorkflowNode).toHaveBeenCalledWith("node-id");
+    expect(deps.hasInFlightForWorkflowNode).toHaveBeenCalledWith(
+      "deadbeef-cafe-4bab-89ab-cafebabe1234",
+    );
     await r.dispose();
   });
 
@@ -527,6 +649,7 @@ describe("makeCoordNodeRunner — hasInFlightForNode + cancel + dispose", () => 
         catalog: deps.catalog,
         tasks: deps.tasks,
         getService: deps.getService,
+        workspaceDir: TEST_WORKSPACE_DIR,
         pollIntervalMs: 100,
       });
       const onTerminal = vi.fn();
@@ -535,8 +658,10 @@ describe("makeCoordNodeRunner — hasInFlightForNode + cancel + dispose", () => 
       await vi.advanceTimersByTimeAsync(0);
       const pollsBeforeCancel = deps.get.mock.calls.length;
       expect(pollsBeforeCancel).toBeGreaterThanOrEqual(1);
-      await r.cancel("node-id");
-      expect(deps.listInFlightForWorkflowNode).toHaveBeenCalledWith("node-id");
+      await r.cancel("deadbeef-cafe-4bab-89ab-cafebabe1234");
+      expect(deps.listInFlightForWorkflowNode).toHaveBeenCalledWith(
+        "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      );
       expect(deps.cancel).toHaveBeenCalledTimes(2);
       expect(deps.cancel).toHaveBeenCalledWith("t-a");
       expect(deps.cancel).toHaveBeenCalledWith("t-b");
@@ -562,9 +687,10 @@ describe("makeCoordNodeRunner — hasInFlightForNode + cancel + dispose", () => 
       catalog: deps.catalog,
       tasks: deps.tasks,
       getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
     });
     // Should NOT throw; the runner logs and continues.
-    await r.cancel("node-id");
+    await r.cancel("deadbeef-cafe-4bab-89ab-cafebabe1234");
     // biome-ignore lint/suspicious/noExplicitAny: test-only access to the overridden mock.
     expect((deps.tasks as any).cancel).toHaveBeenCalledTimes(2);
     await r.dispose();
@@ -578,13 +704,14 @@ describe("makeCoordNodeRunner — hasInFlightForNode + cancel + dispose", () => 
         catalog: deps.catalog,
         tasks: deps.tasks,
         getService: deps.getService,
+        workspaceDir: TEST_WORKSPACE_DIR,
         pollIntervalMs: 100,
       });
       const onTerminal = vi.fn();
       await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
       await r.dispatch({
         ...DISPATCH_OPTS_BASE,
-        nodeId: "node-id-2",
+        nodeId: "cafebabe-dead-4bee-89ab-feedbabe1234",
         onTerminal,
       });
       await vi.advanceTimersByTimeAsync(150);

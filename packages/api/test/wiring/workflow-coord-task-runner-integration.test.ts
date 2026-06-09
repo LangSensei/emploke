@@ -87,6 +87,12 @@ async function makeHarness(opts: MakeHarnessOpts = {}): Promise<Harness> {
     service: null,
   };
 
+  // Create the workspaceDir up front so the coord runner can capture
+  // it as a required dep. The workflow substrate composed below will
+  // reuse this same dir as the root for
+  // `workflowDir(workspaceDir, wfid)`.
+  const workspaceDir = mkdtempSync(path.join(tmpdir(), "wf-coord-runner-int-"));
+
   const coordRunner = makeCoordNodeRunner({
     tasks,
     catalog,
@@ -99,6 +105,7 @@ async function makeHarness(opts: MakeHarnessOpts = {}): Promise<Harness> {
       }
       return s;
     },
+    workspaceDir,
     pollIntervalMs: 25,
     maxPollErrors: 3,
   });
@@ -117,7 +124,6 @@ async function makeHarness(opts: MakeHarnessOpts = {}): Promise<Harness> {
   };
 
   const dbHandle = openTestWorkflowDb();
-  const workspaceDir = mkdtempSync(path.join(tmpdir(), "wf-coord-runner-int-"));
   const module = await composeWorkflowModule({
     db: dbHandle.db,
     workspaceDir,

@@ -276,6 +276,12 @@ describe("@emploke/workflow public API guard", () => {
     expectTypeOf<WorkflowService>().toHaveProperty("finishWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("cancelWorkflow");
     expectTypeOf<WorkflowService>().toHaveProperty("dispatchAtomic");
+    // Per-workflow shared dir lifecycle. The `purge` method is the
+    // operator cleanup seam wired into the `emploke workflow purge`
+    // subcommand (separate PR); the assertion here locks the method
+    // on the service so a future refactor renaming it surfaces as a
+    // compile failure.
+    expectTypeOf<WorkflowService>().toHaveProperty("purge");
     // Phase 2b structural mutation primitives.
     expectTypeOf<WorkflowService>().toHaveProperty("removeNode");
     expectTypeOf<WorkflowService>().toHaveProperty("removeEdge");

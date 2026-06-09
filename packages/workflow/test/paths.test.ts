@@ -45,15 +45,30 @@ describe("workflowDir / workflowNodeDir", () => {
 
   it("workflowNodeDir composes <workspace>/workflows/<wf>/nodes/<node>", () => {
     const ws = path.resolve("/tmp/ws");
-    expect(workflowNodeDir(ws, "20260522-aaaaaaaa", "20260522-bbbbbbbb")).toBe(
-      path.join(ws, "workflows", "20260522-aaaaaaaa", "nodes", "20260522-bbbbbbbb"),
+    expect(workflowNodeDir(ws, "20260522-aaaaaaaa", "deadbeef-cafe-4bab-89ab-cafebabe1234")).toBe(
+      path.join(
+        ws,
+        "workflows",
+        "20260522-aaaaaaaa",
+        "nodes",
+        "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      ),
     );
+  });
+
+  it("workflowDir rejects an id that does not match the workflow id grammar", () => {
+    const ws = path.resolve("/tmp/ws");
+    // Grammar check fires before `safeJoinUnderRoot`; the error
+    // surface is the validator's, not the path-component guard's.
+    expect(() => workflowDir(ws, "not-a-valid-id")).toThrow(/Invalid workflow id/);
   });
 
   it("workflowNodeDir rejects '..' as node id", () => {
     const ws = path.resolve("/tmp/ws");
+    // Node id grammar (UUIDv4) is checked at function entry, before
+    // the lower-level path-component guard would have caught '..'.
     expect(() => workflowNodeDir(ws, "20260522-aaaaaaaa", "..")).toThrow(
-      /invalid workflow path component/,
+      /Invalid workflow node id/,
     );
   });
 });

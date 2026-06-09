@@ -64,12 +64,18 @@
  */
 
 import type { CatalogService } from "@emploke/catalog";
-import { AgentNotFoundError, AgentResolutionFailedError, type TaskService } from "@emploke/task";
-import type {
-  WorkflowNodeRunner,
-  WorkflowNodeTerminalResult,
-  WorkflowNodeValidateCtx,
-  WorkflowService,
+import {
+  AgentNotFoundError,
+  AgentResolutionFailedError,
+  assertFramingPromptIsSafe,
+  type TaskService,
+} from "@emploke/task";
+import {
+  type WorkflowNodeRunner,
+  type WorkflowNodeTerminalResult,
+  type WorkflowNodeValidateCtx,
+  type WorkflowService,
+  workflowDir,
 } from "@emploke/workflow";
 import pino, { type Logger } from "pino";
 
@@ -79,6 +85,49 @@ const silentLogger: Logger = pino({ level: "silent" });
 export const DEFAULT_COORD_POLL_INTERVAL_MS = 2000;
 /** Default runner-local poll-error budget before surfacing as failed. */
 export const DEFAULT_COORD_MAX_POLL_ERRORS = 3;
+
+/**
+ * Framing prompt the spawned coordinator task subprocess receives in
+ * place of `@emploke/task`'s default `TASK_FRAMING_PROMPT_COPILOT`.
+ *
+ * The override exists because a coordinator needs a different opening
+ * banner than a normal task: it must name the three workflow env keys
+ * (`EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`, `EMPLOKE_WORKFLOW_DIR`)
+ * the workflow substrate injects, point at TASK.md as workflow context
+ * (not its per-wake-up assignment), defer the operational protocol to
+ * the coord agent's own body, and provide an escape hatch for
+ * undecidable state so an inconsistent workflow finishes as failed
+ * rather than retrying indefinitely. Kept narrow to a banner; the
+ * "what to do this wake-up" decision logic lives in the agent body,
+ * not here.
+ *
+ * Single-line printable ASCII by the same invariant as the default
+ * (see `framing.ts` — cmd.exe `/c` argv treats LF as a statement
+ * separator on Windows). The assertion below catches any future edit
+ * that breaks that invariant at module load; the task pkg also
+ * re-runs the same check at dispatch time.
+ */
+const COORD_FRAMING_PROMPT_COPILOT =
+  "You are running as a workflow coordinator. " +
+  "Identity: " +
+  "EMPLOKE_WORKFLOW_ID -- the workflow you advance; " +
+  "EMPLOKE_NODE_ID -- your coord-node id; " +
+  "EMPLOKE_WORKFLOW_DIR -- per-workflow shared dir (read+write yours alone). " +
+  "TASK.md holds the workflow's overall goal (not your per-wake-up assignment); " +
+  "inspect current DAG state via the workflow CLI to decide what to do this wake-up. " +
+  "The coordinator protocol you follow is defined in your agent body. " +
+  "After applying your decision (workflow mutations and/or finish), end your response -- " +
+  "the substrate will trigger the next phase. " +
+  "If state is inconsistent or no next step is decidable, " +
+  "finish the workflow as failed rather than retrying indefinitely.";
+
+// Build-time safety check. Mirrors the module-load
+// `assertFramingPromptIsSafe(TASK_FRAMING_PROMPT_COPILOT)` in
+// `@emploke/task`'s `framing.ts`. The task pkg also re-runs the
+// same invariant on every actual dispatch against the override
+// argument — this is the additional build-time guard on the
+// default value we ship here.
+assertFramingPromptIsSafe(COORD_FRAMING_PROMPT_COPILOT);
 
 /**
  * Validated coord-spec shape. The substrate persists this as
@@ -120,6 +169,19 @@ export interface MakeCoordNodeRunnerDeps {
    * ↔ service two-phase init at `compose.ts:113`.
    */
   readonly getService: () => WorkflowService;
+  /**
+   * Absolute path to the workspace root. The runner needs it so it
+   * can resolve the per-workflow shared dir via
+   * `workflowDir(workspaceDir, workflowId)` and inject the resolved
+   * path as `EMPLOKE_WORKFLOW_DIR` into the dispatched coord task's
+   * subprocess env. The workflow substrate creates the dir on
+   * `createWorkflow`; the runner only reads its path — it never
+   * mkdirs.
+   *
+   * Sourced from `workspace.workspaceDir` in `workspace-context.ts`
+   * at compose time, alongside the workflow module construction.
+   */
+  readonly workspaceDir: string;
   readonly logger?: Logger;
   /**
    * Override the default `tasks.get(...)` poll cadence. Tests pass
@@ -258,6 +320,28 @@ export function makeCoordNodeRunner(
         metadata: {
           workflowId: opts.workflowId,
           workflowNodeId: opts.nodeId,
+        },
+        // Override the default framing prompt so the spawned coord
+        // task receives the coord-kind opener defined at the top of
+        // this file. Replaces `@emploke/task`'s
+        // `TASK_FRAMING_PROMPT_COPILOT` for this dispatch only. The
+        // default's safety is invariant-checked by `framing.ts` at
+        // module load; the override is checked at module load above
+        // + re-checked on every dispatch by the task pkg's
+        // `assertFramingPromptIsSafe` wire in `dispatch.ts`.
+        prompt: COORD_FRAMING_PROMPT_COPILOT,
+        // Coord tasks see all three workflow env keys
+        // (`EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`,
+        // `EMPLOKE_WORKFLOW_DIR`). Worker tasks see only the first
+        // two — see the sibling worker runner for the rationale
+        // (the per-workflow shared dir is coord-only by design;
+        // workers stay workflow-unaware). The convention is doc-
+        // only, not OS-enforced. Key names are stable identifiers
+        // referenced by `skills/coordinator/SKILL.md`.
+        subprocessEnv: {
+          EMPLOKE_WORKFLOW_ID: opts.workflowId,
+          EMPLOKE_NODE_ID: opts.nodeId,
+          EMPLOKE_WORKFLOW_DIR: workflowDir(deps.workspaceDir, opts.workflowId),
         },
       });
       const taskId = task.id;

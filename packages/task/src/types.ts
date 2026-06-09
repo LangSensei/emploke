@@ -228,6 +228,38 @@ export interface DispatchOpts {
    * orchestrators can add their own tags.
    */
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /**
+   * Optional caller-supplied env bag merged on top of the 5 kernel
+   * env keys (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`,
+   * `EMPLOKE_WORK_KIND`, `EMPLOKE_WORK_ID`, `EMPLOKE_WORK_DIR`) that
+   * dispatch always sets on the spawned subprocess.
+   *
+   * Boundary check: dispatch throws {@link DispatchKernelEnvCollisionError}
+   * if any caller key collides with a kernel key. Callers must use
+   * namespaced keys (e.g. `EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`).
+   *
+   * The runtime layer's own cross-cutting env (`EMPLOKE_SERVER`,
+   * `EMPLOKE_SHARED_DIR`, …) layers underneath via the runtime's
+   * `subprocessEnvBase` config; this bag does not interact with it.
+   *
+   * Domain-clean: the task pkg does not interpret these keys.
+   * Workflow / scheduler / future orchestrators are the domain-aware
+   * layer that knows what each key means.
+   */
+  readonly subprocessEnv?: Readonly<Record<string, string>>;
+  /**
+   * Optional override for the framing prompt the runtime receives as
+   * the spawn-time `prompt` argv. Defaults to
+   * {@link TASK_FRAMING_PROMPT_COPILOT} ("read TASK.md, save artifacts
+   * to ./artifact/, prefer self-contained HTML"). The
+   * {@link assertFramingPromptIsSafe} invariant runs on whichever
+   * prompt is actually used (default OR override) so any unsafe
+   * override (multi-line, non-printable-ASCII) throws pre-spawn.
+   *
+   * Used by callers (e.g. the workflow coordinator runner) that need
+   * a kind-specific framing the substrate can't infer.
+   */
+  readonly prompt?: string;
 }
 
 /**

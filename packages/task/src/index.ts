@@ -11,6 +11,7 @@ export {
   AgentNotFoundError,
   AgentResolutionFailedError,
   CorruptedTaskError,
+  DispatchKernelEnvCollisionError,
   EntryNotReadyError,
   InvalidTaskIdError,
   InvalidTransition,

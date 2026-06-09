@@ -1,4 +1,5 @@
 import path from "node:path";
+import { assertValidWorkflowId, assertValidWorkflowNodeId } from "./validate.js";
 
 /** Subdirectory under `<workspaceDir>/` where per-workflow workdirs live. */
 export const WORKFLOW_SUBDIR = "workflows";
@@ -46,8 +47,19 @@ export function safeJoinUnderRoot(root: string, id: string): string {
   return candidate;
 }
 
-/** Resolve `<workspaceDir>/workflows/<workflowId>/`. */
+/**
+ * Resolve `<workspaceDir>/workflows/<workflowId>/`.
+ *
+ * Defense-in-depth: validates `workflowId` against the grammar
+ * (`assertValidWorkflowId`) before path composition. The docstring on
+ * `safeJoinUnderRoot` documents that callers must validate upstream,
+ * but this helper is part of the package's public surface and is
+ * reached from wiring code that doesn't always validate first; the
+ * guard surfaces a bad id loudly here rather than producing a
+ * happily-constructed but semantically invalid path.
+ */
 export function workflowDir(workspaceDir: string, workflowId: string): string {
+  assertValidWorkflowId(workflowId);
   return safeJoinUnderRoot(workflowRoot(workspaceDir), workflowId);
 }
 
@@ -56,8 +68,14 @@ export function workflowDir(workspaceDir: string, workflowId: string): string {
  * Every node owns a sibling sub-directory under the workflow's
  * shared scratch dir, so a `kind='worker'` node can hand the resulting
  * path straight to the task manager as the task's `workdir`.
+ *
+ * Validates both ids at function entry for the same reason `workflowDir`
+ * does (and so this helper is self-defensive without relying on
+ * call-order coincidence with the nested `workflowDir` call).
  */
 export function workflowNodeDir(workspaceDir: string, workflowId: string, nodeId: string): string {
+  assertValidWorkflowId(workflowId);
+  assertValidWorkflowNodeId(nodeId);
   const wfDir = workflowDir(workspaceDir, workflowId);
   return safeJoinUnderRoot(path.join(wfDir, WORKFLOW_NODES_SUBDIR), nodeId);
 }

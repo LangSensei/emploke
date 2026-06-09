@@ -195,3 +195,30 @@ export class ManagerShuttingDownError extends TaskError {
     super("task manager is shutting down");
   }
 }
+
+/**
+ * Thrown by `TaskService.dispatch()` when a caller-supplied
+ * `subprocessEnv` key collides with one of the 5 kernel env keys
+ * the dispatch flow always sets
+ * (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_WORK_KIND`,
+ * `EMPLOKE_WORK_ID`, `EMPLOKE_WORK_DIR`).
+ *
+ * The check exists so a domain-aware caller (e.g. the workflow
+ * coordinator runner) cannot accidentally clobber the per-task work-
+ * context bag with a same-named key. Callers must use namespaced
+ * keys (`EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`,
+ * `EMPLOKE_WORKFLOW_DIR`, etc.).
+ *
+ * Thrown pre-spawn: no workdir is left on disk, no subprocess is
+ * launched, no row is left in the repository. Surfaces as a typed
+ * 400-class fault for the HTTP layer.
+ */
+export class DispatchKernelEnvCollisionError extends TaskError {
+  override readonly name = "DispatchKernelEnvCollisionError";
+
+  constructor(public readonly key: string) {
+    super(
+      `subprocessEnv key ${JSON.stringify(key)} collides with kernel env key; use a non-kernel key`,
+    );
+  }
+}

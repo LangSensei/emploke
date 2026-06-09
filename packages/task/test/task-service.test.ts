@@ -42,6 +42,7 @@ import {
   assertFramingPromptIsSafe,
   type BlockedReason,
   CorruptedTaskError,
+  DispatchKernelEnvCollisionError,
   type DispatchOpts,
   EntryNotReadyError,
   formatTaskMd,
@@ -1640,6 +1641,166 @@ describe("dispatch — subprocess env injection", () => {
     // The two env objects are distinct instances — proves we don't
     // reuse a memoised per-manager bag.
     expect(rt.dispatchCalls[0]!.subprocessEnv).not.toBe(rt.dispatchCalls[1]!.subprocessEnv);
+  });
+});
+
+// ═════ caller-supplied subprocessEnv + prompt overrides ═════
+//
+// Domain-aware callers (e.g. the workflow coord runner) supply their
+// own env keys (`EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`, …) and an
+// optional kind-specific framing prompt. The task pkg stays domain-
+// clean: it doesn't interpret those keys, but enforces a boundary
+// check so caller bags can never clobber the 5 kernel env keys
+// (`EMPLOKE_WORKSPACE`, `EMPLOKE_WORKSPACE_DIR`, `EMPLOKE_WORK_KIND`,
+// `EMPLOKE_WORK_ID`, `EMPLOKE_WORK_DIR`). The override surface is
+// also additive — callers that don't supply `subprocessEnv` /
+// `prompt` see the existing default behaviour.
+
+describe("dispatch — caller-supplied subprocessEnv override", () => {
+  it("merges caller-supplied keys on top of the 5 kernel keys", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt, workspaceId: "ws-merge" });
+
+    await m.dispatch(
+      dispatchOf({
+        agent: "demo",
+        brief: "merge test",
+        subprocessEnv: { EMPLOKE_WORKFLOW_ID: "wf-1", FOO: "bar" },
+      }),
+    );
+
+    expect(rt.dispatchCalls).toHaveLength(1);
+    const env = rt.dispatchCalls[0]!.subprocessEnv;
+    expect(env).toBeDefined();
+    // Caller-supplied keys present.
+    expect(env?.EMPLOKE_WORKFLOW_ID).toBe("wf-1");
+    expect(env?.FOO).toBe("bar");
+    // All 5 kernel keys still present.
+    expect(env?.EMPLOKE_WORKSPACE).toBe("ws-merge");
+    expect(env?.EMPLOKE_WORKSPACE_DIR).toBe(workspaceDir);
+    expect(env?.EMPLOKE_WORK_KIND).toBe("task");
+    expect(env?.EMPLOKE_WORK_ID).toMatch(/^\d{8}-[0-9a-f]{8}$/);
+    expect(env?.EMPLOKE_WORK_DIR).toContain("tasks");
+  });
+
+  it("omitting subprocessEnv leaves the existing kernel-only env shape unchanged", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt, workspaceId: "ws-default" });
+
+    await m.dispatch(dispatchOf({ agent: "demo", brief: "default env" }));
+
+    const env = rt.dispatchCalls[0]!.subprocessEnv;
+    // Only the 5 kernel keys — no extras leak in.
+    expect(env).toBeDefined();
+    const keys = Object.keys(env ?? {}).sort();
+    expect(keys).toEqual(
+      [
+        "EMPLOKE_WORKSPACE",
+        "EMPLOKE_WORKSPACE_DIR",
+        "EMPLOKE_WORK_DIR",
+        "EMPLOKE_WORK_ID",
+        "EMPLOKE_WORK_KIND",
+      ].sort(),
+    );
+  });
+
+  it.each([
+    "EMPLOKE_WORKSPACE",
+    "EMPLOKE_WORKSPACE_DIR",
+    "EMPLOKE_WORK_KIND",
+    "EMPLOKE_WORK_ID",
+    "EMPLOKE_WORK_DIR",
+  ])("rejects collision with kernel key %s (DispatchKernelEnvCollisionError)", async (kernelKey) => {
+    const rt = new StubRuntime();
+    const { m, repo } = await makeManager({ runtime: rt });
+
+    let captured: unknown;
+    try {
+      await m.dispatch(
+        dispatchOf({
+          agent: "demo",
+          brief: "collide",
+          subprocessEnv: { [kernelKey]: "evil" },
+        }),
+      );
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).toBeInstanceOf(DispatchKernelEnvCollisionError);
+    expect((captured as DispatchKernelEnvCollisionError).key).toBe(kernelKey);
+    // Pre-spawn rollback: no subprocess started, no row persisted.
+    expect(rt.dispatchCalls).toHaveLength(0);
+    expect(rt.handles).toHaveLength(0);
+    const persisted = await repo.list();
+    expect(persisted).toHaveLength(0);
+    // Workdir cleaned up — no orphan directories left under tasksDir.
+    const dirs = await readdir(tasksDir).catch(() => [] as string[]);
+    expect(dirs).toEqual([]);
+  });
+});
+
+describe("dispatch — caller-supplied prompt override", () => {
+  it("uses caller-supplied prompt verbatim when provided", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+
+    const customFraming = "You are a workflow-coordinator wake-up. Read EMPLOKE_WORKFLOW_ID.";
+    await m.dispatch(
+      dispatchOf({
+        agent: "demo",
+        brief: "custom framing",
+        prompt: customFraming,
+      }),
+    );
+
+    expect(rt.dispatchCalls[0]!.prompt).toBe(customFraming);
+    // The default framing prompt is NOT used when a custom one is supplied.
+    expect(rt.dispatchCalls[0]!.prompt).not.toBe(TASK_FRAMING_PROMPT_COPILOT);
+  });
+
+  it("falls back to the default framing prompt when prompt is omitted", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+
+    await m.dispatch(dispatchOf({ agent: "demo", brief: "default framing" }));
+
+    expect(rt.dispatchCalls[0]!.prompt).toBe(TASK_FRAMING_PROMPT_COPILOT);
+  });
+
+  it("rejects an unsafe prompt override (multi-line) pre-spawn", async () => {
+    const rt = new StubRuntime();
+    const { m, repo } = await makeManager({ runtime: rt });
+
+    let captured: unknown;
+    try {
+      await m.dispatch(
+        dispatchOf({
+          agent: "demo",
+          brief: "bad prompt",
+          prompt: "line1\nline2",
+        }),
+      );
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).toBeInstanceOf(Error);
+    expect((captured as Error).message).toMatch(/single-line printable ASCII/);
+    // Pre-spawn rollback: no subprocess, no row, no workdir.
+    expect(rt.dispatchCalls).toHaveLength(0);
+    expect(rt.handles).toHaveLength(0);
+    expect(await repo.list()).toHaveLength(0);
+    const dirs = await readdir(tasksDir).catch(() => [] as string[]);
+    expect(dirs).toEqual([]);
+  });
+
+  it("rejects a non-ASCII prompt override pre-spawn", async () => {
+    const rt = new StubRuntime();
+    const { m } = await makeManager({ runtime: rt });
+
+    await expect(
+      m.dispatch(dispatchOf({ agent: "demo", brief: "x", prompt: "hello 你好" })),
+    ).rejects.toThrow(/single-line printable ASCII/);
+    expect(rt.dispatchCalls).toHaveLength(0);
   });
 });
 

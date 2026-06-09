@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ResolvedAgent, Runtime, RuntimeHandle } from "@emploke/runtime";
-import { ManagerShuttingDownError } from "../errors.js";
+import { DispatchKernelEnvCollisionError, ManagerShuttingDownError } from "../errors.js";
 import {
+  assertFramingPromptIsSafe,
   formatTaskMd,
   TASK_ARTIFACT_SUBDIR,
   TASK_FILENAME,
@@ -13,6 +14,25 @@ import { TaskEntity } from "../task-entity.js";
 import type { TaskServiceCtx } from "../task-service.js";
 import type { TaskOrigin } from "../types.js";
 import { applyTerminal, decideTerminal, type LiveTask, safeRm } from "./_helpers.js";
+
+/**
+ * Kernel env keys that {@link runDispatch} always sets on the spawned
+ * subprocess. A caller-supplied {@link RunDispatchArgs.subprocessEnv}
+ * is rejected pre-spawn (`DispatchKernelEnvCollisionError`) if it
+ * carries any of these keys — domain callers must namespace their own
+ * env (e.g. `EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`).
+ *
+ * The check is the second line of defense; spread order in the
+ * `launchHeadless` call still puts kernel keys first, so a caller
+ * could never silently win the merge race even without it.
+ */
+const KERNEL_ENV_KEYS: ReadonlySet<string> = new Set<string>([
+  "EMPLOKE_WORKSPACE",
+  "EMPLOKE_WORKSPACE_DIR",
+  "EMPLOKE_WORK_KIND",
+  "EMPLOKE_WORK_ID",
+  "EMPLOKE_WORK_DIR",
+]);
 
 /**
  * `runtime` is narrowed to the subset on which `launchHeadless` is
@@ -32,6 +52,20 @@ export interface RunDispatchArgs {
   readonly runtime: Runtime & { launchHeadless: NonNullable<Runtime["launchHeadless"]> };
   readonly resolveResult: ResolvedAgent;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /**
+   * Caller-supplied env bag merged on top of the 5 kernel env keys.
+   * Pre-spawn collision check rejects kernel-key overlap with
+   * {@link DispatchKernelEnvCollisionError}. See
+   * {@link DispatchOpts.subprocessEnv}.
+   */
+  readonly subprocessEnv?: Readonly<Record<string, string>>;
+  /**
+   * Caller-supplied override for the framing prompt the runtime
+   * receives. Defaults to {@link TASK_FRAMING_PROMPT_COPILOT}.
+   * {@link assertFramingPromptIsSafe} runs on whichever value is
+   * actually used. See {@link DispatchOpts.prompt}.
+   */
+  readonly prompt?: string;
 }
 
 /**
@@ -50,6 +84,41 @@ export interface RunDispatchArgs {
  */
 export async function runDispatch(ctx: TaskServiceCtx, args: RunDispatchArgs): Promise<TaskEntity> {
   const { id, workdir, agentName, brief, details, origin, runtime, resolveResult } = args;
+
+  // 3b. Pre-spawn boundary check on caller-supplied env. Throws
+  //     BEFORE any fs mutation or subprocess spawn so a rejected
+  //     dispatch leaves no workdir on disk and no row in the repo
+  //     (the workdir reservation happens in the caller `dispatchTask`,
+  //     which clears `dispatchInProgress` in `finally`). Without
+  //     this, a domain-aware caller (e.g. workflow coord runner)
+  //     could quietly clobber a kernel key — the spread order below
+  //     would catch the clobber, but the loud throw makes the
+  //     intent-mismatch surface as a 400-class fault instead of
+  //     silently dropping the caller's key.
+  if (args.subprocessEnv !== undefined) {
+    for (const key of Object.keys(args.subprocessEnv)) {
+      if (KERNEL_ENV_KEYS.has(key)) {
+        await safeRm(workdir, ctx.logger);
+        throw new DispatchKernelEnvCollisionError(key);
+      }
+    }
+  }
+
+  // 3c. Choose + validate the framing prompt. Default is the
+  //     module-level `TASK_FRAMING_PROMPT_COPILOT`; callers (e.g.
+  //     workflow coord runner) may supply their own kind-specific
+  //     framing. The safety invariant ({@link assertFramingPromptIsSafe})
+  //     runs on the value actually used so an unsafe override
+  //     throws pre-spawn too. The startup-time guard on the default
+  //     in `framing.ts` is preserved as a build-time check; this is
+  //     additive, not a replacement.
+  const framingPrompt = args.prompt ?? TASK_FRAMING_PROMPT_COPILOT;
+  try {
+    assertFramingPromptIsSafe(framingPrompt);
+  } catch (err) {
+    await safeRm(workdir, ctx.logger);
+    throw err;
+  }
 
   // 4. Persist the initial TaskEntity. Status is `running` from
   //    create time — there is no intermediate non-terminal state.
@@ -111,22 +180,34 @@ export async function runDispatch(ctx: TaskServiceCtx, args: RunDispatchArgs): P
       workdir,
       agent: resolveResult,
       catalog: ctx.contentSource,
-      // Fixed single-line ASCII framing prompt. `brief` + `details`
-      // are NOT passed via argv — they live byte-for-byte in
+      // Framing prompt: either the default `TASK_FRAMING_PROMPT_COPILOT`
+      // or a caller-supplied override (e.g. the workflow coord runner's
+      // own short framing). `assertFramingPromptIsSafe` ran above on
+      // whichever value is used; the runtime always receives a
+      // single-line printable-ASCII string. `brief` + `details` are
+      // NOT passed via argv — they live byte-for-byte in
       // `<workdir>/TASK.md` and the framing prompt tells the agent
       // to read it. Today `copilot` is the only headless-capable
       // runtime; when a second arrives, switch on `runtime.kind`.
-      prompt: TASK_FRAMING_PROMPT_COPILOT,
+      prompt: framingPrompt,
       workspaceDir: ctx.workspaceDir,
       // Per-task work-context env. The runtime layers its own
       // cross-cutting env (EMPLOKE_SERVER, EMPLOKE_SHARED_DIR, ...)
       // underneath via its `subprocessEnvBase` config.
+      //
+      // Spread order: kernel keys FIRST, caller bag LAST. Looks
+      // backwards but is correct — the boundary check above
+      // guarantees the caller bag never carries a kernel key, so
+      // the kernel keys always win. The caller bag is a Plain
+      // `Record<string, string>`; conditional spread (`...({...})`)
+      // tolerates undefined.
       subprocessEnv: {
         EMPLOKE_WORKSPACE: ctx.workspaceId,
         EMPLOKE_WORKSPACE_DIR: ctx.workspaceDir,
         EMPLOKE_WORK_KIND: "task",
         EMPLOKE_WORK_ID: id,
         EMPLOKE_WORK_DIR: workdir,
+        ...(args.subprocessEnv ?? {}),
       },
     });
   } catch (err) {

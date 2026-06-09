@@ -111,13 +111,13 @@ function stubDeps(
 }
 
 const NODE_VALIDATE_CTX = {
-  workflowId: "wf-id",
+  workflowId: "20260101-deadbeef",
   workflowStatus: "running" as const,
 };
 
 const DISPATCH_OPTS_BASE = {
-  workflowId: "wf-id",
-  nodeId: "node-id",
+  workflowId: "20260101-deadbeef",
+  nodeId: "deadbeef-cafe-4bab-89ab-cafebabe1234",
   spec: { agent: "w", brief: "b" } as unknown,
   nodeDir: "/tmp/node-dir",
 };
@@ -202,7 +202,7 @@ describe("makeWorkerNodeRunner — validate", () => {
 });
 
 describe("makeWorkerNodeRunner — dispatch", () => {
-  it("calls tasks.dispatch with origin='workflow' + canonical metadata", async () => {
+  it("calls tasks.dispatch with origin='workflow' + canonical metadata + 2-key subprocessEnv", async () => {
     // biome-ignore lint/suspicious/noExplicitAny: fakeTaskRow is intentionally minimal vs the full Task type.
     const deps = stubDeps({ dispatchReturn: fakeTaskRow({ id: "tid-7" }) as any });
     const r = makeWorkerNodeRunner({
@@ -218,9 +218,49 @@ describe("makeWorkerNodeRunner — dispatch", () => {
       agent: "w",
       brief: "b",
       origin: "workflow",
-      metadata: { workflowId: "wf-id", workflowNodeId: "node-id" },
+      metadata: {
+        workflowId: "20260101-deadbeef",
+        workflowNodeId: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      },
+      // Worker tasks see the two workflow identity env keys
+      // (`EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`) but NOT
+      // `EMPLOKE_WORKFLOW_DIR` — the per-workflow shared dir is
+      // coord-only by design. Worker also does NOT pass `prompt`
+      // (uses `@emploke/task`'s default framing).
+      subprocessEnv: {
+        EMPLOKE_WORKFLOW_ID: "20260101-deadbeef",
+        EMPLOKE_NODE_ID: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      },
     });
     expect(result).toBeUndefined();
+    await r.dispose();
+  });
+
+  it("does NOT pass EMPLOKE_WORKFLOW_DIR (coord-only) or a prompt override", async () => {
+    const deps = stubDeps();
+    const r = makeWorkerNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      pollIntervalMs: 100_000,
+    });
+    await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal: () => {} });
+
+    const calls = deps.dispatch.mock.calls as unknown as ReadonlyArray<
+      readonly [Record<string, unknown>]
+    >;
+    const firstCall = calls[0]?.[0];
+    expect(firstCall).toBeDefined();
+    if (firstCall !== undefined) {
+      // No prompt override — worker dispatch must NOT include the
+      // key; the task pkg's default `TASK_FRAMING_PROMPT_COPILOT`
+      // applies. (Conditional-spread style would otherwise
+      // serialize `prompt: undefined`.)
+      expect(Object.keys(firstCall)).not.toContain("prompt");
+      // No coord-only env key.
+      const env = (firstCall as { subprocessEnv?: Record<string, string> }).subprocessEnv;
+      expect(env).toBeDefined();
+      expect(env).not.toHaveProperty("EMPLOKE_WORKFLOW_DIR");
+    }
     await r.dispose();
   });
 
@@ -242,7 +282,17 @@ describe("makeWorkerNodeRunner — dispatch", () => {
       details: "d",
       runtime: "copilot",
       origin: "workflow",
-      metadata: { workflowId: "wf-id", workflowNodeId: "node-id" },
+      metadata: {
+        workflowId: "20260101-deadbeef",
+        workflowNodeId: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      },
+      // The injected env shape is the same two identity keys
+      // regardless of spec.details / spec.runtime — those spec
+      // fields don't influence the env bag.
+      subprocessEnv: {
+        EMPLOKE_WORKFLOW_ID: "20260101-deadbeef",
+        EMPLOKE_NODE_ID: "deadbeef-cafe-4bab-89ab-cafebabe1234",
+      },
     });
     await r.dispose();
   });
@@ -455,9 +505,11 @@ describe("makeWorkerNodeRunner — hasInFlightForNode + cancel + dispose", () =>
   it("hasInFlightForNode delegates to tasks.hasInFlightForWorkflowNode", async () => {
     const deps = stubDeps({ hasInFlightReturn: true });
     const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
-    const result = await r.hasInFlightForNode("node-id");
+    const result = await r.hasInFlightForNode("deadbeef-cafe-4bab-89ab-cafebabe1234");
     expect(result).toBe(true);
-    expect(deps.hasInFlightForWorkflowNode).toHaveBeenCalledWith("node-id");
+    expect(deps.hasInFlightForWorkflowNode).toHaveBeenCalledWith(
+      "deadbeef-cafe-4bab-89ab-cafebabe1234",
+    );
     await r.dispose();
   });
 
@@ -466,8 +518,10 @@ describe("makeWorkerNodeRunner — hasInFlightForNode + cancel + dispose", () =>
       listInFlightReturn: [fakeTaskRow({ id: "t-a" }), fakeTaskRow({ id: "t-b" })],
     });
     const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
-    await r.cancel("node-id");
-    expect(deps.listInFlightForWorkflowNode).toHaveBeenCalledWith("node-id");
+    await r.cancel("deadbeef-cafe-4bab-89ab-cafebabe1234");
+    expect(deps.listInFlightForWorkflowNode).toHaveBeenCalledWith(
+      "deadbeef-cafe-4bab-89ab-cafebabe1234",
+    );
     expect(deps.cancel).toHaveBeenCalledTimes(2);
     expect(deps.cancel).toHaveBeenCalledWith("t-a");
     expect(deps.cancel).toHaveBeenCalledWith("t-b");
@@ -484,7 +538,7 @@ describe("makeWorkerNodeRunner — hasInFlightForNode + cancel + dispose", () =>
     });
     const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
     // Should NOT throw; the runner logs and continues.
-    await r.cancel("node-id");
+    await r.cancel("deadbeef-cafe-4bab-89ab-cafebabe1234");
     // biome-ignore lint/suspicious/noExplicitAny: test-only access to the overridden mock.
     expect((deps.tasks as any).cancel).toHaveBeenCalledTimes(2);
     await r.dispose();
@@ -503,7 +557,7 @@ describe("makeWorkerNodeRunner — hasInFlightForNode + cancel + dispose", () =>
       await r.dispatch({ ...DISPATCH_OPTS_BASE, onTerminal });
       await r.dispatch({
         ...DISPATCH_OPTS_BASE,
-        nodeId: "node-id-2",
+        nodeId: "cafebabe-dead-4bee-89ab-feedbabe1234",
         onTerminal,
       });
       await vi.advanceTimersByTimeAsync(150);

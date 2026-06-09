@@ -86,6 +86,8 @@ export async function dispatchTask(ctx: TaskServiceCtx, opts: DispatchOpts): Pro
       runtime,
       resolveResult,
       ...(opts.metadata !== undefined ? { metadata: opts.metadata } : {}),
+      ...(opts.subprocessEnv !== undefined ? { subprocessEnv: opts.subprocessEnv } : {}),
+      ...(opts.prompt !== undefined ? { prompt: opts.prompt } : {}),
     });
   } finally {
     ctx.dispatchInProgress.delete(id);

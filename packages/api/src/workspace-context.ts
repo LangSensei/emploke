@@ -319,6 +319,13 @@ export class WorkspaceContextRegistry {
         tasks: taskModule.service,
         catalog: catalogModule.service,
         getService: getWorkflowService,
+        // The coord runner injects `EMPLOKE_WORKFLOW_DIR` into the
+        // dispatched coord task's subprocess env via
+        // `workflowDir(workspaceDir, wfid)`. The workspaceDir is the
+        // same root the workflow substrate uses when materialising
+        // the dir on `createWorkflow`, so the path the runner
+        // injects matches what the substrate already created.
+        workspaceDir: workspace.workspaceDir,
         logger: this.logger,
       });
       const workerRunner = makeWorkerNodeRunner({
