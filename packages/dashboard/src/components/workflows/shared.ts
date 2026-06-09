@@ -5,7 +5,7 @@
  * `components/schedules/shared.ts` so each component file stays narrow.
  */
 
-import type { WorkflowHeaderWire } from "../../api";
+import type { WorkflowHeaderWire, WorkflowNodeWire } from "../../api";
 
 /**
  * Hard-coded poll cadence for workflow list + detail. The server-config
@@ -61,6 +61,28 @@ export function workflowStatusTone(status: WorkflowHeaderWire["status"]): Workfl
 }
 
 export const WORKFLOW_STATUS_LABEL: Record<WorkflowHeaderWire["status"], string> = {
+  running: "Running",
+  succeeded: "Succeeded",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+/**
+ * Per-DAG-node lifecycle status → human-readable label. Used by the
+ * DAG node card's status pill (see `WorkflowDagView.tsx`) so the
+ * `not_started` enum renders as `"Not started"` (which the pill's
+ * `text-transform: uppercase` rule then surfaces as `"NOT STARTED"`)
+ * instead of the underscored `"NOT_STARTED"` lifecycle constant
+ * leaking through to the UI.
+ *
+ * Mirrors the {@link WORKFLOW_STATUS_LABEL} shape; the two maps are
+ * intentionally separate because workflow-level statuses are a
+ * proper subset (no `not_started` / `ready` — those are per-node
+ * pre-dispatch states a workflow as a whole never sits in).
+ */
+export const WORKFLOW_NODE_STATUS_LABEL: Record<WorkflowNodeWire["status"], string> = {
+  not_started: "Not started",
+  ready: "Ready",
   running: "Running",
   succeeded: "Succeeded",
   failed: "Failed",

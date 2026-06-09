@@ -29,15 +29,20 @@ export interface WorkflowMetaStatsProps {
  * Tasks header pattern of `status + agent-chip`), so duplicating it
  * here would be redundant.
  *
- * "Phases" renders the workflow's progress as `current / total` —
+ * "Phases" renders the workflow's progress as `current / total`,
+ * 1-indexed for display so the first phase of a 3-phase DAG reads as
+ * `1 / 3` (matching the "step X of Y" / "page X of Y" convention used
+ * elsewhere in the dashboard). Internally the active-phase index is
+ * 0-indexed everywhere — only the display string carries the `+ 1`.
+ *
  * `current` is the lowest phase that still has work to do (any
  * `not_started` / `ready` / `running` node), or the last phase value
  * once every node is terminal. `total` is the count of distinct
- * phases in the DAG (max phase value + 1). This replaces the earlier
- * single-number rendering that showed only `max(phase) + 1` — the
- * old form claimed a workflow currently executing phase 0 of a
- * 3-phase DAG was at "3", which was indistinguishable from a
- * completed workflow.
+ * phases in the DAG (max phase value + 1). The fully-completed case
+ * therefore renders as `total / total` (e.g. `3 / 3`), which a user
+ * correctly reads as "all phases done" — contrast with the earlier
+ * single-number rendering that showed `max(phase) + 1 = 3` for both
+ * "currently executing phase 0 of 3" and "completed all 3 phases".
  *
  * The Phases stat is omitted entirely while the DAG is still loading
  * (`dag === null`) and ALSO while the DAG has zero nodes — the latter
@@ -81,7 +86,7 @@ export function WorkflowMetaStats({ workflow, dag }: WorkflowMetaStatsProps) {
           title="Current execution phase / total phases in the DAG"
           data-testid="workflow-meta-phases"
         >
-          <span className="task-detail__statbar-key">Phases</span> {phaseProgress.current} /{" "}
+          <span className="task-detail__statbar-key">Phases</span> {phaseProgress.current + 1} /{" "}
           {phaseProgress.total}
         </span>
       ) : null}
@@ -112,9 +117,10 @@ interface PhaseProgress {
  * workflow is still running and the whole Phases stat is omitted
  * while the DAG snapshot is still being fetched). For non-empty
  * DAGs, `current` is the lowest phase value among nodes whose status
- * is in {@link ACTIVE_NODE_STATUSES}; if every node is terminal,
- * falls back to the highest phase value seen (so a fully-completed
- * workflow displays e.g. `2 / 3` rather than the off-by-one `3 / 3`).
+ * is in {@link ACTIVE_NODE_STATUSES} (0-indexed); if every node is
+ * terminal, falls back to the highest phase value seen (so a fully-
+ * completed 3-phase workflow returns `current = 2`, which the caller
+ * renders 1-indexed as `3 / 3`).
  */
 function computePhaseProgress(nodes: readonly WorkflowNodeWire[]): PhaseProgress | null {
   if (nodes.length === 0) return null;

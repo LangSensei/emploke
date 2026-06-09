@@ -100,7 +100,7 @@ describe("WorkflowsPage — detail header", () => {
     mockGetWorkflow.mockResolvedValue(wf);
     // DAG with two distinct phases. Both nodes are still running, so
     // `current` = lowest active phase = 0 and `total` = max(phase) + 1
-    // = 2 — the rendered chip is `Phases 0 / 2`.
+    // = 2 — the rendered chip is `Phases 1 / 2` (1-indexed display)
     // (replacing the prior single number `2` from the max+1 stat).
     mockGetWorkflowDag.mockResolvedValue({
       workflow: wf,
@@ -134,10 +134,10 @@ describe("WorkflowsPage — detail header", () => {
     expect(detail.textContent).toContain("Headline brief");
     expect(detail.textContent).toContain("emploke/dev");
     expect(detail.textContent).toContain("Phases");
-    // Stat renders the `current / total` shape — workflow has both nodes
-    // running, so `current` = 0 (lowest active phase) and `total` = 2
-    // (max phase + 1).
-    expect(detail.textContent).toContain("0 / 2");
+    // Stat renders 1-indexed `current / total` — both nodes are running,
+    // so `current` = 0 (lowest active phase, 0-indexed) and `total` = 2
+    // (max phase + 1), surfaced as the 1-indexed display `1 / 2`.
+    expect(detail.textContent).toContain("1 / 2");
     // v2.2: iter chip no longer rendered anywhere in the detail pane.
     expect(detail.textContent).not.toContain("Iterations");
     expect(detail.querySelector("[data-testid='workflow-status-badge-running']")).toBeTruthy();

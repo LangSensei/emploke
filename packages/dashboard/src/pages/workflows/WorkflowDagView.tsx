@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowDagWire, WorkflowNodeWire } from "../../api";
+import { WORKFLOW_NODE_STATUS_LABEL } from "../../components/workflows/shared";
 import { formatAbsolute, formatDuration, formatRelative } from "../../utils/time";
 import {
   buildSlotMap,
@@ -200,9 +201,15 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
                       agent secondary" convention used by `TaskListItem` /
                       `WorkflowListItem` row headers. Reorder is deliberate
                       (vs the pre-v2.5 alphabetical id/agent/status sequence).
+
+                      Label goes through {@link WORKFLOW_NODE_STATUS_LABEL}
+                      so the raw `not_started` enum surfaces as "Not started"
+                      (uppercased by CSS to "NOT STARTED", space-separated)
+                      rather than the underscored lifecycle constant
+                      "NOT_STARTED" leaking through.
                     */}
                     <span className={`dag-node__status dag-node__status--${node.status}`}>
-                      {node.status}
+                      {WORKFLOW_NODE_STATUS_LABEL[node.status]}
                     </span>
                     <span className="dag-node__agent">{agent}</span>
                     {brief !== null ? (
@@ -226,7 +233,7 @@ export function WorkflowDagView({ dag, selectedNodeId, onSelectNode }: WorkflowD
                       promote it to a `RelativeTime` variant in a follow-up.
                     */}
                     {(startedAt || runtime !== null) && (
-                      <span className="dag-node__timing muted">
+                      <span className="dag-node__timing">
                         {startedAt ? (
                           <span
                             className="dag-node__started"

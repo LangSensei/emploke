@@ -253,6 +253,51 @@ describe("WorkflowDagView — node card content", () => {
     expect(screen.getByTestId("dag-started-n-coord")).toBeTruthy();
     expect(screen.getByTestId("dag-runtime-n-coord")).toBeTruthy();
   });
+  it("(N1) renders humanised status labels — `not_started` surfaces as 'Not started', not the raw enum", () => {
+    // CSS adds `text-transform: uppercase` to `.dag-node__status`, so the
+    // *text content* before uppercasing must be "Not started" (with a
+    // space), which renders as "NOT STARTED" — distinguished from the
+    // pre-fix "NOT_STARTED" lifecycle constant leak.
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-status-label",
+            phase: 0,
+            status: "not_started",
+            spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
+          }),
+        ])}
+      />,
+    );
+    const node = screen.getByTestId("dag-node-n-status-label");
+    const status = node.querySelector(".dag-node__status");
+    expect(status?.textContent).toBe("Not started");
+    // Defensive: the underscored raw-enum form must NOT surface.
+    expect(status?.textContent).not.toContain("_");
+  });
+
+  it("(N1) other statuses also flow through the label map (succeeded → 'Succeeded')", () => {
+    // Tightens the contract: even single-word statuses go through the map
+    // so future renames at the wire layer don't silently fall back to a
+    // raw enum render at this seam.
+    render(
+      <WorkflowDagView
+        dag={makeDag([
+          makeNode({
+            id: "n-ok-label",
+            phase: 0,
+            status: "succeeded",
+            runningAt: "2025-01-01T00:00:00.000Z",
+            endedAt: "2025-01-01T00:05:30.000Z",
+            spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
+          }),
+        ])}
+      />,
+    );
+    const node = screen.getByTestId("dag-node-n-ok-label");
+    expect(node.querySelector(".dag-node__status")?.textContent).toBe("Succeeded");
+  });
 });
 
 describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
