@@ -44,6 +44,17 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
     folderMillis: 1,
     hash: "8b095934ef0ddf94f15633fe54a6c12191b9517f132379126ec0d2e723713954",
   },
+  {
+    sql: [
+      "CREATE TABLE `agent_agent_dependencies` (\n\t`row_id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`source_fqn` text NOT NULL,\n\t`target_fqn` text NOT NULL\n);\n",
+      "\nCREATE INDEX `agent_agent_deps_src_idx` ON `agent_agent_dependencies` (`source_fqn`);",
+      "\nCREATE INDEX `agent_agent_deps_tgt_idx` ON `agent_agent_dependencies` (`target_fqn`);",
+      "\nCREATE UNIQUE INDEX `agent_agent_deps_uniq` ON `agent_agent_dependencies` (`source_fqn`,`target_fqn`);"
+    ],
+    bps: true,
+    folderMillis: 2,
+    hash: "0f274043ce82553c9016e8143fead137da6ff35eea5edafa1cb31df3d8428ef4",
+  },
 ];
 
 /**

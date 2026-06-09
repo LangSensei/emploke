@@ -83,6 +83,7 @@ describe("AgentService.resolve", () => {
     expect(plan.node!.fqn).toBe("public/agent");
     expect(plan.node!.depsRefs.skills).toEqual([]);
     expect(plan.node!.depsRefs.mcps).toEqual([]);
+    expect(plan.node!.depsRefs.agents).toEqual([]);
   });
 
   it("captures the upstream version on the resolved node", async () => {
@@ -96,11 +97,14 @@ describe("AgentService.resolve", () => {
   skills:
     - "file:/abs/skills/web-search"
   mcps:
-    - "file:/abs/mcps/azure"`;
+    - "file:/abs/mcps/azure"
+  agents:
+    - "file:/abs/agents/sub"`;
     fetcher.set("file:/abs/agent", { "AGENTS.md": ANCHOR("agent", deps) });
     const plan = await svc.resolve("file:/abs/agent");
     expect(plan.node!.depsRefs.skills).toEqual(["file:/abs/skills/web-search"]);
     expect(plan.node!.depsRefs.mcps).toEqual(["file:/abs/mcps/azure"]);
+    expect(plan.node!.depsRefs.agents).toEqual(["file:/abs/agents/sub"]);
   });
 
   it("surfaces fetch failures as conflict", async () => {

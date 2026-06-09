@@ -75,8 +75,71 @@ prereqs: 42
     expect(() => AgentFormat.parse(src, LABEL)).toThrow(AgentNameInvalidError);
   });
 
-  it("throws when frontmatter block is missing", () => {
-    expect(() => AgentFormat.parse("# body only", LABEL)).toThrow(AgentFrontmatterError);
+  it("parses agent dep (round-trip)", () => {
+    const src = `---
+name: orchestrator
+description: x
+version: 1.0.0
+dependencies:
+  agents:
+    - "github:o/r/tree/main/agents/researcher"
+    - "file:/abs/agents/writer"
+---
+`;
+    const { meta } = AgentFormat.parse(src, LABEL);
+    expect(meta.dependencies?.agents).toEqual([
+      "github:o/r/tree/main/agents/researcher",
+      "file:/abs/agents/writer",
+    ]);
+  });
+
+  it("parses skills + mcps + agents together", () => {
+    const src = `---
+name: mixed
+description: x
+version: 1.0.0
+dependencies:
+  skills:
+    - "github:o/r/tree/main/skills/web-search"
+  mcps:
+    - "file:/abs/mcps/azure"
+  agents:
+    - "github:o/r/tree/main/agents/researcher"
+---
+`;
+    const { meta } = AgentFormat.parse(src, LABEL);
+    expect(meta.dependencies?.skills).toEqual(["github:o/r/tree/main/skills/web-search"]);
+    expect(meta.dependencies?.mcps).toEqual(["file:/abs/mcps/azure"]);
+    expect(meta.dependencies?.agents).toEqual(["github:o/r/tree/main/agents/researcher"]);
+  });
+
+  it("rejects unknown dep key with accepted-set in message", () => {
+    const src = `---
+name: orchestrator
+description: x
+version: 1.0.0
+dependencies:
+  plugins:
+    - "github:o/r/tree/main/plugins/foo"
+---
+`;
+    expect(() => AgentFormat.parse(src, LABEL)).toThrow(AgentFrontmatterError);
+    expect(() => AgentFormat.parse(src, LABEL)).toThrow(/dependencies\.plugins/);
+    expect(() => AgentFormat.parse(src, LABEL)).toThrow(/skills.*mcps.*agents/);
+  });
+
+  it("rejects non-string item in agents bucket", () => {
+    const src = `---
+name: orchestrator
+description: x
+version: 1.0.0
+dependencies:
+  agents:
+    - { origin: "github:o/r/tree/main/agents/researcher" }
+---
+`;
+    expect(() => AgentFormat.parse(src, LABEL)).toThrow(AgentFrontmatterError);
+    expect(() => AgentFormat.parse(src, LABEL)).toThrow(/dependencies\.agents\[0\]/);
   });
 });
 

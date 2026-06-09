@@ -467,16 +467,161 @@ describe("CatalogService.install", () => {
       result.skipped.some((s) => s.fqn === "vendor/x" && s.reason === "already-installed"),
     ).toBe(true);
   });
+
+  // ─── agent → agent cascade ────────────────────────
+
+  it("installAgent cascades through agent → agent edges in dep-first order", async () => {
+    fetchers.setAgent("file:/abs/leaf", { "AGENTS.md": AGENT_ANCHOR("leaf") });
+    fetchers.setAgent("file:/abs/mid", {
+      "AGENTS.md": AGENT_ANCHOR("mid", `dependencies:\n  agents:\n    - "file:/abs/leaf"`),
+    });
+    fetchers.setAgent("file:/abs/root", {
+      "AGENTS.md": AGENT_ANCHOR("root", `dependencies:\n  agents:\n    - "file:/abs/mid"`),
+    });
+    const result = await mgr.installAgent("file:/abs/root");
+    expect(result.failed).toEqual([]);
+    expect(result.installed.map((n) => `${n.kind}:${n.fqn}`)).toEqual([
+      "agent:public/leaf",
+      "agent:public/mid",
+      "agent:public/root",
+    ]);
+    expect(await mgr.getAgent("public/leaf")).not.toBeNull();
+    expect(await mgr.getAgent("public/mid")).not.toBeNull();
+    expect(await mgr.getAgent("public/root")).not.toBeNull();
+  });
+
+  it("installAgent handles a diamond over agent + skill edges (shared dep installed once)", async () => {
+    fetchers.setSkill("file:/abs/shared-skill", { "SKILL.md": SKILL_ANCHOR("shared-skill") });
+    fetchers.setAgent("file:/abs/left", {
+      "AGENTS.md": AGENT_ANCHOR("left", `dependencies:\n  skills:\n    - "file:/abs/shared-skill"`),
+    });
+    fetchers.setAgent("file:/abs/right", {
+      "AGENTS.md": AGENT_ANCHOR(
+        "right",
+        `dependencies:\n  skills:\n    - "file:/abs/shared-skill"`,
+      ),
+    });
+    fetchers.setAgent("file:/abs/top", {
+      "AGENTS.md": AGENT_ANCHOR(
+        "top",
+        `dependencies:\n  agents:\n    - "file:/abs/left"\n    - "file:/abs/right"`,
+      ),
+    });
+    const result = await mgr.installAgent("file:/abs/top");
+    expect(result.failed).toEqual([]);
+    const fqns = result.installed.map((n) => `${n.kind}:${n.fqn}`);
+    // shared-skill must appear exactly once
+    expect(fqns.filter((f) => f === "skill:public/shared-skill")).toHaveLength(1);
+    // top is installed last (root)
+    expect(fqns[fqns.length - 1]).toBe("agent:public/top");
+    // shared-skill is installed before both left and right
+    const sharedIdx = fqns.indexOf("skill:public/shared-skill");
+    const leftIdx = fqns.indexOf("agent:public/left");
+    const rightIdx = fqns.indexOf("agent:public/right");
+    expect(sharedIdx).toBeLessThan(leftIdx);
+    expect(sharedIdx).toBeLessThan(rightIdx);
+  });
+
+  it("installAgent surfaces an agent → agent cycle as CyclicDependencyError", async () => {
+    fetchers.setAgent("file:/abs/a", {
+      "AGENTS.md": AGENT_ANCHOR("a", `dependencies:\n  agents:\n    - "file:/abs/b"`),
+    });
+    fetchers.setAgent("file:/abs/b", {
+      "AGENTS.md": AGENT_ANCHOR("b", `dependencies:\n  agents:\n    - "file:/abs/a"`),
+    });
+    await expect(mgr.installAgent("file:/abs/a")).rejects.toBeInstanceOf(CyclicDependencyError);
+  });
+
+  it("agent dep is installed via DB seam — no workDir materialization", async () => {
+    // The catalog substrate writes through its repository (DB rows
+    // and atomic-write seam). There is no `workDir` plumbing in the
+    // catalog package. Verify by checking the installed agent's
+    // origin round-trips and the storage layer is the same one used
+    // for direct installs (i.e., no parallel filesystem path).
+    fetchers.setAgent("file:/abs/sub", { "AGENTS.md": AGENT_ANCHOR("sub") });
+    fetchers.setAgent("file:/abs/parent", {
+      "AGENTS.md": AGENT_ANCHOR("parent", `dependencies:\n  agents:\n    - "file:/abs/sub"`),
+    });
+    await mgr.installAgent("file:/abs/parent");
+    const sub = await mgr.getAgent("public/sub");
+    expect(sub).not.toBeNull();
+    expect(sub!.origin).toBe("file:/abs/sub");
+    // Sanity: dependent listing comes from DB rows (the agent_agent
+    // dep table) — not a filesystem index.
+    const dependents = await mgr.findDependents("public/sub");
+    expect(dependents).toEqual([{ kind: "agent", name: "public/parent" }]);
+  });
+
+  it("backward compat: agent without dependencies.agents projects without that bucket", async () => {
+    fetchers.setAgent("file:/abs/legacy", { "AGENTS.md": AGENT_ANCHOR("legacy") });
+    await mgr.installAgent("file:/abs/legacy");
+    const agent = await mgr.getAgent("public/legacy");
+    expect(agent).not.toBeNull();
+    // Empty deps are omitted from the wire DTO entirely.
+    expect(agent!.dependencies).toBeUndefined();
+    // The entity round-trips through the agent service with the agents
+    // bucket present and empty.
+    const entity = await mgr.getAgentEntry("public/legacy");
+    expect(entity).not.toBeNull();
+    // Re-read via the entity-facing service to assert depsRefs shape.
+    const repoAgent = await agentRepo.findByFqn("public/legacy");
+    expect(repoAgent!.depsRefs.agents).toEqual([]);
+  });
+
+  it("wire DTO round-trips dependencies.agents when present", async () => {
+    fetchers.setAgent("file:/abs/dep-target", {
+      "AGENTS.md": AGENT_ANCHOR("dep-target"),
+    });
+    fetchers.setAgent("file:/abs/dep-parent", {
+      "AGENTS.md": AGENT_ANCHOR(
+        "dep-parent",
+        `dependencies:\n  agents:\n    - "file:/abs/dep-target"`,
+      ),
+    });
+    await mgr.installAgent("file:/abs/dep-parent");
+    const agent = await mgr.getAgent("public/dep-parent");
+    expect(agent!.dependencies?.agents).toEqual([{ fqn: "public/dep-target" }]);
+  });
 });
 
 // ─── delete with dep protection ─────────────────────
 
 describe("CatalogService — delete with dep protection", () => {
-  it("deleteAgent works unconditionally (agents are roots)", async () => {
+  it("deleteAgent works when no other agent depends on it", async () => {
     fetchers.setAgent("file:/abs/agent", { "AGENTS.md": AGENT_ANCHOR("agent") });
     await mgr.installAgent("file:/abs/agent");
     await mgr.deleteAgent("public/agent");
     expect(await mgr.getAgent("public/agent")).toBeNull();
+  });
+
+  it("deleteAgent refuses if another agent depends on it", async () => {
+    fetchers.setAgent("file:/abs/sub", { "AGENTS.md": AGENT_ANCHOR("sub") });
+    fetchers.setAgent("file:/abs/orchestrator", {
+      "AGENTS.md": AGENT_ANCHOR("orchestrator", `dependencies:\n  agents:\n    - "file:/abs/sub"`),
+    });
+    await mgr.installAgent("file:/abs/orchestrator");
+    await expect(mgr.deleteAgent("public/sub")).rejects.toThrow(HasDependentsError);
+  });
+
+  it("deleteAgent works after the dependent parent agent is removed", async () => {
+    fetchers.setAgent("file:/abs/sub", { "AGENTS.md": AGENT_ANCHOR("sub") });
+    fetchers.setAgent("file:/abs/orchestrator", {
+      "AGENTS.md": AGENT_ANCHOR("orchestrator", `dependencies:\n  agents:\n    - "file:/abs/sub"`),
+    });
+    await mgr.installAgent("file:/abs/orchestrator");
+    await mgr.deleteAgent("public/orchestrator");
+    await mgr.deleteAgent("public/sub");
+    expect(await mgr.getAgent("public/sub")).toBeNull();
+  });
+
+  it("findDependents lists agent referrers for an agent", async () => {
+    fetchers.setAgent("file:/abs/sub", { "AGENTS.md": AGENT_ANCHOR("sub") });
+    fetchers.setAgent("file:/abs/orchestrator", {
+      "AGENTS.md": AGENT_ANCHOR("orchestrator", `dependencies:\n  agents:\n    - "file:/abs/sub"`),
+    });
+    await mgr.installAgent("file:/abs/orchestrator");
+    const deps = await mgr.findDependents("public/sub");
+    expect(deps).toEqual([{ kind: "agent", name: "public/orchestrator" }]);
   });
 
   it("deleteSkill refuses if another skill depends on it", async () => {

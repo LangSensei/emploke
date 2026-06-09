@@ -136,16 +136,23 @@ export async function buildUpstreamClosure(
   let cachedMaps: {
     skillOriginByFqn: Map<string, string>;
     mcpOriginByFqn: Map<string, string>;
+    agentOriginByFqn: Map<string, string>;
   } | null = null;
   async function getMaps(): Promise<{
     skillOriginByFqn: Map<string, string>;
     mcpOriginByFqn: Map<string, string>;
+    agentOriginByFqn: Map<string, string>;
   }> {
     if (cachedMaps !== null) return cachedMaps;
-    const [skills, mcps] = await Promise.all([services.skill.list(), services.mcp.list()]);
+    const [skills, mcps, agents] = await Promise.all([
+      services.skill.list(),
+      services.mcp.list(),
+      services.agent.list(),
+    ]);
     cachedMaps = {
       skillOriginByFqn: new Map(skills.map((s) => [s.fqn, s.origin] as const)),
       mcpOriginByFqn: new Map(mcps.map((m) => [m.fqn, m.origin] as const)),
+      agentOriginByFqn: new Map(agents.map((a) => [a.fqn, a.origin] as const)),
     };
     return cachedMaps;
   }
@@ -202,31 +209,60 @@ export async function buildUpstreamClosure(
     }
   }
 
-  async function walkAgent(origin: string): Promise<void> {
+  async function walkAgent(origin: string, isRoot: boolean): Promise<void> {
+    if (inStack.has(origin)) {
+      throw new CyclicDependencyError([...inStack, origin]);
+    }
     if (visited.has(origin)) return;
-    const plan = await services.agent.resolve(origin);
-    if (plan.conflict !== null) {
-      conflicts.push({
-        kind: "agent",
-        origin: plan.conflict.origin,
-        fqn: plan.conflict.fqn,
-        reason: plan.conflict.reason,
-      });
+
+    if (opts.mode === "install" && !isRoot) {
+      const local = await services.agent.getByOrigin(origin);
+      if (local !== null) {
+        const maps = await getMaps();
+        const anchorContent = await services.agent.getAnchor(local.fqn).catch(() => "");
+        closure.set(origin, {
+          kind: "agent",
+          source: "local",
+          node: agentEntityToResolvedNode(
+            local,
+            anchorContent,
+            maps.skillOriginByFqn,
+            maps.mcpOriginByFqn,
+            maps.agentOriginByFqn,
+          ),
+        });
+        visited.add(origin);
+        return;
+      }
+    }
+
+    inStack.add(origin);
+    try {
+      const plan = await services.agent.resolve(origin);
+      if (plan.conflict !== null) {
+        conflicts.push({
+          kind: "agent",
+          origin: plan.conflict.origin,
+          fqn: plan.conflict.fqn,
+          reason: plan.conflict.reason,
+        });
+        return;
+      }
+      if (plan.node === null) return;
+      for (const mcpOrigin of plan.node.depsRefs.mcps) {
+        await walkMcp(mcpOrigin);
+      }
+      for (const skillOrigin of plan.node.depsRefs.skills) {
+        await walkSkill(skillOrigin, false);
+      }
+      for (const agentOrigin of plan.node.depsRefs.agents) {
+        await walkAgent(agentOrigin, false);
+      }
+      closure.set(origin, { kind: "agent", source: "upstream", node: plan.node });
+    } finally {
+      inStack.delete(origin);
       visited.add(origin);
-      return;
     }
-    if (plan.node === null) {
-      visited.add(origin);
-      return;
-    }
-    for (const mcpOrigin of plan.node.depsRefs.mcps) {
-      await walkMcp(mcpOrigin);
-    }
-    for (const skillOrigin of plan.node.depsRefs.skills) {
-      await walkSkill(skillOrigin, false);
-    }
-    closure.set(origin, { kind: "agent", source: "upstream", node: plan.node });
-    visited.add(origin);
   }
 
   async function walkMcp(origin: string): Promise<void> {
@@ -256,7 +292,7 @@ export async function buildUpstreamClosure(
   if (root.kind === "skill") {
     await walkSkill(root.origin, true);
   } else if (root.kind === "agent") {
-    await walkAgent(root.origin);
+    await walkAgent(root.origin, true);
   } else {
     await walkMcp(root.origin);
   }
@@ -302,6 +338,7 @@ export async function buildLocalClosure(
   // origin).
   const skillOriginByFqn = new Map(skills.map((s) => [s.fqn, s.origin] as const));
   const mcpOriginByFqn = new Map(mcps.map((m) => [m.fqn, m.origin] as const));
+  const agentOriginByFqn = new Map(agents.map((a) => [a.fqn, a.origin] as const));
 
   async function visit(origin: string): Promise<void> {
     if (visited.has(origin)) return;
@@ -331,7 +368,13 @@ export async function buildLocalClosure(
       closure.set(origin, {
         kind: "agent",
         source: "local",
-        node: agentEntityToResolvedNode(agent, anchorContent, skillOriginByFqn, mcpOriginByFqn),
+        node: agentEntityToResolvedNode(
+          agent,
+          anchorContent,
+          skillOriginByFqn,
+          mcpOriginByFqn,
+          agentOriginByFqn,
+        ),
       });
       for (const d of agent.dependencies.mcps) {
         const o = mcpOriginByFqn.get(d.fqn);
@@ -339,6 +382,10 @@ export async function buildLocalClosure(
       }
       for (const d of agent.dependencies.skills) {
         const o = skillOriginByFqn.get(d.fqn);
+        if (o !== undefined) await visit(o);
+      }
+      for (const d of agent.dependencies.agents) {
+        const o = agentOriginByFqn.get(d.fqn);
         if (o !== undefined) await visit(o);
       }
       return;
@@ -565,6 +612,7 @@ function agentEntityToResolvedNode(
   anchorContent: string,
   skillOriginByFqn: ReadonlyMap<string, string>,
   mcpOriginByFqn: ReadonlyMap<string, string>,
+  agentOriginByFqn: ReadonlyMap<string, string>,
 ): AgentResolvedNode {
   return {
     fqn: a.fqn,
@@ -574,6 +622,7 @@ function agentEntityToResolvedNode(
     depsRefs: {
       skills: a.dependencies.skills.map((d) => skillOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
       mcps: a.dependencies.mcps.map((d) => mcpOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
+      agents: a.dependencies.agents.map((d) => agentOriginByFqn.get(d.fqn) ?? "").filter(Boolean),
     },
   };
 }
