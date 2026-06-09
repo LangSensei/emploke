@@ -1,4 +1,5 @@
 import type { TaskRecord } from "../../api/index.js";
+import { fixtureWorkflowMockIds as WF_IDS } from "./workflows.js";
 
 // Absolute paths are what the server stores in `success.artifacts`; the
 // dashboard's ArtifactsTab extracts the basename (after `/` or `\`) as the
@@ -262,20 +263,21 @@ export const fixtureTasks: TaskRecord[] = [
   },
   // Workflow-launched task fixtures (origin: "workflow") so the Mode B
   // drill-down from the Workflows page's Graph tab can resolve real
-  // task records. Ids match the synthetic `taskId` keys on
-  // `WorkflowNodeWire` in `fixtureWorkflowDags`. Briefs / agents mirror
-  // the originating node so the right-pane TaskView shows continuity.
+  // task records. Ids match the `taskId` / `id` values on
+  // `WorkflowNodeWire` in `fixtureWorkflowDags` via the shared
+  // `fixtureWorkflowMockIds` map. Briefs / agents mirror the
+  // originating node so the right-pane TaskView shows continuity.
   {
-    id: "wf-task-mig-coord-0",
+    id: WF_IDS.tasks.migCoord0,
     agent: "emploke/dev",
     brief: "Coordinator: plan auth-module OAuth migration",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-mig-coord-0`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.migCoord0}`,
       runtime: "copilot",
       workflowId: "20260608-1f3a7b9c",
-      workflowNodeId: "wfn-mig-coord-0",
+      workflowNodeId: WF_IDS.nodes.migCoord0,
     },
     createdAt: "2026-05-27T21:00:00.000Z",
     startedAt: "2026-05-27T21:00:01.000Z",
@@ -283,16 +285,16 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Plan emitted; queued phase-1 task node.", artifacts: [] },
   },
   {
-    id: "wf-task-mig-task-1a",
+    id: WF_IDS.tasks.migTask1a,
     agent: "emploke/dev",
     brief: "Replace session middleware with OAuth in packages/server",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-mig-task-1a`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.migTask1a}`,
       runtime: "copilot",
       workflowId: "20260608-1f3a7b9c",
-      workflowNodeId: "wfn-mig-task-1a",
+      workflowNodeId: WF_IDS.nodes.migTask1a,
     },
     createdAt: "2026-05-27T21:21:00.000Z",
     startedAt: "2026-05-27T21:21:02.000Z",
@@ -300,16 +302,16 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Patch applied; tests green.", artifacts: [] },
   },
   {
-    id: "wf-task-mig-coord-2",
+    id: WF_IDS.tasks.migCoord2,
     agent: "emploke/dev",
     brief: "Coordinator: review patch + queue regression sweep",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-mig-coord-2`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.migCoord2}`,
       runtime: "copilot",
       workflowId: "20260608-1f3a7b9c",
-      workflowNodeId: "wfn-mig-coord-2",
+      workflowNodeId: WF_IDS.nodes.migCoord2,
     },
     createdAt: "2026-05-27T22:31:00.000Z",
     startedAt: "2026-05-27T22:31:01.000Z",
@@ -317,31 +319,31 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Queued phase-3 worker.", artifacts: [] },
   },
   {
-    id: "wf-task-mig-task-3a",
+    id: WF_IDS.tasks.migTask3a,
     agent: "emploke/review",
     brief: "Run the auth integration suite + summarise failures",
     origin: "workflow",
     status: "running",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-mig-task-3a`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.migTask3a}`,
       runtime: "claude",
       workflowId: "20260608-1f3a7b9c",
-      workflowNodeId: "wfn-mig-task-3a",
+      workflowNodeId: WF_IDS.nodes.migTask3a,
     },
     createdAt: "2026-05-27T22:51:00.000Z",
     startedAt: "2026-05-27T22:51:02.000Z",
   },
   {
-    id: "wf-task-log-coord-0",
+    id: WF_IDS.tasks.logCoord0,
     agent: "emploke/review",
     brief: "Coordinator: stage logger refactor across packages/catalog",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-log-coord-0`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.logCoord0}`,
       runtime: "copilot",
       workflowId: "20260607-2e4b8cad",
-      workflowNodeId: "wfn-log-coord-0",
+      workflowNodeId: WF_IDS.nodes.logCoord0,
     },
     createdAt: "2026-05-27T00:00:00.000Z",
     startedAt: "2026-05-27T00:00:01.000Z",
@@ -349,16 +351,16 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Queued two phase-1 workers.", artifacts: [] },
   },
   {
-    id: "wf-task-log-task-1a",
+    id: WF_IDS.tasks.logTask1a,
     agent: "emploke/dev",
     brief: "Replace console.log calls in packages/catalog",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-log-task-1a`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.logTask1a}`,
       runtime: "copilot",
       workflowId: "20260607-2e4b8cad",
-      workflowNodeId: "wfn-log-task-1a",
+      workflowNodeId: WF_IDS.nodes.logTask1a,
     },
     createdAt: "2026-05-27T00:11:00.000Z",
     startedAt: "2026-05-27T00:11:02.000Z",
@@ -366,16 +368,16 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Migrated 23 call sites.", artifacts: [] },
   },
   {
-    id: "wf-task-log-task-1b",
+    id: WF_IDS.tasks.logTask1b,
     agent: "emploke/dev",
     brief: "Add structured-logger happy-path tests",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-log-task-1b`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.logTask1b}`,
       runtime: "copilot",
       workflowId: "20260607-2e4b8cad",
-      workflowNodeId: "wfn-log-task-1b",
+      workflowNodeId: WF_IDS.nodes.logTask1b,
     },
     createdAt: "2026-05-27T00:12:00.000Z",
     startedAt: "2026-05-27T00:12:01.000Z",
@@ -383,16 +385,16 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Six tests added.", artifacts: [] },
   },
   {
-    id: "wf-task-bump-coord-0",
+    id: WF_IDS.tasks.bumpCoord0,
     agent: "emploke/dev",
     brief: "Coordinator: bump contracts version (failed)",
     origin: "workflow",
     status: "failed",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-bump-coord-0`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.bumpCoord0}`,
       runtime: "copilot",
       workflowId: "20260606-3d5c9dbe",
-      workflowNodeId: "wfn-bump-coord-0",
+      workflowNodeId: WF_IDS.nodes.bumpCoord0,
     },
     createdAt: "2026-05-26T00:00:00.000Z",
     startedAt: "2026-05-26T00:00:01.000Z",
@@ -400,16 +402,16 @@ export const fixtureTasks: TaskRecord[] = [
     failure: { kind: "exited", exit_code: 1, message: "Coordinator hit an unrecoverable error." },
   },
   {
-    id: "wf-task-brand-coord-0",
+    id: WF_IDS.tasks.brandCoord0,
     agent: "emploke/designer",
     brief: "Coordinator: brand kit landing-page plan",
     origin: "workflow",
     status: "succeeded",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-brand-coord-0`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.brandCoord0}`,
       runtime: "copilot",
       workflowId: "20260605-4e6dabcf",
-      workflowNodeId: "wfn-brand-coord-0",
+      workflowNodeId: WF_IDS.nodes.brandCoord0,
     },
     createdAt: "2026-05-25T00:00:00.000Z",
     startedAt: "2026-05-25T00:00:01.000Z",
@@ -417,16 +419,16 @@ export const fixtureTasks: TaskRecord[] = [
     success: { output: "Plan emitted.", artifacts: [] },
   },
   {
-    id: "wf-task-brand-task-1a",
+    id: WF_IDS.tasks.brandTask1a,
     agent: "emploke/designer",
     brief: "Draft hero section copy + image layout",
     origin: "workflow",
     status: "cancelled",
     metadata: {
-      workdir: `${ART_DIR}/wf-task-brand-task-1a`,
+      workdir: `${ART_DIR}/${WF_IDS.tasks.brandTask1a}`,
       runtime: "copilot",
       workflowId: "20260605-4e6dabcf",
-      workflowNodeId: "wfn-brand-task-1a",
+      workflowNodeId: WF_IDS.nodes.brandTask1a,
     },
     createdAt: "2026-05-25T00:21:00.000Z",
     startedAt: "2026-05-25T00:21:02.000Z",

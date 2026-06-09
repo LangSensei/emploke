@@ -1,4 +1,5 @@
 import type { WorkflowArtifactWire } from "../../api";
+import { fixtureWorkflowMockIds } from "./workflows";
 
 /**
  * Designer-mode fixtures for the workflow Artifacts tab.
@@ -15,12 +16,15 @@ import type { WorkflowArtifactWire } from "../../api";
  *   - `20260605-4e6dabcf`     — workflow-summary entry only (the
  *     coordinator left a final report.md before cancel).
  *
- * Per-node `taskId` keys match the synthetic `wf-task-*` ids on the
- * matching `WorkflowNodeWire.taskId` in `fixtureWorkflowDags` so a
- * future "Open as task" navigation can resolve a real fixture.
+ * Per-node `nodeId` + `taskId` values are pulled from the shared
+ * `fixtureWorkflowMockIds` map exported by `workflows.ts` so the
+ * Artifacts tab resolves against the same UUIDv4 / dated-hex ids
+ * used by `WorkflowNodeWire.id` / `WorkflowNodeWire.taskId`. A
+ * rename in `workflows.ts` propagates automatically.
  *
  * `modifiedAt` timestamps are inline-pinned for stable snapshots.
  */
+const { nodes: N, tasks: T } = fixtureWorkflowMockIds;
 const EPOCH = Date.parse("2026-05-28T00:00:00.000Z");
 const iso = (offsetMinutes: number): string =>
   new Date(EPOCH + offsetMinutes * 60_000).toISOString();
@@ -46,8 +50,8 @@ export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArti
         },
         {
           kind: "node",
-          nodeId: "wfn-mig-task-1a",
-          taskId: "wf-task-mig-task-1a",
+          nodeId: N.migTask1a,
+          taskId: T.migTask1a,
           path: "diff-summary.md",
           size: 2410,
           modifiedAt: iso(-90),
@@ -55,8 +59,8 @@ export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArti
         },
         {
           kind: "node",
-          nodeId: "wfn-mig-task-1a",
-          taskId: "wf-task-mig-task-1a",
+          nodeId: N.migTask1a,
+          taskId: T.migTask1a,
           path: "logs.txt",
           size: 18_990,
           modifiedAt: iso(-90),
@@ -69,8 +73,8 @@ export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArti
       [
         {
           kind: "node",
-          nodeId: "wfn-log-task-1a",
-          taskId: "wf-task-log-task-1a",
+          nodeId: N.logTask1a,
+          taskId: T.logTask1a,
           path: "patch.md",
           size: 6321,
           modifiedAt: iso(-1330),
@@ -78,8 +82,8 @@ export const fixtureWorkflowArtifacts: ReadonlyMap<string, readonly WorkflowArti
         },
         {
           kind: "node",
-          nodeId: "wfn-log-task-1b",
-          taskId: "wf-task-log-task-1b",
+          nodeId: N.logTask1b,
+          taskId: T.logTask1b,
           path: "test-output.json",
           size: 1011,
           modifiedAt: iso(-1325),

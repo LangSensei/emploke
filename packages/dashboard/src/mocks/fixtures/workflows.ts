@@ -29,6 +29,74 @@ function iso(offsetMinutes: number): string {
   return new Date(EPOCH + offsetMinutes * 60_000).toISOString();
 }
 
+/**
+ * Hand-authored UUIDv4 node ids. Must satisfy `assertValidWorkflowNodeId`'s
+ * UUIDv4 grammar (see `@emploke/workflow`'s `validate.ts` UUID_V4_RE) AND
+ * stay stable across snapshot tests — that's why these are pre-baked
+ * constants rather than `randomUUID()` calls at module load. Each id's
+ * first 8 hex chars are unique within its workflow so the DAG short-id
+ * chip in `WorkflowDagView` renders distinct labels.
+ *
+ * Cross-file refs: `workflow-artifacts.ts` keys `node` artifacts by the
+ * same UUIDs, and `tasks.ts` references them via `metadata.workflowNodeId`.
+ * Keep all three files in sync when changing a node id.
+ */
+const NODE_ID_MIG_COORD_0 = "c000aaaa-1f3a-4b9c-8a00-20260608c000";
+const NODE_ID_MIG_TASK_1A = "c1a1aaaa-1f3a-4b9c-9a01-20260608c1a0";
+const NODE_ID_MIG_COORD_2 = "c002aaaa-1f3a-4b9c-8a02-20260608c002";
+const NODE_ID_MIG_TASK_3A = "c3a3aaaa-1f3a-4b9c-9a03-20260608c3a0";
+const NODE_ID_LOG_COORD_0 = "c000bbbb-2e4b-4cad-8b00-20260607c000";
+const NODE_ID_LOG_TASK_1A = "c1a1bbbb-2e4b-4cad-9b01-20260607c1a0";
+const NODE_ID_LOG_TASK_1B = "c1b1bbbb-2e4b-4cad-9b01-20260607c1b0";
+const NODE_ID_BUMP_COORD_0 = "c000cccc-3d5c-4dbe-8c00-20260606c000";
+const NODE_ID_BRAND_COORD_0 = "c000dddd-4e6d-4abc-8d00-20260605c000";
+const NODE_ID_BRAND_TASK_1A = "c1a1dddd-4e6d-4abc-9d01-20260605c1a0";
+
+/**
+ * Hand-authored task ids in the real `<YYYYMMDD>-<8hex>` shape
+ * (`generateTaskId` / `generateWorkflowId`). Date prefix mirrors the
+ * surrounding workflow's id-date so screenshots are visually coherent.
+ * Cross-referenced from `tasks.ts` (record `id` + `workdir`) and
+ * `workflow-artifacts.ts` (per-node `taskId`); keep all three in sync.
+ */
+const TASK_ID_MIG_COORD_0 = "20260608-c0000000";
+const TASK_ID_MIG_TASK_1A = "20260608-71a00001";
+const TASK_ID_MIG_COORD_2 = "20260608-c0000002";
+const TASK_ID_MIG_TASK_3A = "20260608-73a00003";
+const TASK_ID_LOG_COORD_0 = "20260607-c0000000";
+const TASK_ID_LOG_TASK_1A = "20260607-71a00001";
+const TASK_ID_LOG_TASK_1B = "20260607-71b00001";
+const TASK_ID_BUMP_COORD_0 = "20260606-c0000000";
+const TASK_ID_BRAND_COORD_0 = "20260605-c0000000";
+const TASK_ID_BRAND_TASK_1A = "20260605-71a00001";
+
+export const fixtureWorkflowMockIds = {
+  nodes: {
+    migCoord0: NODE_ID_MIG_COORD_0,
+    migTask1a: NODE_ID_MIG_TASK_1A,
+    migCoord2: NODE_ID_MIG_COORD_2,
+    migTask3a: NODE_ID_MIG_TASK_3A,
+    logCoord0: NODE_ID_LOG_COORD_0,
+    logTask1a: NODE_ID_LOG_TASK_1A,
+    logTask1b: NODE_ID_LOG_TASK_1B,
+    bumpCoord0: NODE_ID_BUMP_COORD_0,
+    brandCoord0: NODE_ID_BRAND_COORD_0,
+    brandTask1a: NODE_ID_BRAND_TASK_1A,
+  },
+  tasks: {
+    migCoord0: TASK_ID_MIG_COORD_0,
+    migTask1a: TASK_ID_MIG_TASK_1A,
+    migCoord2: TASK_ID_MIG_COORD_2,
+    migTask3a: TASK_ID_MIG_TASK_3A,
+    logCoord0: TASK_ID_LOG_COORD_0,
+    logTask1a: TASK_ID_LOG_TASK_1A,
+    logTask1b: TASK_ID_LOG_TASK_1B,
+    bumpCoord0: TASK_ID_BUMP_COORD_0,
+    brandCoord0: TASK_ID_BRAND_COORD_0,
+    brandTask1a: TASK_ID_BRAND_TASK_1A,
+  },
+} as const;
+
 export const fixtureWorkflows: readonly WorkflowHeaderWire[] = [
   {
     id: "20260608-1f3a7b9c",
@@ -86,11 +154,11 @@ const dagRunningMultistage: WorkflowDagWire = {
   workflow: fixtureWorkflows[0]!,
   nodes: [
     {
-      id: "wfn-mig-coord-0",
+      id: NODE_ID_MIG_COORD_0,
       workflowId: "20260608-1f3a7b9c",
       status: "succeeded",
       phase: 0,
-      taskId: "wf-task-mig-coord-0",
+      taskId: TASK_ID_MIG_COORD_0,
       spec: { kind: "coordinator", agent: "emploke/dev" },
       createdAt: iso(-180),
       readyAt: iso(-180),
@@ -98,11 +166,11 @@ const dagRunningMultistage: WorkflowDagWire = {
       endedAt: iso(-160),
     },
     {
-      id: "wfn-mig-task-1a",
+      id: NODE_ID_MIG_TASK_1A,
       workflowId: "20260608-1f3a7b9c",
       status: "succeeded",
       phase: 1,
-      taskId: "wf-task-mig-task-1a",
+      taskId: TASK_ID_MIG_TASK_1A,
       spec: {
         kind: "task",
         agent: "emploke/dev",
@@ -115,11 +183,11 @@ const dagRunningMultistage: WorkflowDagWire = {
       endedAt: iso(-90),
     },
     {
-      id: "wfn-mig-coord-2",
+      id: NODE_ID_MIG_COORD_2,
       workflowId: "20260608-1f3a7b9c",
       status: "succeeded",
       phase: 2,
-      taskId: "wf-task-mig-coord-2",
+      taskId: TASK_ID_MIG_COORD_2,
       spec: { kind: "coordinator", agent: "emploke/dev" },
       createdAt: iso(-89),
       readyAt: iso(-89),
@@ -127,11 +195,11 @@ const dagRunningMultistage: WorkflowDagWire = {
       endedAt: iso(-70),
     },
     {
-      id: "wfn-mig-task-3a",
+      id: NODE_ID_MIG_TASK_3A,
       workflowId: "20260608-1f3a7b9c",
       status: "running",
       phase: 3,
-      taskId: "wf-task-mig-task-3a",
+      taskId: TASK_ID_MIG_TASK_3A,
       spec: {
         kind: "task",
         agent: "emploke/review",
@@ -144,9 +212,9 @@ const dagRunningMultistage: WorkflowDagWire = {
     },
   ],
   edges: [
-    { from: "wfn-mig-coord-0", to: "wfn-mig-task-1a" },
-    { from: "wfn-mig-task-1a", to: "wfn-mig-coord-2" },
-    { from: "wfn-mig-coord-2", to: "wfn-mig-task-3a" },
+    { from: NODE_ID_MIG_COORD_0, to: NODE_ID_MIG_TASK_1A },
+    { from: NODE_ID_MIG_TASK_1A, to: NODE_ID_MIG_COORD_2 },
+    { from: NODE_ID_MIG_COORD_2, to: NODE_ID_MIG_TASK_3A },
   ],
 };
 
@@ -154,11 +222,11 @@ const dagSucceededSimple: WorkflowDagWire = {
   workflow: fixtureWorkflows[1]!,
   nodes: [
     {
-      id: "wfn-log-coord-0",
+      id: NODE_ID_LOG_COORD_0,
       workflowId: "20260607-2e4b8cad",
       status: "succeeded",
       phase: 0,
-      taskId: "wf-task-log-coord-0",
+      taskId: TASK_ID_LOG_COORD_0,
       spec: { kind: "coordinator", agent: "emploke/review" },
       createdAt: iso(-1440),
       readyAt: iso(-1440),
@@ -166,11 +234,11 @@ const dagSucceededSimple: WorkflowDagWire = {
       endedAt: iso(-1430),
     },
     {
-      id: "wfn-log-task-1a",
+      id: NODE_ID_LOG_TASK_1A,
       workflowId: "20260607-2e4b8cad",
       status: "succeeded",
       phase: 1,
-      taskId: "wf-task-log-task-1a",
+      taskId: TASK_ID_LOG_TASK_1A,
       spec: {
         kind: "task",
         agent: "emploke/dev",
@@ -182,11 +250,11 @@ const dagSucceededSimple: WorkflowDagWire = {
       endedAt: iso(-1330),
     },
     {
-      id: "wfn-log-task-1b",
+      id: NODE_ID_LOG_TASK_1B,
       workflowId: "20260607-2e4b8cad",
       status: "succeeded",
       phase: 1,
-      taskId: "wf-task-log-task-1b",
+      taskId: TASK_ID_LOG_TASK_1B,
       spec: {
         kind: "task",
         agent: "emploke/dev",
@@ -199,8 +267,8 @@ const dagSucceededSimple: WorkflowDagWire = {
     },
   ],
   edges: [
-    { from: "wfn-log-coord-0", to: "wfn-log-task-1a" },
-    { from: "wfn-log-coord-0", to: "wfn-log-task-1b" },
+    { from: NODE_ID_LOG_COORD_0, to: NODE_ID_LOG_TASK_1A },
+    { from: NODE_ID_LOG_COORD_0, to: NODE_ID_LOG_TASK_1B },
   ],
 };
 
@@ -208,11 +276,11 @@ const dagFailedEarly: WorkflowDagWire = {
   workflow: fixtureWorkflows[2]!,
   nodes: [
     {
-      id: "wfn-bump-coord-0",
+      id: NODE_ID_BUMP_COORD_0,
       workflowId: "20260606-3d5c9dbe",
       status: "failed",
       phase: 0,
-      taskId: "wf-task-bump-coord-0",
+      taskId: TASK_ID_BUMP_COORD_0,
       spec: { kind: "coordinator", agent: "emploke/dev" },
       createdAt: iso(-2880),
       readyAt: iso(-2880),
@@ -227,11 +295,11 @@ const dagCancelledLate: WorkflowDagWire = {
   workflow: fixtureWorkflows[3]!,
   nodes: [
     {
-      id: "wfn-brand-coord-0",
+      id: NODE_ID_BRAND_COORD_0,
       workflowId: "20260605-4e6dabcf",
       status: "succeeded",
       phase: 0,
-      taskId: "wf-task-brand-coord-0",
+      taskId: TASK_ID_BRAND_COORD_0,
       spec: { kind: "coordinator", agent: "emploke/designer" },
       createdAt: iso(-4320),
       readyAt: iso(-4320),
@@ -239,11 +307,11 @@ const dagCancelledLate: WorkflowDagWire = {
       endedAt: iso(-4300),
     },
     {
-      id: "wfn-brand-task-1a",
+      id: NODE_ID_BRAND_TASK_1A,
       workflowId: "20260605-4e6dabcf",
       status: "cancelled",
       phase: 1,
-      taskId: "wf-task-brand-task-1a",
+      taskId: TASK_ID_BRAND_TASK_1A,
       spec: {
         kind: "task",
         agent: "emploke/designer",
@@ -255,7 +323,7 @@ const dagCancelledLate: WorkflowDagWire = {
       endedAt: iso(-4200),
     },
   ],
-  edges: [{ from: "wfn-brand-coord-0", to: "wfn-brand-task-1a" }],
+  edges: [{ from: NODE_ID_BRAND_COORD_0, to: NODE_ID_BRAND_TASK_1A }],
 };
 
 export const fixtureWorkflowDags: ReadonlyMap<string, WorkflowDagWire> = new Map([

@@ -106,6 +106,23 @@ function cryptoRandom8(): string {
   );
 }
 
+/**
+ * Full UUIDv4 for mock workflow node ids. Node ids must satisfy
+ * `assertValidWorkflowNodeId`'s UUIDv4 grammar — the 8-char slice
+ * produced by `cryptoRandom8` would throw at the substrate layer.
+ * Falls back to a hand-shaped UUIDv4-like string when `crypto.randomUUID`
+ * is absent (older test runners) so the mock still satisfies the
+ * UUIDv4 regex.
+ */
+function cryptoUuid(): string {
+  const u = globalThis.crypto?.randomUUID?.();
+  if (u !== undefined) return u;
+  const hex = (n: number) => Math.floor(Math.random() * 16 ** n).toString(16).padStart(n, "0");
+  // y in [8,9,a,b] per RFC 4122 §4.4
+  const y = "89ab"[Math.floor(Math.random() * 4)];
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-${y}${hex(3)}-${hex(12)}`;
+}
+
 export const handlers = [
   // ── catalog (workspace-scoped) ───────────────────────────────
   http.get(`/api/workspaces/${W}/catalog/overview`, () =>
@@ -454,7 +471,7 @@ export const handlers = [
     };
     workflowsState.unshift(created);
     const coordNode: WorkflowNodeWire = {
-      id: `wfn-${cryptoRandom8()}`,
+      id: cryptoUuid(),
       workflowId: id,
       status: "running",
       phase: 0,
