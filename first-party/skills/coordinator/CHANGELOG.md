@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 (2026-06-09)
+
+- §A operating-model step 8 and the Decision log explainer now point at `$EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md` instead of `<task-workdir>/coord-decision.md`, so the audit trail is workflow-scoped instead of per-wake-up-fragmented. Step 8 also documents the cross-platform colon-to-dash filename convention. Added a "Reading prior decisions" subsection in §A explaining how to enumerate the directory for iteration counters, backoff, and audit-trail reconstruction (consult-only; never mutate). `verdict.json` and §C parse rules are unchanged.
+
 ## 1.0.0 (2026-06-09)
 
 - Initial release. Generic orchestration framework for the `emploke/coordinator` agent: how a coord wake-up is shaped, how to read the DAG, the universal `verdict.json` protocol, the meta-pattern for worker briefs, and the contract a sibling strategy skill must satisfy. Strategy-specific content (case banks, brief templates, stop conditions) lives in per-strategy sibling skills the coord agent declares as deps; this skill stays framework-only.

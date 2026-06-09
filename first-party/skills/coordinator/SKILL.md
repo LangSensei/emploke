@@ -2,7 +2,7 @@
 name: coordinator
 scope: emploke
 description: "Generic workflow-coordinator framework — operating model, DAG introspection patterns, verdict.json schema, brief-plumbing meta-pattern, and authoring guidance for strategy skills"
-version: 1.0.0
+version: 1.0.1
 ---
 
 # Emploke Coordinator Skill
@@ -26,7 +26,12 @@ CLI invocations cited below (`workflow show`, `dag`, `node-show`, `add-subgraph`
    - else fall back to the only strategy declared in the coord agent's deps
 6. Load the corresponding strategy skill's case bank (see §B in that skill)
 7. Match own parents against the case bank, execute the matching case
-8. Log decision + reasoning to <task-workdir>/coord-decision.md
+8. Log decision + reasoning to
+   $EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md
+   (auto-named so concurrent / out-of-order wake-ups never collide;
+   colons in the ISO timestamp are replaced with dashes for
+   cross-platform filename safety — e.g.
+   2026-06-09T15-34-58Z-node_abc123.md)
 9. Exit (coord run terminates; substrate detects task terminal;
    next coord wake-up only happens when its own future parents complete)
 ```
@@ -34,6 +39,10 @@ CLI invocations cited below (`workflow show`, `dag`, `node-show`, `add-subgraph`
 - One wake-up = one decision = one mutation. Use `add-subgraph` OR `finish`. Never loop waiting for parents — the substrate re-wakes coord when its parents land terminal.
 - Re-read every identifier from the DAG snapshot every wake-up. Do not cache parent ids, task ids, or branch names across wake-ups. The DAG IS the state.
 - The strategy skill owns the case bank; the scaffolding here is universal. Do not look for concrete cases in this skill.
+
+### Reading prior decisions
+
+Past wake-ups' decision files live alongside mine under `$EMPLOKE_WORKFLOW_DIR/coord-decisions/`; I can `ls` the directory to enumerate them. Filenames are timestamp-prefixed so chronological order is the directory's natural sort — no separate index file is needed. Strategy-specific patterns commonly want this: iteration counters ("how many times have I taken case X so far?"), backoff ("did I just try this and fail on the previous wake-up?"), or audit-trail reconstruction. Prior decision files are read-only from a strategy-discipline standpoint — consult them, never mutate them; the directory is append-only across the workflow's lifetime.
 
 ### Strategy selection details
 
@@ -185,7 +194,7 @@ Content-only: **no `dependencies:`** (the coord agent already declares the gener
 ### Optional body sections
 
 - **Tempid wiring sketches** — concrete `add-subgraph` JSON payloads for the strategy's common fan-outs, useful for the LLM to anchor output shape.
-- **Decision-log shape** — strategy-specific extensions to the generic `coord-decision.md` (e.g. iteration counter, blockers-and-majors count).
+- **Decision-log shape** — strategy-specific extensions to the generic per-wake-up decision file under `$EMPLOKE_WORKFLOW_DIR/coord-decisions/` (e.g. iteration counter, blockers-and-majors count).
 
 ### Constraints
 
@@ -197,4 +206,4 @@ Content-only: **no `dependencies:`** (the coord agent already declares the gener
 
 ## Decision log
 
-Each wake-up writes a `coord-decision.md` to its task workdir capturing: which strategy was selected, which case matched, parent ids + statuses observed, verdicts parsed (if any), and the action taken (`add-subgraph` specifics or `finish` outcome + reason). This is the audit trail for post-mortems on the workflow. Strategy skills may extend the record with extra fields (iteration counter, blocker/major counts, etc.).
+Each wake-up writes a new file `$EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md` capturing: which strategy was selected, which case matched, parent ids + statuses observed, verdicts parsed (if any), and the action taken (`add-subgraph` specifics or `finish` outcome + reason). This is the audit trail for post-mortems on the workflow. Prior wake-ups' decision files remain readable; if a strategy skill calls for consulting decision history (e.g. "did I retry this case last time?"), enumerate the directory in timestamp order. Strategy skills may extend the record with extra fields (iteration counter, blocker/major counts, etc.).
