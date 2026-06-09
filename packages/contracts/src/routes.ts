@@ -818,17 +818,13 @@ export const ROUTES = {
     "/api/workspaces/:id/workflows/:wfid/artifacts/:encodedPath",
   ),
 
-  // ── workflow coord-callback mutation surface (M2.5) ────────────────
+  // ── workflow mutation surface (coord-callback routes) ─────────────
   //
   // Eight routes that expose the substrate's full mutation surface
   // (every primitive on `WorkflowService` except `cancelWorkflow`, which
-  // is the external-operator route above). Auth is substrate-derived:
-  // the unique `kind='coordinator' AND status='running'` row in the
-  // workflow IS the caller; none of these handlers accept a
-  // `callerCoordNodeId` body/header/query — a request from outside any
-  // coord task gets `WorkflowMutationUnauthorizedError` → 403. Order
-  // here is alphabetical for diff legibility; the server's mount order
-  // is governed by Hono's route matching (more-specific paths win).
+  // is the external-operator route above). Order here is alphabetical
+  // for diff legibility; the server's mount order is governed by Hono's
+  // route matching (more-specific paths win).
   "workflows.addEdge": defineRoute<
     { params: WorkflowPathParams; body: AddEdgeBody },
     AddEdgeResultWire
@@ -855,8 +851,7 @@ export const ROUTES = {
    * Last act of a coord task: flip the workflow terminal. `outcome`
    * MUST be `succeeded` or `failed`. Substrate enforces "no other
    * running nodes" (the caller coord is excluded); a running worker
-   * fails with `WorkflowMutationUnauthorizedError` /
-   * `WorkflowAlreadyTerminalError` depending on race shape.
+   * surfaces `WorkflowAlreadyTerminalError` on the race.
    */
   "workflows.finish": defineRoute<
     { params: WorkflowPathParams; body: FinishWorkflowBody },

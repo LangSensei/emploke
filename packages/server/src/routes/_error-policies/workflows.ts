@@ -16,11 +16,6 @@
  *           caller-input shape guard for kind
  *           (`WorkflowNodeKindShapeError`) is the legitimate 400
  *           bucket for kind validation.
- *   - 403 — caller is not an authorised mutator (the substrate's auth
- *           gate: must be the unique running coordinator in this
- *           workflow). Distinct from 404 (entity missing) and 409
- *           (FSM/state conflict) — the entity exists, the request is
- *           well-formed, but the caller does not own this workflow.
  *   - 404 — addressing miss (workflow / node / edge not in this
  *           workspace).
  *   - 409 — CAS / FSM / DAG conflict against existing state (workflow
@@ -32,7 +27,7 @@
  * Agent-resolution failures from the coord-kind runner's `validate`
  * (`AgentNotFoundError` / `AgentResolutionFailedError` from the task
  * pkg) are listed below — reachable via `POST /workflows` at create
- * time AND via the M2.5 mutation routes (`addNode`, `addSubgraph`,
+ * time AND via the DAG-mutation routes (`addNode`, `addSubgraph`,
  * `replaceNodeSpec`) when the runner re-validates an agent FQN.
  */
 
@@ -121,7 +116,7 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowSubgraphMultipleCoordTempsError, 409],
 
     // Task-package surface — reachable from worker-kind handler
-    // dispatch paths surfaced via M2.5 DAG-mutation routes. Listed
+    // dispatch paths surfaced via the DAG-mutation routes. Listed
     // here proactively so policy is consistent with the schedules
     // policy's same fallthrough block.
     [InvalidTaskIdError, 400],

@@ -759,14 +759,14 @@ describe("workflowAddNode", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("server 403 surfaces typed code via formatError (exit 4)", async () => {
+  it("server 409 surfaces typed code via formatError (exit 4)", async () => {
     const specFile = await writeSpec({});
     stubFetchMulti([
       {
-        status: 403,
+        status: 409,
         body: JSON.stringify({
-          error: "denied",
-          code: "WorkflowMutationUnauthorizedError",
+          error: "workflow already terminal",
+          code: "WorkflowAlreadyTerminalError",
         }),
       },
     ]);
@@ -778,7 +778,7 @@ describe("workflowAddNode", () => {
       parents: "p1",
     });
     expect(r.exitCode).toBe(4);
-    expect(r.stderr).toContain("WorkflowMutationUnauthorizedError");
+    expect(r.stderr).toContain("WorkflowAlreadyTerminalError");
   });
 });
 
