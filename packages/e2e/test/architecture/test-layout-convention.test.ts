@@ -96,6 +96,11 @@ const ALLOWED_FLAT_EXCEPTIONS: readonly FlatException[] = [
       "subdirected by area (hooks/); imports span hooks/ + api sibling subdirs of src/ — rule says flat. Mirrors src/hooks/useWorkflowArtifacts.ts; co-location with the source aids editor navigation, retained.",
   },
   {
+    file: "packages/dashboard/test/hooks/useWorkflows.test.tsx",
+    rationale:
+      "subdirected by area (hooks/); imports span hooks/ + api/ + components/tasks/ sibling subdirs of src/ — rule says flat. Mirrors src/hooks/useWorkflows.ts; co-location with the source aids editor navigation, retained (same precedent as useWorkflowArtifacts.test.ts).",
+  },
+  {
     file: "packages/dashboard/test/pages/workflows/ArtifactsTab.test.tsx",
     rationale:
       "subdirected by area (pages/workflows/); imports span pages/workflows/ + api sibling subdirs of src/ — rule says flat. Mirrors src/pages/workflows/ArtifactsTab.tsx; co-location with the source aids editor navigation, retained.",
