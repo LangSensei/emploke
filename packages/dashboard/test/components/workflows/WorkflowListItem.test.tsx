@@ -148,7 +148,7 @@ describe("WorkflowListItem — row `⋯` menu", () => {
   });
 
   it("row-menu Cancel label is bare 'Cancel' (Tasks parity, not 'Cancel workflow')", () => {
-    // v2.4.2: the row-menu label matches the Tasks pattern exactly
+    // The row-menu label matches the Tasks pattern exactly
     // (`TaskListItem.tsx` row menu uses bare "Cancel"). The noun is
     // reintroduced in the modal title + primary button where the
     // popover-from-anywhere context makes the disambiguation useful.

@@ -1,8 +1,8 @@
 /**
- * Focused tests for the shared `RelativeTime` component. v2.4 F2
- * consolidated the two per-page row-time wrappers (`TaskRelativeTime`
- * / `WorkflowRelativeTime`) into this single helper; the wrappers
- * were dropped, so the branching logic only lives here now and needs
+ * Focused tests for the shared `RelativeTime` component. The
+ * branching logic was consolidated here from two per-page row-time
+ * wrappers (`TaskRelativeTime` / `WorkflowRelativeTime`) that no
+ * longer exist; with only one home left for the dispatch, it needs
  * coverage in one place rather than via integration tests on either
  * consumer (where a regression would surface as a flaky text match
  * miles away from the cause).

@@ -10,8 +10,8 @@
  *     strip can control its own layout without forking the icon.
  *   - The shared className `task-filters__search-icon` keeps the
  *     name despite serving both Tasks and Workflows — both pages
- *     follow the v2.3 "reuse `task-*` classes" convention so the
- *     filter CSS rule is generic.
+ *     reuse the `task-*` filter classes so the same CSS rule
+ *     covers them both.
  *
  * Imported by `components/tasks/TaskFilters.tsx` and
  * `components/workflows/WorkflowFilters.tsx`.
