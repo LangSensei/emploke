@@ -42,14 +42,14 @@ export interface ProjectionTasksDep {
 
 /**
  * Project a `WorkflowEntity` to the wire-shape header. The caller
- * supplies `iterationCount` explicitly — list routes pass `0` (the
- * per-row coord-node count would be O(N) — see {@link
- * deriveIterationCount}); single-workflow routes pass the count
- * computed from a fresh `listNodesByWorkflow` call.
+ * supplies `iterationCount` explicitly — single-workflow routes pass
+ * the count computed from a fresh `listNodesByWorkflow` call; list
+ * routes pass `undefined` so the field is omitted from the response
+ * (computing it per row would be N+1 — see {@link deriveIterationCount}).
  */
 export function projectWorkflowHeader(
   wf: WorkflowEntity,
-  iterationCount: number,
+  iterationCount: number | undefined,
 ): WorkflowHeaderWire {
   return {
     id: wf.id,
@@ -58,7 +58,7 @@ export function projectWorkflowHeader(
     coordinatorAgent: wf.coordinatorAgent,
     status: wf.status,
     metadata: wf.metadata,
-    iterationCount,
+    ...(iterationCount !== undefined ? { iterationCount } : {}),
     createdAt: wf.createdAt,
     ...(wf.startedAt !== undefined ? { startedAt: wf.startedAt } : {}),
     ...(wf.endedAt !== undefined ? { endedAt: wf.endedAt } : {}),

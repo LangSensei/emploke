@@ -518,10 +518,13 @@ export function workflowsRoutes(
     if (createdSinceResult.value !== undefined) opts.createdSince = createdSinceResult.value;
     try {
       const list = await resolve(c).list(Object.keys(opts).length === 0 ? undefined : opts);
-      // `iterationCount` projected as 0 on list rows to keep the
-      // endpoint O(workflows). Clients that need the accurate count
-      // fetch the header via `GET /:wfid`.
-      const wire: readonly WorkflowHeaderWire[] = list.map((wf) => projectWorkflowHeader(wf, 0));
+      // `iterationCount` is omitted from list rows to keep the
+      // endpoint O(workflows): computing it per row would require a
+      // DAG snapshot per workflow. Clients that need the accurate
+      // count fetch the header via `GET /:wfid`.
+      const wire: readonly WorkflowHeaderWire[] = list.map((wf) =>
+        projectWorkflowHeader(wf, undefined),
+      );
       return c.json(wire);
     } catch (err) {
       return respondError(c, err, {

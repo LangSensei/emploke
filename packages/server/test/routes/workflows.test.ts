@@ -135,14 +135,14 @@ function mountRoutes(
 // ─── GET / — list ────────────────────────────────────────────────────
 
 describe("workflowsRoutes — list", () => {
-  it("GET / returns the workflow list with iterationCount=0 per row", async () => {
+  it("GET / returns the workflow list and omits iterationCount per row", async () => {
     const svc = stubService({});
     const res = await mountRoutes(svc).request("/");
     expect(res.status).toBe(200);
     const body = (await res.json()) as Array<Record<string, unknown>>;
     expect(body).toHaveLength(1);
     expect(body[0]?.id).toBe(WID);
-    expect(body[0]?.iterationCount).toBe(0);
+    expect(body[0]).not.toHaveProperty("iterationCount");
     expect(body[0]?.status).toBe("running");
     expect(svc.list).toHaveBeenCalledWith(undefined);
   });

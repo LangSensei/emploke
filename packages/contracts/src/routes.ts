@@ -739,12 +739,12 @@ export const ROUTES = {
    * value yields HTTP 400 at the route boundary (the substrate would
    * silently return `[]` otherwise).
    *
-   * `iterationCount` on the response items is reported as `0` on
-   * list responses to keep the endpoint O(workflows): computing the
-   * true value would require N+1 node-count queries. Callers that
-   * need an accurate count fetch the workflow header
-   * (`workflows.get`) which derives it from a single per-workflow
-   * node count.
+   * `iterationCount` is omitted from list response items: computing
+   * the true value would require an N+1 fan-out (one DAG snapshot
+   * per row) across the entire result set, so the list endpoint
+   * stays O(workflows). Callers that need an accurate count fetch
+   * the workflow header (`workflows.get`), which includes
+   * `iterationCount` derived from a single per-workflow node list.
    */
   "workflows.list": defineRoute<
     { params: WorkspacePathParams; query: WorkflowListQuery },

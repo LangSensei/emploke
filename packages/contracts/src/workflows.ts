@@ -112,13 +112,15 @@ export type WorkflowNodeStatusWire =
  * strings (already stored that way), optional `endedAt` is absent on
  * non-terminal rows.
  *
- * `iterationCount` is kept for forward diagnostics; not rendered
- * after v2.2.
+ * `iterationCount` is optional. Per-workflow reads (`GET /:wfid`,
+ * `POST /` create response) include it (cheap: the route already has
+ * the DAG snapshot in hand). The list endpoint (`GET /`) omits it
+ * because computing it would require an N+1 fan-out across every
+ * row in the result set to load each workflow's DAG; the field
+ * stays "kept for forward diagnostics" rather than "always renders".
  *
- * `success` / `failure` / `cancellation` are v2.2 terminal payloads —
- * exactly the one matching `status` is present on terminal rows
- * (legacy pre-v2.2 terminal rows with no payload column populated
- * round-trip with all three absent).
+ * `success` / `failure` / `cancellation` are terminal payloads —
+ * exactly the one matching `status` is present on terminal rows.
  */
 export interface WorkflowHeaderWire {
   readonly id: string;
@@ -127,8 +129,12 @@ export interface WorkflowHeaderWire {
   readonly coordinatorAgent: string;
   readonly status: WorkflowStatusWire;
   readonly metadata: Readonly<Record<string, unknown>>;
-  /** Kept for forward diagnostics; not rendered after v2.2. */
-  readonly iterationCount: number;
+  /**
+   * Coordinator-chain depth at projection time. Present on
+   * per-workflow reads; omitted on list rows to avoid an N+1
+   * snapshot fan-out across the result set.
+   */
+  readonly iterationCount?: number;
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly endedAt?: string;

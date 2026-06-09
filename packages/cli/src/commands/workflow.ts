@@ -106,17 +106,12 @@ export async function workflowList(opts: WorkflowListOpts = {}): Promise<Command
     return {
       exitCode: 0,
       stdout: formatTable(
-        ["id", "brief", "coordinatorAgent", "status", "iterationCount", "createdAt"],
+        ["id", "brief", "coordinatorAgent", "status", "createdAt"],
         list.map((wf) => [
           wf.id,
           wf.brief,
           wf.coordinatorAgent,
           wf.status,
-          // `iterationCount` is projected as `0` on every list row by
-          // design (see route doc-block: keeps the endpoint O(workflows)).
-          // The number-as-string cast is just for table padding; callers
-          // wanting the accurate count use `workflow show`.
-          String(wf.iterationCount),
           wf.createdAt,
         ]),
       ),
