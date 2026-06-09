@@ -178,11 +178,11 @@ export interface WorkflowNodeSpecEnvelope {
 
 /**
  * Context threaded into `WorkflowNodeRunner.validate`. Carries the
- * workflow id and the workflow's current status so per-kind runners
- * can do cross-workflow-state checks if needed; the substrate stays
- * kind-agnostic and does NOT pass any caller identity. Runners that
- * need to check catalog references on `spec` do so against the
- * catalog directly.
+ * workflow id, the workflow's current status, and the workflow's
+ * coordinator agent FQN so per-kind runners can do cross-workflow-state
+ * and capability checks if needed; the substrate stays kind-agnostic
+ * and does NOT pass any caller identity. Runners that need to check
+ * catalog references on `spec` do so against the catalog directly.
  *
  * For ordinary mutation paths the substrate calls `validate` with
  * `workflowStatus: 'running'` (mutations are only legal on running
@@ -197,6 +197,18 @@ export interface WorkflowNodeValidateCtx {
    * mutations on terminal workflows before `validate` runs.
    */
   readonly workflowStatus: WorkflowStatus;
+  /**
+   * FQN of the workflow's coordinator agent (denormalized from
+   * `workflow.coordinator_agent`). Threaded so per-kind runners can
+   * enforce capability rules against the coord's `dependencies.agents`
+   * dispatch menu (see the W1+W2+W3 workflow-coord-capability mission
+   * for the full rationale).
+   *
+   * For the bootstrap `createWorkflow` path this is `args.coordinatorAgent`
+   * (the agent about to be installed as coord); for every subsequent
+   * add / replace path it's read from the existing workflow row.
+   */
+  readonly coordinatorAgent: string;
 }
 
 /**

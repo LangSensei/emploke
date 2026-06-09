@@ -151,6 +151,30 @@ export class WorkflowCoordSpecError extends Error {
   override readonly name = "WorkflowCoordSpecError";
 }
 
+/**
+ * Capability error for a workflow coordinator agent whose catalog
+ * frontmatter does not declare a non-empty `dependencies.agents`
+ * dispatch menu (W2 of the workflow-coord-capability rules). Without
+ * a declared menu the coord has nothing to validate worker
+ * `spec.agent` against, and the coord-vs-task architectural split
+ * (workflow = declared menu; task = open-ended) collapses.
+ *
+ * Lives next to {@link WorkflowCoordSpecError} so all coord-runner
+ * validate-time rejections sit at one canonical match point for
+ * downstream error policy.
+ */
+export class WorkflowCoordAgentNotCapableError extends Error {
+  override readonly name = "WorkflowCoordAgentNotCapableError";
+  constructor(public readonly agentFqn: string) {
+    super(
+      `Workflow coordinator agent "${agentFqn}" declares no \`dependencies.agents\` ` +
+        `dispatch menu in its catalog frontmatter. Workflow coordinators MUST declare ` +
+        `the agents they may dispatch. If you need open-ended dispatch, use \`emploke task ` +
+        `dispatch\` instead of \`emploke workflow create\`.`,
+    );
+  }
+}
+
 export interface MakeCoordNodeRunnerDeps {
   readonly tasks: TaskService;
   readonly catalog: CatalogService;
@@ -280,6 +304,17 @@ export function makeCoordNodeRunner(
         throw new AgentResolutionFailedError(obj.agent, err);
       }
       if (found === null) throw new AgentNotFoundError(obj.agent);
+
+      // W2 (workflow coordinator capability discipline): a workflow
+      // coord MUST declare a non-empty `dependencies.agents` dispatch
+      // menu in its catalog frontmatter. Without it, the coord has no
+      // menu to validate worker spec.agent against, and the coord-vs-
+      // task architectural split (workflow = declared menu; task =
+      // open-ended) collapses.
+      const menu = found.dependencies?.agents ?? [];
+      if (menu.length === 0) {
+        throw new WorkflowCoordAgentNotCapableError(obj.agent);
+      }
 
       return { agent: obj.agent };
     },

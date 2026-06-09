@@ -483,6 +483,10 @@ export class WorkflowService {
     const validateCtx: WorkflowNodeValidateCtx = {
       workflowId,
       workflowStatus: "running",
+      // W3 plumbing: bootstrap path — the coord about to be installed
+      // is the one whose dispatch menu future worker validates must
+      // resolve against. See WorkflowNodeValidateCtx.coordinatorAgent.
+      coordinatorAgent: args.coordinatorAgent,
     };
     const validatedSpec = await runner.validate(coordSpec, validateCtx);
     assertCoordinatorSpecAgent(validatedSpec);
@@ -581,13 +585,17 @@ export class WorkflowService {
     // Lifecycle gate: the target workflow must exist and be running.
     // Read OUTSIDE the write tx for the validate path; re-checked
     // inside the tx for atomicity against concurrent termination.
-    await this.assertWorkflowRunning(workflowId);
+    // The returned entity carries the denormalized `coordinatorAgent`
+    // we thread into the validate ctx so the worker runner can enforce
+    // W3 (menu-membership) without an extra read.
+    const wfRow = await this.assertWorkflowRunning(workflowId);
 
     // Phase A: pre-validate outside the tx so a runner's potentially
     // async validate runs without holding a write lock.
     const validateCtx: WorkflowNodeValidateCtx = {
       workflowId,
       workflowStatus: "running",
+      coordinatorAgent: wfRow.coordinatorAgent,
     };
     const validatedSpec = await runner.validate(args.spec, validateCtx);
 
@@ -1159,8 +1167,10 @@ export class WorkflowService {
   async replaceNodeSpec(args: ReplaceNodeSpecArgs): Promise<void> {
     const workflowId = args.workflowId;
 
-    // Lifecycle gate.
-    await this.assertWorkflowRunning(workflowId);
+    // Lifecycle gate. The returned entity carries the denormalized
+    // `coordinatorAgent` we thread into the validate ctx so the worker
+    // runner can enforce W3 (menu-membership) without an extra read.
+    const wfRow = await this.assertWorkflowRunning(workflowId);
 
     // Phase A: pre-validate outside the tx so the runner's potentially
     // async validate runs without holding a write lock. Errors that
@@ -1186,6 +1196,7 @@ export class WorkflowService {
     const validateCtx: WorkflowNodeValidateCtx = {
       workflowId,
       workflowStatus: "running",
+      coordinatorAgent: wfRow.coordinatorAgent,
     };
     const validatedSpec = await runner.validate(args.newSpec, validateCtx);
 
@@ -1322,8 +1333,12 @@ export class WorkflowService {
     // on tempId so the inserted-nodes return order is stable.
     const topoOrder = resolveSubgraphTopology(workflowId, tempNodes, tempEdges);
 
-    // Lifecycle gate: workflow must exist and be running.
-    await this.assertWorkflowRunning(workflowId);
+    // Lifecycle gate: workflow must exist and be running. The
+    // returned entity carries the denormalized `coordinatorAgent`
+    // we thread into every validate ctx in the topo loop so the
+    // worker runner can enforce W3 (menu-membership) once per node
+    // without re-reading the workflow row per iteration.
+    const wfRow = await this.assertWorkflowRunning(workflowId);
 
     // Pass A (P15-c): cheap existing-ref existence + workflow-membership
     // pre-check. Runs BEFORE the per-temp `runner.validate` calls so
@@ -1386,6 +1401,7 @@ export class WorkflowService {
       const validateCtx: WorkflowNodeValidateCtx = {
         workflowId,
         workflowStatus: "running",
+        coordinatorAgent: wfRow.coordinatorAgent,
       };
       const validatedSpec = await runner.validate(full.spec, validateCtx);
       if (t.kind === COORDINATOR_KIND) assertCoordinatorSpecAgent(validatedSpec);
@@ -1863,11 +1879,18 @@ export class WorkflowService {
    * workflow exists and is running before launching potentially
    * expensive `runner.validate` calls. The mutation tx re-checks the
    * same predicates atomically before persisting.
+   *
+   * Returns the loaded {@link WorkflowEntity} so callers that need to
+   * populate {@link WorkflowNodeValidateCtx} fields denormalized from
+   * the workflow row (e.g. `coordinatorAgent` for the W3
+   * worker-runner capability check) can reuse the same read without
+   * issuing a second `readWorkflow` round-trip.
    */
-  private async assertWorkflowRunning(workflowId: string): Promise<void> {
+  private async assertWorkflowRunning(workflowId: string): Promise<WorkflowEntity> {
     const wf = await this.repo.readWorkflow(workflowId);
     if (wf === null) throw new WorkflowNotFoundError(workflowId);
     if (wf.status !== "running") throw new WorkflowAlreadyTerminalError(workflowId);
+    return wf;
   }
 
   /**

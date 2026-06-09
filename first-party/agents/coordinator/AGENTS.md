@@ -8,6 +8,10 @@ dependencies:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/cli"
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/coordinator"
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/dev-review-loop"
+  agents:
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/agents/dev"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/agents/review"
+    - "https://github.com/LangSensei/emploke/tree/main/first-party/agents/frontend-designer"
 ---
 
 # Emploke Coordinator Agent

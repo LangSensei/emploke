@@ -31,6 +31,7 @@ import {
   DEFAULT_COORD_MAX_POLL_ERRORS,
   DEFAULT_COORD_POLL_INTERVAL_MS,
   makeCoordNodeRunner,
+  WorkflowCoordAgentNotCapableError,
   WorkflowCoordSpecError,
 } from "../../src/wiring/workflow-coord-task-runner.js";
 
@@ -85,7 +86,14 @@ function stubDeps(
 ) {
   const getAgent = vi.fn(async (_fqn: string) => {
     if (opts.getAgentThrows !== undefined) throw opts.getAgentThrows;
-    return opts.agent === undefined ? { name: "default-agent" } : opts.agent;
+    // Coord validate now does a W2 capability check: it requires the
+    // resolved agent's `dependencies.agents` to be a non-empty
+    // dispatch menu. The default stub returns a capable coord shape
+    // so the default-path tests don't trip W2; tests targeting W2's
+    // empty-menu branch override `opts.agent` with a deps-less shape.
+    return opts.agent === undefined
+      ? { name: "default-agent", dependencies: { agents: [{ fqn: "w" }] } }
+      : opts.agent;
   });
   const dispatch = vi.fn(async () => opts.dispatchReturn ?? fakeTaskRow({ id: "task-id-1" }));
   const get = vi.fn(async (_id: string) => {
@@ -132,6 +140,12 @@ function stubDeps(
 const NODE_VALIDATE_CTX = {
   workflowId: "20260101-deadbeef",
   workflowStatus: "running" as const,
+  // Coord FQN threaded from the workflow row (denormalized
+  // `workflows.coordinator_agent`). The coord runner doesn't consume
+  // this — W2 reads the menu off the agent being validated itself —
+  // but the substrate always populates it, so the test fixture sets
+  // a placeholder for type-conformance.
+  coordinatorAgent: "coord-agent",
 };
 
 const DISPATCH_OPTS_BASE = {
@@ -296,6 +310,74 @@ describe("makeCoordNodeRunner — validate", () => {
     expect(wrapped.cause === cause || (wrapped as unknown as { err?: unknown }).err === cause).toBe(
       true,
     );
+    await r.dispose();
+  });
+
+  // ── W2: coordinator capability discipline ────────────────────────────────
+  //
+  // The runner's W2 check fires AFTER agent existence but BEFORE the
+  // validate returns. It requires the resolved coord agent to declare
+  // a non-empty `dependencies.agents` dispatch menu in its catalog
+  // frontmatter. Coordinators with an empty/missing menu are rejected
+  // with `WorkflowCoordAgentNotCapableError` (no fallback to
+  // open-ended dispatch — that's `emploke task dispatch`'s job).
+
+  it("U10b-W2: accepts a coord agent whose `dependencies.agents` is non-empty", async () => {
+    const deps = stubDeps({
+      agent: {
+        name: "capable-coord",
+        dependencies: { agents: [{ fqn: "dev" }, { fqn: "review" }] },
+      },
+    });
+    const r = makeCoordNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
+    });
+    const result = await r.validate({ agent: "capable-coord" }, NODE_VALIDATE_CTX);
+    expect(result).toEqual({ agent: "capable-coord" });
+    await r.dispose();
+  });
+
+  it("U10c-W2: rejects a coord agent with absent `dependencies` (no menu)", async () => {
+    const deps = stubDeps({
+      // Bare agent object — no `dependencies` field at all. The
+      // optional-chain in the runner (`found.dependencies?.agents
+      // ?? []`) collapses to the empty array, which triggers W2.
+      agent: { name: "bare-coord" },
+    });
+    const r = makeCoordNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
+    });
+    await expect(r.validate({ agent: "bare-coord" }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
+      WorkflowCoordAgentNotCapableError,
+    );
+    await expect(r.validate({ agent: "bare-coord" }, NODE_VALIDATE_CTX)).rejects.toThrow(
+      /dispatch menu|dependencies\.agents/,
+    );
+    await r.dispose();
+  });
+
+  it("U10d-W2: rejects a coord agent with explicitly empty `dependencies.agents` array", async () => {
+    const deps = stubDeps({
+      // Explicit empty array (vs absent) — the catalog projection
+      // normally omits empty kinds, but defensive code paths still
+      // accept this shape. W2 must reject it identically.
+      agent: { name: "empty-menu-coord", dependencies: { agents: [] } },
+    });
+    const r = makeCoordNodeRunner({
+      catalog: deps.catalog,
+      tasks: deps.tasks,
+      getService: deps.getService,
+      workspaceDir: TEST_WORKSPACE_DIR,
+    });
+    await expect(
+      r.validate({ agent: "empty-menu-coord" }, NODE_VALIDATE_CTX),
+    ).rejects.toBeInstanceOf(WorkflowCoordAgentNotCapableError);
     await r.dispose();
   });
 });

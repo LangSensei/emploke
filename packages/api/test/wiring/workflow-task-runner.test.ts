@@ -40,6 +40,7 @@ import {
   DEFAULT_WORKER_MAX_POLL_ERRORS,
   DEFAULT_WORKER_POLL_INTERVAL_MS,
   makeWorkerNodeRunner,
+  WorkflowWorkerNotInCoordMenuError,
   WorkflowWorkerSpecError,
 } from "../../src/wiring/workflow-task-runner.js";
 
@@ -65,6 +66,16 @@ function stubDeps(
   opts: {
     agent?: unknown | null;
     getAgentThrows?: Error;
+    /**
+     * Override the coord agent the W3 catalog lookup returns when
+     * `getAgent(ctx.coordinatorAgent)` fires. Default: a coord-shaped
+     * agent whose `dependencies.agents` includes the default worker
+     * FQN `"w"` used by `NODE_VALIDATE_CTX` / `DISPATCH_OPTS_BASE`, so
+     * the default `{agent: "w", brief: "b"}` spec passes W3
+     * menu-membership without per-test plumbing. Pass `null` to
+     * simulate "coord uninstalled mid-workflow".
+     */
+    coordAgent?: unknown | null;
     dispatchReturn?: { id: string };
     // biome-ignore lint/suspicious/noExplicitAny: stub return shape mirrors fakeTaskRow.
     getReturn?: any;
@@ -75,8 +86,20 @@ function stubDeps(
     hasInFlightReturn?: boolean;
   } = {},
 ) {
-  const getAgent = vi.fn(async (_fqn: string) => {
+  const getAgent = vi.fn(async (fqn: string) => {
     if (opts.getAgentThrows !== undefined) throw opts.getAgentThrows;
+    // The worker validate now does TWO catalog lookups: one for the
+    // worker's spec.agent, and a second for `ctx.coordinatorAgent`
+    // (W3 menu-membership check). The stub discriminates so an
+    // `opts.agent` override targets the worker resolution only,
+    // while the coord resolution stays valid by default; the W3
+    // tests below pass an explicit `coordAgent` to drive the
+    // membership branches.
+    if (fqn === NODE_VALIDATE_CTX.coordinatorAgent) {
+      return "coordAgent" in opts
+        ? opts.coordAgent
+        : { fqn: "coord", dependencies: { agents: [{ fqn: "w" }] } };
+    }
     return opts.agent === undefined ? { name: "default-agent" } : opts.agent;
   });
   const dispatch = vi.fn(async () => opts.dispatchReturn ?? fakeTaskRow({ id: "task-id-1" }));
@@ -113,6 +136,12 @@ function stubDeps(
 const NODE_VALIDATE_CTX = {
   workflowId: "20260101-deadbeef",
   workflowStatus: "running" as const,
+  // Coord FQN threaded from the workflow row (denormalized
+  // `workflows.coordinator_agent`). Worker runner uses it for W3
+  // menu-membership checks; the W3 tests below construct catalog
+  // stubs whose `coord` agent declares `dependencies.agents = [w]`
+  // so the default {agent: "w"} spec is in-menu.
+  coordinatorAgent: "coord",
 };
 
 const DISPATCH_OPTS_BASE = {
@@ -196,6 +225,60 @@ describe("makeWorkerNodeRunner — validate", () => {
     const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
     await expect(r.validate({ agent: "w", brief: "b" }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
       AgentResolutionFailedError,
+    );
+    await r.dispose();
+  });
+
+  // ── W3: workflow worker menu-membership discipline ──────────────────────
+  //
+  // The worker runner's W3 check fires AFTER worker agent existence
+  // but BEFORE the validate returns. It requires the spec.agent FQN to
+  // appear in the coord agent's `dependencies.agents` dispatch menu.
+  // The coord agent is looked up via `ctx.coordinatorAgent` (threaded
+  // by the substrate from the denormalized workflow header).
+
+  it("W3: accepts a worker whose FQN is in the coord's dispatch menu", async () => {
+    const deps = stubDeps({
+      coordAgent: {
+        fqn: "coord",
+        dependencies: { agents: [{ fqn: "w" }, { fqn: "other" }] },
+      },
+    });
+    const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
+    const result = await r.validate({ agent: "w", brief: "b" }, NODE_VALIDATE_CTX);
+    expect(result).toEqual({ agent: "w", brief: "b" });
+    // W3 must have queried the coord agent in addition to the worker.
+    expect(deps.getAgent).toHaveBeenCalledWith("w");
+    expect(deps.getAgent).toHaveBeenCalledWith(NODE_VALIDATE_CTX.coordinatorAgent);
+    await r.dispose();
+  });
+
+  it("W3: rejects a worker whose FQN is NOT in the coord's dispatch menu", async () => {
+    const deps = stubDeps({
+      coordAgent: {
+        fqn: "coord",
+        dependencies: { agents: [{ fqn: "dev" }, { fqn: "review" }] },
+      },
+    });
+    const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
+    await expect(r.validate({ agent: "w", brief: "b" }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
+      WorkflowWorkerNotInCoordMenuError,
+    );
+    await expect(r.validate({ agent: "w", brief: "b" }, NODE_VALIDATE_CTX)).rejects.toThrow(
+      /dispatch menu|dependencies\.agents|not in/i,
+    );
+    await r.dispose();
+  });
+
+  it("W3: rejects when the coord agent has no `dependencies.agents` block at all", async () => {
+    const deps = stubDeps({
+      // Bare coord — no dependencies field. Worker can never satisfy
+      // an empty menu, regardless of FQN.
+      coordAgent: { fqn: "coord" },
+    });
+    const r = makeWorkerNodeRunner({ catalog: deps.catalog, tasks: deps.tasks });
+    await expect(r.validate({ agent: "w", brief: "b" }, NODE_VALIDATE_CTX)).rejects.toBeInstanceOf(
+      WorkflowWorkerNotInCoordMenuError,
     );
     await r.dispose();
   });
