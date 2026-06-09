@@ -251,6 +251,25 @@ export function makeWorkerNodeRunner(
           workflowId: opts.workflowId,
           workflowNodeId: opts.nodeId,
         },
+        // Worker tasks see the two workflow identity keys
+        // (`EMPLOKE_WORKFLOW_ID`, `EMPLOKE_NODE_ID`) but NOT
+        // `EMPLOKE_WORKFLOW_DIR` — the per-workflow shared dir is
+        // coord-only by design. Coord owns that dir; workers stay
+        // workflow-unaware so the coord skill's "workers do not
+        // read the shared dir" rule holds by construction. The
+        // restriction is doc-only — the runtime does not enforce
+        // read-only on the dir, so the discipline is: do NOT add
+        // the key here unless a deliberate spec change widens the
+        // contract.
+        //
+        // No `prompt` override: workers use `@emploke/task`'s default
+        // `TASK_FRAMING_PROMPT_COPILOT`. Worker briefs are self-
+        // contained TASK.md bodies; the default framing's "read
+        // TASK.md, then exit" instruction is exactly right.
+        subprocessEnv: {
+          EMPLOKE_WORKFLOW_ID: opts.workflowId,
+          EMPLOKE_NODE_ID: opts.nodeId,
+        },
       });
       const taskId = task.id;
       const nodeId = opts.nodeId;
