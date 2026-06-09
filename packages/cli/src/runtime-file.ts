@@ -16,6 +16,7 @@
  */
 
 import { mkdir, readFile, unlink } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { type RuntimeFile, runtimeFilePath } from "@emploke/server";
 import writeFileAtomic from "write-file-atomic";
 
@@ -49,7 +50,41 @@ export async function readRuntimeFile(home: string): Promise<RuntimeFile | null>
 export async function writeRuntimeFile(home: string, value: RuntimeFile): Promise<void> {
   await mkdir(home, { recursive: true });
   const p = runtimeFilePath(home);
-  await writeFileAtomic(p, `${JSON.stringify(value, null, 2)}\n`);
+  await writeFileAtomicWithRetry(p, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * Wrap `write-file-atomic` with a bounded retry on Windows-typical
+ * transient rename failures (EPERM / EBUSY / EACCES). The library does
+ * a single `fs.rename`; on Windows that translates to
+ * `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`, which loses to AV scans of
+ * the temp file and to concurrent renames against the same target.
+ * The retry budget is small (8 attempts, ~exponential backoff capped
+ * at 500 ms) so a genuinely stuck write still fails in well under a
+ * second.
+ */
+async function writeFileAtomicWithRetry(p: string, body: string): Promise<void> {
+  const MAX_ATTEMPTS = 8;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await writeFileAtomic(p, body);
+      if (attempt > 0) {
+        console.debug(`[runtime-file] retried-write path=${p} attempts=${attempt + 1}`);
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const retryable = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      if (!retryable || attempt >= MAX_ATTEMPTS - 1) {
+        if (retryable) {
+          console.debug(`[runtime-file] giving-up path=${p} attempts=${attempt + 1} code=${code}`);
+        }
+        throw err;
+      }
+      const backoffMs = Math.min(2 ** attempt + Math.random() * 50, 500);
+      await delay(backoffMs);
+    }
+  }
 }
 
 /** Idempotent delete. Tolerates a missing file (already cleaned up). */

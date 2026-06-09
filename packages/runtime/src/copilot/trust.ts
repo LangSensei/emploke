@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import lockfile from "proper-lockfile";
 import writeFileAtomic from "write-file-atomic";
 import { TrustRegistrationFailed } from "./errors.js";
@@ -111,7 +112,7 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
       await stat(configPath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      await writeFileAtomic(configPath, "{}");
+      await writeFileAtomicWithRetry(configPath, "{}");
     }
     const release = await lockfile.lock(configPath, {
       retries: { retries: 100, factor: 1.1, minTimeout: 50, maxTimeout: 200 },
@@ -152,7 +153,7 @@ export async function ensureDirTrusted(dir: string, configPath: string): Promise
       if (isPathCovered(resolvedDir, existing)) return;
 
       config.trustedFolders = [...existing, resolvedDir];
-      await writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      await writeFileAtomicWithRetry(configPath, `${JSON.stringify(config, null, 2)}\n`);
     } finally {
       await release();
     }
@@ -168,6 +169,42 @@ async function statSafe(p: string): Promise<import("node:fs").Stats | null> {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
+  }
+}
+
+/**
+ * Wrap `write-file-atomic` with a bounded retry on Windows-typical
+ * transient rename failures (EPERM / EBUSY / EACCES). The library does
+ * a single `fs.rename`; on Windows that translates to
+ * `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`, which loses to AV scans of
+ * the temp file and to concurrent renames against the same target.
+ * The retry budget is small (8 attempts, ~exponential backoff capped
+ * at 500 ms) so a genuinely stuck write still fails in well under a
+ * second. The proper-lockfile guard above already serialises this
+ * module's own callers, so the EPERM we care about here is contention
+ * from other processes (concurrent `emploke serve`, AV scanners).
+ */
+async function writeFileAtomicWithRetry(p: string, body: string): Promise<void> {
+  const MAX_ATTEMPTS = 8;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await writeFileAtomic(p, body);
+      if (attempt > 0) {
+        console.debug(`[copilot/trust] retried-write path=${p} attempts=${attempt + 1}`);
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const retryable = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      if (!retryable || attempt >= MAX_ATTEMPTS - 1) {
+        if (retryable) {
+          console.debug(`[copilot/trust] giving-up path=${p} attempts=${attempt + 1} code=${code}`);
+        }
+        throw err;
+      }
+      const backoffMs = Math.min(2 ** attempt + Math.random() * 50, 500);
+      await delay(backoffMs);
+    }
   }
 }
 
