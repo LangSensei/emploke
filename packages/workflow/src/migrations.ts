@@ -10,58 +10,19 @@ import type { MigrationMeta } from "drizzle-orm/migrator";
 export const MIGRATIONS: readonly MigrationMeta[] = [
   {
     sql: [
-      "CREATE TABLE `workflows` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`details` text,\n\t`status` text NOT NULL,\n\t`outcome` text,\n\t`metadata` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`started_at` text,\n\t`archived_at` text\n);\n",
-      "\nCREATE TABLE `workflow_nodes` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workflow_id` text NOT NULL,\n\t`type` text DEFAULT 'task' NOT NULL,\n\t`status` text NOT NULL,\n\t`spec` text DEFAULT '{}' NOT NULL,\n\t`data` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`ready_at` text,\n\t`running_at` text,\n\t`ended_at` text\n);\n",
-      "\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
-      "\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
-      "\nCREATE TABLE `workflow_edges` (\n\t`workflow_id` text NOT NULL,\n\t`from_node_id` text NOT NULL,\n\t`to_node_id` text NOT NULL,\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\n);\n",
+      "CREATE TABLE `workflow_edges` (\n\t`workflow_id` text NOT NULL,\n\t`from_node_id` text NOT NULL,\n\t`to_node_id` text NOT NULL,\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\n);\n",
       "\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
-      "\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\n"
-    ],
-    bps: true,
-    folderMillis: 1,
-    hash: "6e95eb00c1e13b2671a7c78313ab0c1a816dab78bb9c4e436c3cae23d9606c2a",
-  },
-  {
-    sql: [
-      "DROP TABLE IF EXISTS `workflow_edges`;\n",
-      "\nDROP TABLE IF EXISTS `workflow_nodes`;\n",
-      "\nDROP TABLE IF EXISTS `workflows`;\n",
-      "\nCREATE TABLE `workflows` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`details` text,\n\t`coordinator_agent` text NOT NULL,\n\t`status` text NOT NULL,\n\t`metadata` text DEFAULT '{}' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`started_at` text,\n\t`ended_at` text\n);\n",
-      "\nCREATE INDEX `workflows_status_idx` ON `workflows` (`status`);",
-      "\nCREATE INDEX `workflows_coordinator_agent_idx` ON `workflows` (`coordinator_agent`);",
+      "\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);",
       "\nCREATE TABLE `workflow_nodes` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workflow_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`spec_json` text NOT NULL,\n\t`phase` integer NOT NULL,\n\t`status` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`ready_at` text,\n\t`running_at` text,\n\t`ended_at` text\n);\n",
       "\nCREATE INDEX `workflow_nodes_workflow_idx` ON `workflow_nodes` (`workflow_id`);",
       "\nCREATE INDEX `workflow_nodes_status_idx` ON `workflow_nodes` (`workflow_id`,`status`);",
-      "\nCREATE INDEX `workflow_nodes_phase_idx` ON `workflow_nodes` (`workflow_id`,`phase`);",
-      "\nCREATE TABLE `workflow_edges` (\n\t`workflow_id` text NOT NULL,\n\t`from_node_id` text NOT NULL,\n\t`to_node_id` text NOT NULL,\n\tPRIMARY KEY(`workflow_id`, `from_node_id`, `to_node_id`)\n);\n",
-      "\nCREATE INDEX `workflow_edges_from_idx` ON `workflow_edges` (`workflow_id`,`from_node_id`);",
-      "\nCREATE INDEX `workflow_edges_to_idx` ON `workflow_edges` (`workflow_id`,`to_node_id`);\n"
+      "\nCREATE TABLE `workflows` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`cancellation` text,\n\t`coordinator_agent` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`details` text,\n\t`ended_at` text,\n\t`failure` text,\n\t`metadata` text DEFAULT '{}' NOT NULL,\n\t`started_at` text,\n\t`status` text NOT NULL,\n\t`success` text\n);\n",
+      "\nCREATE INDEX `workflows_status_idx` ON `workflows` (`status`);",
+      "\nCREATE INDEX `workflows_coordinator_agent_idx` ON `workflows` (`coordinator_agent`);"
     ],
     bps: true,
-    folderMillis: 2,
-    hash: "b04ef66661c80db01ebf25556a772781b67352307144033a98f620f79106832d",
-  },
-  {
-    sql: [
-      "-- Adds typed terminal payload columns to workflows. Mirrors\n-- @emploke/task's success / failure / cancellation discriminated\n-- payload shape (each terminal status carries its own typed JSON\n-- blob; running rows have all three null).\n--\n-- No backfill needed: any row predating these columns is already\n-- terminal with no payload attached. They surface in the dashboard\n-- via the read-path tolerance branch (\"the row is terminal but\n-- carries no payload — render a placeholder\").\n--\n-- Columns added in alphabetical order to match the schema.ts\n-- declaration order so the drizzle drift guard (which compares\n-- introspected column ordering against the schema) keeps passing.\nALTER TABLE `workflows` ADD COLUMN `cancellation` text;",
-      "\nALTER TABLE `workflows` ADD COLUMN `failure` text;",
-      "\nALTER TABLE `workflows` ADD COLUMN `success` text;\n"
-    ],
-    bps: true,
-    folderMillis: 3,
-    hash: "6e80c5539b117bb6e1405ef711d0dcefe4dcd2266376f992ff48283029fdac97",
-  },
-  {
-    sql: [
-      "-- Final shape cleanup for the workflow substrate.\n--\n-- 1. Drops the (workflow_id, phase) composite index. The substrate's\n--    read paths order by phase only inside the per-workflow result\n--    set surfaced by `workflow_nodes_workflow_idx`; SQLite's planner\n--    sorts that small set in memory rather than walking a second\n--    index, so the phase index never appeared in any EXPLAIN QUERY\n--    PLAN that mattered. Dropping it removes a per-row write cost\n--    and trims the on-disk footprint.\n--\n-- 2. Coerces legacy terminal-payload discriminator values onto the\n--    current single-arm vocabulary so the read path's tolerance\n--    branch becomes unreachable for any row written prior to the\n--    enum tightening:\n--      * `failure.kind` in {`coord`, `internal`} -> `coordinator`\n--      * `cancellation.kind` = `cascade` -> `user`\n--    Mirrors the in-process coercion in `parseTerminalPayload` so\n--    inserts written today and rows touched by this migration agree\n--    on the discriminator vocabulary.\n--\n-- 3. Backfills `started_at` for any pre-existing workflow row that\n--    was created before the engine started populating the column at\n--    insert time. `started_at` is now mandatory at write time (the\n--    repository asserts it); the backfill makes the column non-null\n--    for the entire historical fleet so a future `NOT NULL` tighten\n--    is a no-op at migration time.\nDROP INDEX IF EXISTS `workflow_nodes_phase_idx`;\n",
-      "\nUPDATE `workflows` SET `failure` = json_set(`failure`, '$.kind', 'coordinator') WHERE json_extract(`failure`, '$.kind') IN ('coord', 'internal');\n",
-      "\nUPDATE `workflows` SET `cancellation` = json_set(`cancellation`, '$.kind', 'user') WHERE json_extract(`cancellation`, '$.kind') = 'cascade';\n",
-      "\nUPDATE `workflows` SET `started_at` = `created_at` WHERE `started_at` IS NULL;"
-    ],
-    bps: true,
-    folderMillis: 4,
-    hash: "579e3db8e7e415fc45f9ae79a103519bf350e6e9b23e9b0a4f785b43aea78688",
+    folderMillis: 1,
+    hash: "3ce054a4c9d068bbc43906a7390ff7a4a95966e954951b3fb6e1fe0352d89c95",
   },
 ];
 

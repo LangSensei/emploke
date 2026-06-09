@@ -9,7 +9,7 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
  * index** on `json_extract(target_json, '$.agent')` filtered
  * `WHERE target_kind = 'task'`. Declared via hand-written
  * `drizzle/0001_drop_target_agent_add_json_index.sql` because
- * drizzle-kit cannot express expression indexes in schema; the
+ * drizzle-kit cannot express functional partial indexes in schema; the
  * runtime query in `schedule-repository.ts` MUST use
  * `sql\`json_extract(${schedules.targetJson}, '$.agent')\`` against
  * `target_json` to engage it. The same pattern is used in

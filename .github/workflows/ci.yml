@@ -38,7 +38,7 @@ jobs:
         # We regenerate everything; if any drizzle/ tree changes, the
         # working copy is dirty and we fail with a pointer to the fix.
         run: |
-          for pkg in workspace session task catalog; do
+          for pkg in workspace session task catalog workflow schedule; do
             pnpm -F "@emploke/$pkg" db:generate
           done
           if ! git diff --exit-code packages/*/drizzle/; then
@@ -90,6 +90,18 @@ jobs:
       # buys cheap regression coverage.
       - name: Bundle
         run: pnpm bundle
+
+      - name: Verify inline migrations match bundle output
+        # If `pnpm bundle` regenerated any src/migrations.ts differently
+        # from the committed version, the drizzle hash on boot will not
+        # match and the runtime will refuse to start. Fail CI here
+        # rather than at deploy time.
+        shell: bash
+        run: |
+          if ! git diff --exit-code packages/*/src/migrations.ts; then
+            echo "::error::src/migrations.ts is out of sync with bundle output. Run 'pnpm bundle' locally and commit the result, OR investigate CRLF / generator drift."
+            exit 1
+          fi
 
   links:
     runs-on: ubuntu-latest
