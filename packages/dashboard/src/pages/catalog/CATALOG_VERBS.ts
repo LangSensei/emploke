@@ -65,6 +65,12 @@ export interface CatalogEntryMeta {
   skills: string[];
   /** FQN strings, post-catalog-v2. */
   mcps: string[];
+  /**
+   * Agent → agent edge FQN strings. Always empty for skills (skills
+   * cannot declare agent deps — only agents can). The skill loader
+   * still populates `[]` so the form shape stays uniform.
+   */
+  agents: string[];
 }
 
 /**
@@ -93,8 +99,12 @@ export interface CatalogMetadataPatch {
   version: string;
   /** Skill-only; agents ignore. `null` clears the field. */
   prereqs: string | null;
-  /** `null` clears every dependency. */
-  dependencies: { skills: string[]; mcps: string[] } | null;
+  /**
+   * `null` clears every dependency. `agents` is optional and only
+   * meaningful for the agent adapter — the skill adapter strips it
+   * before forwarding, mirroring how the agent adapter strips `prereqs`.
+   */
+  dependencies: { skills: string[]; mcps: string[]; agents?: string[] } | null;
 }
 
 /** Agent-only lifecycle verbs. `null` on every non-agent kind. */
@@ -168,6 +178,9 @@ const loadSkillDetail = async (name: string): Promise<CatalogEntryDetail> => {
       prereqs: skill.prereqs ?? "",
       skills: (skill.dependencies?.skills ?? []).map((x) => x.fqn),
       mcps: (skill.dependencies?.mcps ?? []).map((x) => x.fqn),
+      // Skills cannot declare agent deps; populate empty so the form
+      // shape stays uniform across skill/agent.
+      agents: [],
     },
     agentDisabledByUser: null,
   };
@@ -186,6 +199,7 @@ const loadAgentDetail = async (name: string): Promise<CatalogEntryDetail> => {
       prereqs: "",
       skills: (agent.dependencies?.skills ?? []).map((x) => x.fqn),
       mcps: (agent.dependencies?.mcps ?? []).map((x) => x.fqn),
+      agents: (agent.dependencies?.agents ?? []).map((x) => x.fqn),
     },
     agentDisabledByUser: agent.disabledByUser,
   };
@@ -203,22 +217,38 @@ const loadMcpDetail = async (name: string): Promise<CatalogEntryDetail> => {
 // before forwarding.
 
 const skillPatchAdapter = (name: string, patch: CatalogMetadataPatch): Promise<void> => {
+  // Skills cannot declare agent deps — strip `agents` before forwarding
+  // so the wire body matches `SkillMetadataPatch` exactly. The catalog
+  // service rejects skill→agent edges; this mirror is defence-in-depth.
   const body: SkillMetadataPatch = {
     description: patch.description,
     version: patch.version,
     prereqs: patch.prereqs,
-    dependencies: patch.dependencies,
+    dependencies:
+      patch.dependencies === null
+        ? null
+        : { skills: patch.dependencies.skills, mcps: patch.dependencies.mcps },
   };
   return patchSkillMetadata(name, body);
 };
 
 const agentPatchAdapter = (name: string, patch: CatalogMetadataPatch): Promise<void> => {
   // Agents have no `prereqs` field — drop it before forwarding so the
-  // wire body matches `AgentMetadataPatch` exactly.
+  // wire body matches `AgentMetadataPatch` exactly. `agents` is
+  // forwarded as-is when present (agent→agent edges).
   const body: AgentMetadataPatch = {
     description: patch.description,
     version: patch.version,
-    dependencies: patch.dependencies,
+    dependencies:
+      patch.dependencies === null
+        ? null
+        : {
+            skills: patch.dependencies.skills,
+            mcps: patch.dependencies.mcps,
+            ...(patch.dependencies.agents !== undefined
+              ? { agents: patch.dependencies.agents }
+              : {}),
+          },
   };
   return patchAgentMetadata(name, body);
 };

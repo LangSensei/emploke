@@ -15,6 +15,12 @@ export interface EntryCardItem {
   /** Negative suppresses the chip entirely (used by mcp, which has no deps). */
   skillsCount: number;
   mcpsCount: number;
+  /**
+   * Agent → agent dep count. Only agent rows set this (skills cannot
+   * declare agent deps, mcps have no deps). `undefined` or `<= 0`
+   * suppresses the chip — so skill + mcp rows render unchanged.
+   */
+  agentsCount?: number;
 }
 
 interface EntryGridProps {
@@ -128,6 +134,10 @@ function EntryCard({
   // (mcps have no deps). agents/skills always show counts including 0.
   const showSkillsCount = item.skillsCount >= 0;
   const showMcpsCount = item.mcpsCount >= 0;
+  // agent→agent edges: opt-in chip. Skills don't pass this field (they
+  // can't declare agent deps); agent rows pass 0+ but we suppress at 0
+  // since "0 agents" would be noisier than the zero-deps default.
+  const showAgentsCount = item.agentsCount !== undefined && item.agentsCount > 0;
   return (
     // biome-ignore lint/a11y/useSemanticElements: card has nested Remove <button>; nesting buttons is invalid HTML
     <div
@@ -196,7 +206,7 @@ function EntryCard({
         {showVersion && (
           <>
             <span className="card-grid__meta-item">v{item.version}</span>
-            {(showSkillsCount || showMcpsCount) && (
+            {(showSkillsCount || showMcpsCount || showAgentsCount) && (
               <span className="card-grid__meta-sep" aria-hidden="true" />
             )}
           </>
@@ -212,6 +222,14 @@ function EntryCard({
         {showMcpsCount && (
           <span className="card-grid__meta-item">
             {item.mcpsCount} mcp{item.mcpsCount === 1 ? "" : "s"}
+          </span>
+        )}
+        {showAgentsCount && (showSkillsCount || showMcpsCount) && (
+          <span className="card-grid__meta-sep" aria-hidden="true" />
+        )}
+        {showAgentsCount && (
+          <span className="card-grid__meta-item">
+            {item.agentsCount} agent{item.agentsCount === 1 ? "" : "s"}
           </span>
         )}
         <span className="card-grid__meta-spacer" />
