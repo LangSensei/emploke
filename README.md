@@ -105,7 +105,7 @@ two layers of commands:
 
 ### API client (talk to a running server)
 
-65 typed routes — wrapped 1:1 by the CLI's `client.call(...)` surface;
+81 typed routes — wrapped 1:1 by the CLI's `client.call(...)` surface;
 the typed manifest in `packages/contracts/src/routes.ts` is the single
 source of truth that both the server registers handlers against and
 the CLI builds typed calls from. Adding a route on either side
