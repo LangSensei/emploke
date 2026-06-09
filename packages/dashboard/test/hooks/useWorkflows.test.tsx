@@ -61,9 +61,9 @@ describe("useWorkflows — historicalAgentNames snapshot", () => {
   it("retains the historical set when a subsequent fetch narrows by agent", async () => {
     // First fetch: agent-unfiltered, returns two agents → snapshot grows.
     // Second fetch: narrowed to one agent → snapshot must NOT shrink so
-    // the dropdown still surfaces the other agent. This is the core
-    // user-flow the F5 reviewer item calls out: switching from agent A
-    // to agent B in one click even when A's filter is currently active.
+    // the dropdown still surfaces the other agent. This pins the core
+    // user flow: switching from agent A to agent B in one click even
+    // when A's filter is currently active.
     mockList.mockResolvedValueOnce([
       makeWf({ id: "wf-a", coordinatorAgent: "emploke/dev" }),
       makeWf({ id: "wf-b", coordinatorAgent: "emploke/review" }),
