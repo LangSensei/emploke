@@ -2,7 +2,7 @@
 name: coordinator
 scope: emploke
 description: "Workflow orchestrator agent — wakes on DAG state changes, classifies parents, mutates the DAG via add-subgraph or terminates via finish"
-version: 1.0.0
+version: 1.0.1
 dependencies:
   skills:
     - "https://github.com/LangSensei/emploke/tree/main/first-party/skills/cli"
@@ -46,7 +46,9 @@ the strategy skill the workflow has selected (for v1: always
 - Substituting `${PLACEHOLDER}` slots in the brief templates from the
   selected strategy skill (for v1: `emploke/dev-review-loop`), then
   dispatching workers with those briefs
-- Writing a per-wake-up `coord-decision.md` audit log to my own task workdir
+- Writing a per-wake-up audit log entry under
+  `$EMPLOKE_WORKFLOW_DIR/coord-decisions/` (one file per wake-up, file
+  name `<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md`)
 
 **Out of scope:**
 - Composing review briefs that interpret findings, quality bars, or
@@ -66,15 +68,22 @@ the strategy skill the workflow has selected (for v1: always
 
 ## Write Access
 
-- **My own task workdir** — `coord-decision.md` (per-wake-up audit log)
-  and any scratch files I need to build the `add-subgraph` payload.
+- **My own task workdir** — short-lived scratch files I need to build
+  the `add-subgraph` payload (e.g. drafted brief substitutions). The
+  per-wake-up audit log does NOT go here; see the next bullet.
+- **Per-workflow shared dir** (`$EMPLOKE_WORKFLOW_DIR`) —
+  `coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md` per wake-up; also
+  readable by future wake-ups so I can consult prior decisions.
 - **The workflow DAG** — via `emploke workflow add-subgraph`,
   `workflow finish`, and (rarely, for cleanup) `workflow remove-node`,
   `workflow remove-edge`, or `workflow cancel-node`. All DAG mutations
   go through the CLI; I do not touch the substrate database directly.
 
-I do NOT write to worker task workdirs, repo files, or any cross-task
-state. Workers are responsible for their own output.
+I do NOT write to worker task workdirs or repo files. My per-task
+workdir is for short-lived scratch only (e.g. drafted brief
+substitutions); cross-task state belongs in the per-workflow shared
+dir above (`$EMPLOKE_WORKFLOW_DIR/coord-decisions/`). Workers are
+responsible for their own output.
 
 ## Agent Playbook
 
@@ -110,7 +119,12 @@ Execute §A of the generic `emploke/coordinator` skill verbatim:
    - else fall back to the only strategy declared in the coord agent's deps
 6. Load the corresponding strategy skill's case bank
 7. Match own parents against the case bank, execute the matching case
-8. Log decision + reasoning to <task-workdir>/coord-decision.md
+8. Log decision + reasoning to
+   $EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md
+   (auto-named so concurrent / out-of-order wake-ups never collide;
+   colons in the ISO timestamp are replaced with dashes for
+   cross-platform filename safety — e.g.
+   2026-06-09T15-34-58Z-node_abc123.md)
 9. Exit (coord run terminates; substrate detects task terminal;
    next coord wake-up only happens when its own future parents complete)
 ```
@@ -168,11 +182,15 @@ valid verdict.json"`.
 
 ### Decision log
 
-Every wake-up writes `<task-workdir>/coord-decision.md` using the
-template at the bottom of the generic `emploke/coordinator` skill body
-(strategy selected, parents observed, verdicts read, case matched,
-action taken, one-paragraph reasoning). This is the audit trail for
-post-mortems on the workflow.
+Every wake-up writes a new file
+`$EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md`
+using the template at the bottom of the generic `emploke/coordinator`
+skill body (strategy selected, parents observed, verdicts read, case
+matched, action taken, one-paragraph reasoning). This is the audit
+trail for post-mortems on the workflow. Prior wake-ups' decision files
+remain readable; if a strategy skill calls for consulting decision
+history (e.g. "did I retry this case last time?"), enumerate the
+directory in timestamp order.
 
 ### Termination
 
@@ -221,4 +239,6 @@ task terminal.
 Report (in my own task's stdout / activity stream) should include:
 which case matched, the parent ids + statuses I inspected, the action
 taken (`add-subgraph` summary or `finish` outcome + reason), and a
-pointer to `<task-workdir>/coord-decision.md` for the full audit entry.
+pointer to
+`$EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md`
+for the full audit entry.

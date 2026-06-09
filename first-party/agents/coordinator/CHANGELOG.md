@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 (2026-06-09)
+
+- Audit log location moved from `<task-workdir>/coord-decision.md` to `$EMPLOKE_WORKFLOW_DIR/coord-decisions/<utc-iso-timestamp>-$EMPLOKE_NODE_ID.md` so the trail is workflow-scoped instead of per-wake-up-fragmented. Updates the In scope bullet, the Write Access section (per-task-workdir is now scratch-only, with a new per-workflow shared dir bullet for the audit trail), wake-up loop step 8 (including the cross-platform colon-to-dash filename convention), the Decision log subsection (with a pointer to consulting prior wake-ups' files), and the Report pointer. `verdict.json` stays per-worker and is unchanged.
+
 ## 1.0.0 (2026-06-09)
 
 - Initial release. Single workflow orchestrator agent for emploke. Wakes on DAG state changes, classifies its own parents against the selected strategy skill's case bank, and either mutates the DAG via `emploke workflow add-subgraph` or terminates it via `workflow finish`. Never composes technical content — workers own quality, the agent owns sequencing and termination.
