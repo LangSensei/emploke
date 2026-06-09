@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, like, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { WorkflowNodeNotFoundError } from "./errors.js";
 import type * as schema from "./schema.js";
@@ -93,7 +93,8 @@ export class WorkflowRepository {
       predicates.push(gte(workflows.createdAt, opts.createdSince));
     }
     if (opts?.idLike !== undefined && opts.idLike !== "") {
-      predicates.push(like(workflows.id, `%${escapeLike(opts.idLike)}%`));
+      const pattern = `%${escapeLike(opts.idLike)}%`;
+      predicates.push(sql`${workflows.id} LIKE ${pattern} ESCAPE '\\'`);
     }
     const where = predicates.length === 0 ? undefined : and(...predicates);
     const rows =
@@ -511,22 +512,21 @@ export class WorkflowRepository {
 
 /**
  * Escape SQL `LIKE` metacharacters in user-supplied substring search
- * input. The drizzle `like(col, pattern)` call passes `pattern`
- * through unescaped, so a literal `%` or `_` typed into the workflow
- * id search box would silently widen the match. We surround the
- * caller's payload with `%…%` ourselves; this helper only escapes
- * the metacharacters inside the payload. The default `LIKE` escape
- * is `\` in SQLite when an `ESCAPE` clause is supplied — drizzle's
- * `like(...)` does not emit one, so we pre-escape with `\` and let
- * the engine treat `\%` as literal `%` only if the caller adds an
- * `ESCAPE '\'` clause. Without one, `\` is itself literal — so the
- * cleanest defence is to refuse to forward the two metacharacters at
- * all: any user-typed `%` / `_` is silently dropped. This matches
- * the per-workspace search box where the operator types ids, never
- * SQL patterns.
+ * input so the caller's payload is matched as a literal substring of
+ * the column. SQLite's `LIKE` treats `%` (zero or more chars) and `_`
+ * (single char) as wildcards; to forward them as literals we
+ * pre-escape both (plus the escape character itself) with `\` and
+ * the caller emits an explicit `ESCAPE '\'` clause in the SQL
+ * fragment so the engine honours the escape.
+ *
+ * Effect: a bare `%` or `_` typed into the workflow id search box now
+ * narrows to ids that contain the literal character — it no longer
+ * silently collapses to a wildcard and widens the result set to all
+ * rows. Mirrors the per-workspace search semantics most operators
+ * expect (the search box takes id fragments, not SQL patterns).
  */
 function escapeLike(input: string): string {
-  return input.replace(/[%_]/g, "");
+  return input.replace(/[\\%_]/g, "\\$&");
 }
 
 // Re-export row helpers so the service layer keeps a single import root.

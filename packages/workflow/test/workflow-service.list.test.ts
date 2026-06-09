@@ -75,10 +75,21 @@ describe("WorkflowService — list", () => {
     expect(onlyA.map((wf) => wf.id)).toEqual([a.workflowId]);
 
     // A `%` typed by an operator must NOT widen the match — the repo
-    // strips LIKE metacharacters from the payload, so this collapses to
-    // an empty substring (matches all rows).
+    // escapes LIKE metacharacters and emits an ESCAPE clause so a bare
+    // `%` is interpreted as the literal character. Workflow ids contain
+    // no `%`, so the result is empty (strict, not "all rows").
     const withPercent = await h.service.list({ idLike: "%" });
-    expect(withPercent.map((wf) => wf.id).sort()).toEqual([a.workflowId, b.workflowId].sort());
+    expect(withPercent).toEqual([]);
+
+    // Same defence for `_` — workflow ids contain no underscore, so a
+    // bare `_` must narrow to nothing rather than match any-single-char.
+    const withUnderscore = await h.service.list({ idLike: "_" });
+    expect(withUnderscore).toEqual([]);
+
+    // Spot-check the unrelated row is still in the table so the empty
+    // results above aren't an artifact of bootstrap failing.
+    const all = await h.service.list();
+    expect(all.map((wf) => wf.id).sort()).toEqual([a.workflowId, b.workflowId].sort());
   });
 
   it("AND-combines all three filters when supplied together", async () => {
