@@ -313,11 +313,15 @@ export interface AddEdgeBody {
 /**
  * Response of `POST /workspaces/:id/workflows/:wfid/edges`. Echoes the
  * pair back so the caller has a self-contained record of the inserted
- * edge without re-fetching the DAG.
+ * edge without re-fetching the DAG, plus the substrate's recomputed
+ * `toPhase` (the receiving node's phase may have shifted when the new
+ * edge was inserted, so the caller needs the post-insert value to
+ * stay in sync without a follow-up `getDag` call).
  */
 export interface AddEdgeResultWire {
   readonly fromNodeId: string;
   readonly toNodeId: string;
+  readonly toPhase: number;
 }
 
 /**

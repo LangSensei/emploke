@@ -108,6 +108,35 @@ describe("WorkflowService.createWorkflow", () => {
     ).rejects.toBeInstanceOf(WorkflowError);
   });
 
+  it("persists metadata round-trip through getWorkflow", async () => {
+    const { workflowId } = await h.service.createWorkflow({
+      brief: "x",
+      coordinatorAgent: "coord-a",
+      metadata: { source: "cli", tags: ["urgent", "blocking"] },
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.metadata).toEqual({ source: "cli", tags: ["urgent", "blocking"] });
+  });
+
+  it("defaults metadata to an empty object when omitted", async () => {
+    const { workflowId } = await h.service.createWorkflow({
+      brief: "x",
+      coordinatorAgent: "coord-a",
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.metadata).toEqual({});
+  });
+
+  it("initializes startedAt to the createdAt instant (no pre-running state)", async () => {
+    const { workflowId } = await h.service.createWorkflow({
+      brief: "x",
+      coordinatorAgent: "coord-a",
+    });
+    const wf = await h.service.getWorkflow(workflowId);
+    expect(wf.startedAt).toBeDefined();
+    expect(wf.startedAt).toBe(wf.createdAt);
+  });
+
   it("dispatch-failure inside createWorkflow flips initial coord to failed", async () => {
     h.coordRunner.dispatchShouldThrow = true;
     const { initialCoordNodeId } = await h.service.createWorkflow({

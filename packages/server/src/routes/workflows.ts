@@ -863,22 +863,26 @@ export function workflowsRoutes(
     if (!validated.ok) return c.json({ error: validated.error }, 400);
     const body = validated.value;
     try {
-      await resolve(c).addEdge({
+      const result = await resolve(c).addEdge({
         workflowId: wfid,
         fromNodeId: body.fromNodeId,
         toNodeId: body.toNodeId,
       });
-      // The substrate returns `{ toPhase }`; the wire shape echoes the
-      // (from, to) pair instead — useful for the caller who already has
-      // the phase (it computed the edge itself) but wants confirmation
-      // of the endpoints in the JSON response without re-fetching the
-      // DAG.
+      // The substrate returns `{ toPhase }` because inserting an edge
+      // can shift the receiving node's phase. The wire echoes the
+      // (from, to) pair plus the post-insert phase so the caller has
+      // a self-contained record without re-fetching the DAG.
       logEvent(c, "workflow.addEdge", {
         workflowId: wfid,
         fromNodeId: body.fromNodeId,
         toNodeId: body.toNodeId,
+        toPhase: result.toPhase,
       });
-      return c.json({ fromNodeId: body.fromNodeId, toNodeId: body.toNodeId });
+      return c.json({
+        fromNodeId: body.fromNodeId,
+        toNodeId: body.toNodeId,
+        toPhase: result.toPhase,
+      });
     } catch (err) {
       return respondError(c, err, {
         route: "workflows.addEdge",

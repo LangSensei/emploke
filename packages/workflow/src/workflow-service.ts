@@ -94,6 +94,12 @@ export interface CreateWorkflowArgs {
   readonly brief: string;
   readonly details?: string;
   readonly coordinatorAgent: string;
+  /**
+   * Opaque caller-supplied metadata persisted onto the workflow row.
+   * Forwarded verbatim to {@link WorkflowEntity.metadata}; defaults
+   * to `{}` when omitted.
+   */
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface CreateWorkflowResult {
@@ -486,6 +492,7 @@ export class WorkflowService {
         brief: args.brief,
         details: args.details,
         coordinatorAgent: validatedSpec.agent,
+        ...(args.metadata !== undefined ? { metadata: args.metadata } : {}),
         nowIso,
       });
       this.repo.insertWorkflow(tx, wfEntity);

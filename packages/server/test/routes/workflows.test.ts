@@ -566,7 +566,7 @@ describe("workflowsRoutes — addNode (POST /:wfid/nodes)", () => {
 });
 
 describe("workflowsRoutes — addEdge (POST /:wfid/edges)", () => {
-  it("forwards (fromNodeId, toNodeId) and echoes the pair on success", async () => {
+  it("forwards (fromNodeId, toNodeId) and echoes the pair plus toPhase on success", async () => {
     const addEdge = vi.fn(async () => ({ toPhase: 3 }));
     const svc = stubService({ addEdge });
     const res = await mountRoutes(svc).request(`/${WID}/edges`, {
@@ -576,7 +576,7 @@ describe("workflowsRoutes — addEdge (POST /:wfid/edges)", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toEqual({ fromNodeId: COORD_NID, toNodeId: WORKER_NID });
+    expect(body).toEqual({ fromNodeId: COORD_NID, toNodeId: WORKER_NID, toPhase: 3 });
     expect(addEdge).toHaveBeenCalledWith({
       workflowId: WID,
       fromNodeId: COORD_NID,

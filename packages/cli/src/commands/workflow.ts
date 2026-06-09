@@ -477,7 +477,7 @@ export async function workflowAddEdge(opts: WorkflowAddEdgeOpts): Promise<Comman
     if (fmt === "json") return { exitCode: 0, stdout: formatJson(result) };
     return {
       exitCode: 0,
-      stdout: `edge ${result.fromNodeId} → ${result.toNodeId} inserted\n`,
+      stdout: `edge ${result.fromNodeId} → ${result.toNodeId} inserted (toPhase ${result.toPhase})\n`,
     };
   } catch (err) {
     return formatError(err);

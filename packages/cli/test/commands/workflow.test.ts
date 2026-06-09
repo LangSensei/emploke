@@ -708,7 +708,7 @@ describe("workflowAddNode", () => {
 describe("workflowAddEdge", () => {
   it("POSTs /edges with {fromNodeId, toNodeId} from --from / --to", async () => {
     const { calls } = stubFetchMulti([
-      { status: 200, body: JSON.stringify({ fromNodeId: NID, toNodeId: NID2 }) },
+      { status: 200, body: JSON.stringify({ fromNodeId: NID, toNodeId: NID2, toPhase: 2 }) },
     ]);
     const r = await workflowAddEdge({
       ...commonOpts(),
@@ -717,6 +717,7 @@ describe("workflowAddEdge", () => {
       to: NID2,
     });
     expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain("toPhase 2");
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(EDGES_URL);
     expect(calls[0]?.body).toEqual({ fromNodeId: NID, toNodeId: NID2 });
