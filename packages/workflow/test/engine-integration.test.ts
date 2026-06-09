@@ -238,9 +238,7 @@ describe("WorkflowEngine integration", () => {
 
   it("runner reports cancelled → node marked cancelled", async () => {
     h.worker.setDispatch(async (opts) => {
-      queueMicrotask(() =>
-        opts.onTerminal({ status: "cancelled", reason: "intentional cancel" }),
-      );
+      queueMicrotask(() => opts.onTerminal({ status: "cancelled", reason: "intentional cancel" }));
     });
     const { workflowId, initialCoordNodeId } = await h.module.service.createWorkflow({
       brief: "cancel-test",

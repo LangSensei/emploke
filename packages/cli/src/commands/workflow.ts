@@ -107,13 +107,7 @@ export async function workflowList(opts: WorkflowListOpts = {}): Promise<Command
       exitCode: 0,
       stdout: formatTable(
         ["id", "brief", "coordinatorAgent", "status", "createdAt"],
-        list.map((wf) => [
-          wf.id,
-          wf.brief,
-          wf.coordinatorAgent,
-          wf.status,
-          wf.createdAt,
-        ]),
+        list.map((wf) => [wf.id, wf.brief, wf.coordinatorAgent, wf.status, wf.createdAt]),
       ),
     };
   } catch (err) {
@@ -215,7 +209,10 @@ export async function workflowNodeShow(opts: WorkflowNodeShowOpts): Promise<Comm
     if (node.taskId !== undefined) rows.push(["taskId", node.taskId]);
     return {
       exitCode: 0,
-      stdout: `${formatTable(["field", "value"], rows.map(([k, v]) => [k, v]))}\n`,
+      stdout: `${formatTable(
+        ["field", "value"],
+        rows.map(([k, v]) => [k, v]),
+      )}\n`,
     };
   } catch (err) {
     return formatError(err);

@@ -368,7 +368,12 @@ describe("workflowNodeShow — happy path", () => {
 
   it("--json emits the projected node as formatted JSON", async () => {
     stubFetchMulti([{ status: 200, body: JSON.stringify(sampleNodeShow) }]);
-    const r = await workflowNodeShow({ ...commonOpts(), wfid: WFID, nid: NODE_SHOW_NID, json: true });
+    const r = await workflowNodeShow({
+      ...commonOpts(),
+      wfid: WFID,
+      nid: NODE_SHOW_NID,
+      json: true,
+    });
     expect(r.exitCode, r.stderr).toBe(0);
     const parsed = JSON.parse(r.stdout ?? "") as { id: string };
     expect(parsed.id).toBe(NODE_SHOW_NID);

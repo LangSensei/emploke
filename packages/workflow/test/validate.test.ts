@@ -148,7 +148,9 @@ describe("assertValidWorkflowStatusEnum", () => {
   });
 
   it("rejects an unknown value", () => {
-    expect(() => assertValidWorkflowStatusEnum("archived")).toThrowError(WorkflowEnumValueCorruptionError);
+    expect(() => assertValidWorkflowStatusEnum("archived")).toThrowError(
+      WorkflowEnumValueCorruptionError,
+    );
   });
 
   it("rejects the empty string", () => {
@@ -164,11 +166,15 @@ describe("assertValidWorkflowNodeStatusEnum", () => {
   });
 
   it("rejects an unknown value", () => {
-    expect(() => assertValidWorkflowNodeStatusEnum("paused")).toThrowError(WorkflowEnumValueCorruptionError);
+    expect(() => assertValidWorkflowNodeStatusEnum("paused")).toThrowError(
+      WorkflowEnumValueCorruptionError,
+    );
   });
 
   it("rejects the empty string", () => {
-    expect(() => assertValidWorkflowNodeStatusEnum("")).toThrowError(WorkflowEnumValueCorruptionError);
+    expect(() => assertValidWorkflowNodeStatusEnum("")).toThrowError(
+      WorkflowEnumValueCorruptionError,
+    );
   });
 });
 
