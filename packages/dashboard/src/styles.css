@@ -5486,13 +5486,10 @@ button {
 }
 
 /* ─── Workflow detail pane (3-tab chrome, spec v2.1) ───────────── */
-.workflow-detail__header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-}
+/* Header chrome reuses `.task-detail__head` from the Tasks detail
+ * pane (see the Tasks-detail block). The `.workflow-detail__title`
+ * selector below adds a workflow-specific single-line ellipsis
+ * override on top of the shared title styles. */
 .workflow-detail__title {
   margin: 0;
   font-size: 16px;

@@ -114,7 +114,7 @@ export function WorkflowView({
 
   return (
     <aside className="tasks-pane__detail workflow-detail" data-testid="workflow-detail">
-      <header className="task-detail__head workflow-detail__header">
+      <header className="task-detail__head">
         <div className="task-detail__title-row">
           <h2 className="task-detail__title workflow-detail__title" title={workflow.brief}>
             {workflow.brief}
