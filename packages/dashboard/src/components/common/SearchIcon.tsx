@@ -1,14 +1,20 @@
 /**
- * Search-input adornment icon, shared by `TaskFilters` and
- * `WorkflowFilters` (and, in principle, any future filter strip that
- * mirrors the same search-input slot).
+ * Single-source-of-truth magnifying-glass SVG for the search-input
+ * adornments on both `TaskFilters` and `WorkflowFilters` (and any
+ * future filter strip that mirrors the same search-input slot).
  *
- * The icon is rendered absolutely inside the search wrap so it sits
- * inside the input's left padding. The viewBox / stroke / className
- * shape matches what both filter components carried inline before —
- * keeping the className `task-filters__search-icon` on the consumer
- * side preserves the generic, reusable CSS rule (per the v2.3
- * "reuse `task-*` classes" pattern).
+ * Convention:
+ *   - This component owns only the SVG markup + viewBox / stroke
+ *     attributes. The positioning (`task-filters__search-icon`) and
+ *     the surrounding wrap stay on the consumer side, so each filter
+ *     strip can control its own layout without forking the icon.
+ *   - The shared className `task-filters__search-icon` keeps the
+ *     name despite serving both Tasks and Workflows — both pages
+ *     follow the v2.3 "reuse `task-*` classes" convention so the
+ *     filter CSS rule is generic.
+ *
+ * Imported by `components/tasks/TaskFilters.tsx` and
+ * `components/workflows/WorkflowFilters.tsx`.
  */
 export function SearchIcon() {
   return (
