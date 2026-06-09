@@ -108,7 +108,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
     [navigate, location.pathname, location.search, location.hash],
   );
 
-  const { workflows, loaded, error, setError, refresh } = useWorkflows({
+  const { workflows, loaded, error, setError, refresh, historicalAgentNames } = useWorkflows({
     currentWorkspaceId,
     idQuery,
     agentFilter,
@@ -122,15 +122,25 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
   // `agents` catalogue: there is no marketplace flag on agents
   // declaring "I am a coordinator", so the operational answer is
   // "any agent that has actually run as a coordinator in this
-  // workspace". When a filter is active, we keep the currently-
-  // selected value in the list even if no row matches — otherwise
-  // the dropdown would silently drop the user's own selection.
+  // workspace". The set unions three sources so the dropdown stays
+  // useful while a narrow filter is active:
+  //
+  //   1. agents present in the currently-visible rows (the live set)
+  //   2. agents observed in earlier agent-unfiltered fetches this
+  //      session (`historicalAgentNames` from `useWorkflows`) — this
+  //      is what lets the operator switch from agent A to agent B
+  //      in one click even when filtering by A has narrowed the
+  //      visible set to A-only
+  //   3. the currently-selected filter value itself (defensive: keep
+  //      the user's own selection in the list even if no historical
+  //      or live row matches it)
   const filterAgentNames = useMemo(() => {
     const set = new Set<string>();
     for (const w of workflows) set.add(w.coordinatorAgent);
+    for (const name of historicalAgentNames) set.add(name);
     if (agentFilter !== ALL_AGENTS) set.add(agentFilter);
     return Array.from(set).sort();
-  }, [workflows, agentFilter]);
+  }, [workflows, historicalAgentNames, agentFilter]);
 
   const effectiveSelectedId =
     selectedId !== null && visible.some((w) => w.id === selectedId)

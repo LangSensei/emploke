@@ -20,6 +20,21 @@ export interface UseWorkflowsResult {
   error: string | null;
   setError: (e: string | null) => void;
   refresh: () => Promise<void>;
+  /**
+   * Snapshot of every coordinator agent that has been observed in an
+   * agent-unfiltered fetch this session. The page unions this set
+   * into the agent-filter dropdown so the historical agent list
+   * survives narrowing — switching from agent A to agent B never
+   * requires the operator to first clear the filter to rediscover B.
+   *
+   * Updated on every `agentFilter === ALL_AGENTS` fetch (initial
+   * load, time-range narrowing, id-substring narrowing — anything
+   * that isn't itself an agent narrow), so newly-introduced agents
+   * become discoverable without a full page reload. Frozen while an
+   * agent narrow is active so a B-less view of A's rows doesn't
+   * shrink the set back down.
+   */
+  historicalAgentNames: readonly string[];
 }
 
 /**
@@ -46,6 +61,14 @@ export function useWorkflows({
   const mounted = useMounted();
   const inFlightRef = useRef(false);
 
+  // Historical agent set is held in state so the page re-renders
+  // whenever a previously-unseen coordinator becomes discoverable in
+  // the filter dropdown. We replace the Set identity on every mutation
+  // (`new Set(prev)`) so React's shallow compare sees the change; the
+  // setter callback is the single source of truth for "what we've
+  // observed", so polling + visibility refetches stay synchronised.
+  const [historicalAgents, setHistoricalAgents] = useState<ReadonlySet<string>>(() => new Set());
+
   const refresh = useCallback(async () => {
     if (!currentWorkspaceId) {
       setWorkflows([]);
@@ -64,6 +87,24 @@ export function useWorkflows({
       if (!mounted.current) return;
       setWorkflows(sortByCreatedDesc(next));
       setError(null);
+      // Only grow the historical snapshot from fetches that the
+      // server returned agent-unfiltered. A `coordinatorAgent=A`
+      // fetch only sees A's rows; widening the snapshot from that
+      // would silently forget every other agent the first
+      // unfiltered fetch observed.
+      if (agentFilter === ALL_AGENTS) {
+        setHistoricalAgents((prev) => {
+          let added = false;
+          const merged = new Set(prev);
+          for (const w of next) {
+            if (!merged.has(w.coordinatorAgent)) {
+              merged.add(w.coordinatorAgent);
+              added = true;
+            }
+          }
+          return added ? merged : prev;
+        });
+      }
     } catch (e) {
       if (!mounted.current) return;
       setError(e instanceof Error ? e.message : String(e));
@@ -97,5 +138,7 @@ export function useWorkflows({
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [refresh]);
 
-  return { workflows, loaded, error, setError, refresh };
+  const historicalAgentNames = useMemo(() => Array.from(historicalAgents), [historicalAgents]);
+
+  return { workflows, loaded, error, setError, refresh, historicalAgentNames };
 }
