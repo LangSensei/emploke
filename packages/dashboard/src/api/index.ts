@@ -11,15 +11,18 @@
 // pure aggregation — no logic, no types.
 //
 // `http.js` is intentionally re-exported by NAME (not blanket
-// `export *`): it holds 7 transport helpers (`fetchJson`, `mutate`,
+// `export *`): it holds 8 transport helpers (`fetchJson`, `mutate`,
 // `mutateJson`, `extractError`, `jsonInit`, `workspacePrefix`,
-// `fetchJsonWithErrorBody`) that were module-local `const`s in the
-// pre-split `api.ts` — i.e. private. Sibling domain files still
-// import them directly from `./http.js`; only the active-workspace
-// pair is part of the public surface.
+// `fetchJsonWithErrorBody`, `ApiError`) that were module-local
+// `const`s / `class`es in the pre-split `api.ts` — i.e. private.
+// Sibling domain files still import them directly from `./http.js`;
+// only `getActiveWorkspace`, `setActiveWorkspace`, and `ApiError` are
+// part of the public surface (the workspace pair is consumed by the
+// React Router layout to sync URL → module slot; `ApiError` is the
+// structured-4xx envelope that typed UI surfaces branch on).
 
 export * from "./catalog.js";
-export { getActiveWorkspace, setActiveWorkspace } from "./http.js";
+export { ApiError, getActiveWorkspace, setActiveWorkspace } from "./http.js";
 export * from "./schedules.js";
 export * from "./sessions.js";
 export * from "./system.js";

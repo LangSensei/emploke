@@ -1,6 +1,11 @@
 import type { AgentEntry } from "@emploke/contracts";
-import { type FormEvent, useEffect, useState } from "react";
-import { type CreateWorkflowBody, createWorkflow, type WorkflowHeaderWire } from "../../api";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  ApiError,
+  type CreateWorkflowBody,
+  createWorkflow,
+  type WorkflowHeaderWire,
+} from "../../api";
 import { Modal } from "../Modal";
 
 export interface CreateWorkflowModalProps {
@@ -20,6 +25,19 @@ export interface CreateWorkflowModalProps {
  * `brief` is required; `details` is optional. The agent dropdown
  * defaults to the first installed agent on open; switching agents
  * before submit is supported.
+ *
+ * The dropdown is filtered to coord-eligible agents only — i.e.
+ * agents whose `AgentEntry.coordEligible` flag is true. That flag is
+ * computed server-side from the agent's `dependencies.agents`
+ * dispatch menu, which is the workflow substrate's coordinator-
+ * capability invariant; the modal MUST NOT re-derive the predicate
+ * here or it would silently drift from the substrate.
+ *
+ * If the server rejects the submit with a coord-agent-not-eligible
+ * envelope (`ApiError` whose `field === "coordinatorAgent"`), the
+ * error renders inline next to the agent select rather than as a
+ * full-form banner — the form stays submittable so the user can pick
+ * a different agent without re-typing the brief.
  */
 export function CreateWorkflowModal({
   open,
@@ -32,16 +50,20 @@ export function CreateWorkflowModal({
   const [agent, setAgent] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [agentFieldError, setAgentFieldError] = useState<string | null>(null);
+
+  const coordEligibleAgents = useMemo(() => agents.filter((a) => a.coordEligible), [agents]);
 
   useEffect(() => {
     if (!open) return;
-    setAgent((prev) => (prev !== "" ? prev : (agents[0]?.agent.fqn ?? "")));
-  }, [open, agents]);
+    setAgent((prev) => (prev !== "" ? prev : (coordEligibleAgents[0]?.agent.fqn ?? "")));
+  }, [open, coordEligibleAgents]);
 
   useEffect(() => {
     if (!open) {
       setSubmitting(false);
       setSubmitError(null);
+      setAgentFieldError(null);
     }
   }, [open]);
 
@@ -52,6 +74,7 @@ export function CreateWorkflowModal({
     if (!canSubmit) return;
     setSubmitting(true);
     setSubmitError(null);
+    setAgentFieldError(null);
     try {
       const body: CreateWorkflowBody = {
         brief: brief.trim(),
@@ -67,7 +90,16 @@ export function CreateWorkflowModal({
       onCreated(created);
       onClose();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      // Pin field-scoped rejections inline next to the matching
+      // input (the server tells us which field via the structured
+      // 4xx envelope); everything else falls back to the form-level
+      // banner. The error text is the server-provided message —
+      // never re-authored client-side.
+      if (err instanceof ApiError && err.field === "coordinatorAgent") {
+        setAgentFieldError(err.message);
+      } else {
+        setSubmitError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -85,18 +117,33 @@ export function CreateWorkflowModal({
               id="new-workflow-agent"
               value={agent}
               onChange={(e) => setAgent(e.target.value)}
-              disabled={submitting || agents.length === 0}
+              disabled={submitting || coordEligibleAgents.length === 0}
               className="select select--full"
               data-testid="create-workflow-agent"
+              aria-describedby={agentFieldError !== null ? "new-workflow-agent-error" : undefined}
+              aria-invalid={agentFieldError !== null || undefined}
             >
-              {agents.length === 0 && <option value="">(no agents installed)</option>}
-              {agents.map((a) => (
+              {coordEligibleAgents.length === 0 && (
+                <option value="">(no coord-eligible agents installed)</option>
+              )}
+              {coordEligibleAgents.map((a) => (
                 <option key={a.agent.fqn} value={a.agent.fqn}>
                   {a.agent.fqn}
                 </option>
               ))}
             </select>
           </label>
+          {agentFieldError !== null && (
+            <div
+              id="new-workflow-agent-error"
+              role="alert"
+              className="alert alert--error"
+              style={{ marginTop: 4, fontSize: 12 }}
+              data-testid="create-workflow-agent-error"
+            >
+              ⚠️ {agentFieldError}
+            </div>
+          )}
           <label htmlFor="new-workflow-brief" style={{ display: "block", marginTop: 12 }}>
             <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
               Brief

@@ -25,11 +25,12 @@ const mockGetWorkflow = api.getWorkflow as unknown as ReturnType<typeof vi.fn>;
 const mockGetWorkflowDag = api.getWorkflowDag as unknown as ReturnType<typeof vi.fn>;
 const mockCreateWorkflow = api.createWorkflow as unknown as ReturnType<typeof vi.fn>;
 
-function makeAgent(fqn: string): AgentEntry {
+function makeAgent(fqn: string, opts: { coordEligible?: boolean } = {}): AgentEntry {
   const [scope, short] = fqn.split("/");
   return {
     agent: { fqn, scope, short, version: "1.0.0" },
     status: "ready",
+    coordEligible: opts.coordEligible ?? true,
   } as unknown as AgentEntry;
 }
 

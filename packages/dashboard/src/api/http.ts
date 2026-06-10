@@ -43,6 +43,33 @@ export const fetchJson = async <T>(path: string, label: string): Promise<T> => {
 };
 
 /**
+ * Structured error thrown by {@link mutate}, {@link mutateJson}, and
+ * {@link fetchJsonWithErrorBody} on a non-OK response. Extends `Error`
+ * so existing `instanceof Error` / `err.message` callers keep working
+ * unchanged — the message field still carries the server-provided
+ * `error` text (or the bare HTTP status as fallback).
+ *
+ * The extra fields let typed UI surfaces (e.g. the create-workflow
+ * modal pinning a `coordinatorAgent` rejection inline next to the
+ * select) branch on `code` / `field` without string-matching the
+ * message. Both are present iff the server included them in the
+ * structured 4xx envelope.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly field?: string;
+
+  constructor(message: string, opts: { status: number; code?: string; field?: string }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = opts.status;
+    if (opts.code !== undefined) this.code = opts.code;
+    if (opts.field !== undefined) this.field = opts.field;
+  }
+}
+
+/**
  * Best-effort extraction of a server-provided error message from a
  * non-OK fetch response. Falls back to the bare HTTP status if the body
  * isn't JSON or doesn't carry an `error` field. Used by both `mutate`
@@ -50,24 +77,61 @@ export const fetchJson = async <T>(path: string, label: string): Promise<T> => {
  * success body).
  */
 export async function extractError(r: Response): Promise<string> {
-  let msg = `${r.status}`;
+  return (await extractErrorEnvelope(r)).message;
+}
+
+/**
+ * Internal counterpart to {@link extractError} that preserves the
+ * structured `code` / `field` slots from the server's 4xx envelope
+ * alongside the message. Used by the `mutate*` helpers below to build
+ * an {@link ApiError} that typed UI surfaces can branch on without
+ * string-matching the message.
+ */
+async function extractErrorEnvelope(
+  r: Response,
+): Promise<{ message: string; code?: string; field?: string }> {
+  let message = `${r.status}`;
+  let code: string | undefined;
+  let field: string | undefined;
   try {
     const body = await r.json();
-    if (body && typeof body.error === "string") msg = body.error;
+    if (body && typeof body.error === "string") message = body.error;
+    if (body && typeof body.code === "string") code = body.code;
+    if (body && typeof body.field === "string") field = body.field;
   } catch {
     // body not JSON; keep status
   }
-  return msg;
+  return {
+    message,
+    ...(code !== undefined ? { code } : {}),
+    ...(field !== undefined ? { field } : {}),
+  };
+}
+
+/**
+ * Build (do NOT throw) an {@link ApiError} from a non-OK fetch response.
+ * Call sites use the literal `throw await buildApiError(r)` form so the
+ * `throw` keyword stays textually visible in the transport — a grep for
+ * `throw` over `http.ts` surfaces every error branch, instead of hiding
+ * them inside a helper named `throwApiError` that returns `never`.
+ */
+async function buildApiError(r: Response): Promise<ApiError> {
+  const { message, code, field } = await extractErrorEnvelope(r);
+  return new ApiError(message, {
+    status: r.status,
+    ...(code !== undefined ? { code } : {}),
+    ...(field !== undefined ? { field } : {}),
+  });
 }
 
 export const mutate = async (path: string, init: RequestInit): Promise<void> => {
   const r = await fetch(path, init);
-  if (!r.ok) throw new Error(await extractError(r));
+  if (!r.ok) throw await buildApiError(r);
 };
 
 export const mutateJson = async <T>(path: string, init: RequestInit): Promise<T> => {
   const r = await fetch(path, init);
-  if (!r.ok) throw new Error(await extractError(r));
+  if (!r.ok) throw await buildApiError(r);
   return (await r.json()) as T;
 };
 
@@ -88,6 +152,6 @@ export const jsonInit = (method: string, body: object): RequestInit => ({
  */
 export async function fetchJsonWithErrorBody<T>(path: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(path, signal ? { signal } : undefined);
-  if (!r.ok) throw new Error(await extractError(r));
+  if (!r.ok) throw await buildApiError(r);
   return (await r.json()) as T;
 }

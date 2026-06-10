@@ -188,10 +188,11 @@ export function buildSkillEntry(s: SkillEntity, ctx: CascadeContext): SkillEntry
 
 export function buildAgentEntry(a: AgentEntity, ctx: CascadeContext): AgentEntry {
   const agent = projectAgentPojo(a);
+  const coordEligible = (agent.dependencies?.agents?.length ?? 0) > 0;
   const computed = computeAgentStatus(a, ctx);
-  if (computed.status === "ready") return { agent, status: "ready" };
+  if (computed.status === "ready") return { agent, status: "ready", coordEligible };
   const reason = computed.reason as BlockedReason;
-  const out: AgentEntry = { agent, status: "blocked", blockedReason: reason };
+  const out: AgentEntry = { agent, status: "blocked", blockedReason: reason, coordEligible };
   if (reason.missingDeps !== undefined) {
     return { ...out, missingDeps: reason.missingDeps };
   }

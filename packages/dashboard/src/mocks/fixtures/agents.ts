@@ -36,6 +36,7 @@ export const fixtureAgents: AgentEntry[] = [
       },
     }),
     status: "ready",
+    coordEligible: true,
   },
   {
     agent: makeAgent({
@@ -44,6 +45,7 @@ export const fixtureAgents: AgentEntry[] = [
       version: "0.4.2",
     }),
     status: "ready",
+    coordEligible: false,
   },
   {
     agent: makeAgent({
@@ -55,5 +57,6 @@ export const fixtureAgents: AgentEntry[] = [
     blockedReason: {
       needsPrereqsAck: true,
     },
+    coordEligible: false,
   },
 ];
