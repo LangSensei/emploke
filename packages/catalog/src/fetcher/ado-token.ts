@@ -18,11 +18,12 @@ import { FetchError } from "./errors.js";
  *      **silent peek** first (`GCM_INTERACTIVE=Never` + `-c
  *      credential.interactive=false`) so warm-cache calls produce no
  *      sign-in popup AND no stderr noise. Only when the silent peek
- *      returns nothing AND we detect an interactive TTY does the resolver
- *      fall back to the real interactive fill (which is where a Microsoft
- *      sign-in window may appear); in non-interactive environments the
- *      cold-cache path fast-fails with an escape-hatch
- *      {@link FetchError} instead of hanging on an invisible popup.
+ *      returns nothing AND we are NOT in an explicit opt-out environment
+ *      (`CI=true` / `GLYPHS_NON_INTERACTIVE=1`) does the resolver fall
+ *      back to the real interactive fill (which is where a Microsoft
+ *      sign-in window may appear); the explicit opt-outs short-circuit
+ *      with an escape-hatch {@link FetchError} instead of waiting on the
+ *      120s interactive bound.
  *   3. `null` — caller emits an anonymous request. Public ADO repos are
  *      rare, so this typically surfaces as a 401/403 from the upstream
  *      Items API with a sensible error message.
@@ -50,13 +51,18 @@ import { FetchError } from "./errors.js";
  * A `git` failure (binary missing, GCM unconfigured, keyring locked,
  * timeout) must not cascade into "install impossible" — the request
  * always falls through to anonymous, and the upstream HTTP layer surfaces
- * a sensible 401/403 if that turns out to be insufficient. The ONE
- * exception is the non-interactive guard: when we detect we're running in
- * a non-TTY / CI environment AND no env-var PAT is set AND silent peek
- * found no cached cred, we throw {@link FetchError} with an escape-hatch
- * message rather than fall through silently — because the alternative
- * (proceeding to interactive fill) would hang forever waiting on an
- * unrenderable sign-in popup.
+ * a sensible 401/403 if that turns out to be insufficient.
+ *
+ * The non-interactive guard now ONLY fast-fails on explicit user
+ * opt-outs (`CI=true`, `GLYPHS_NON_INTERACTIVE=1`). For all other
+ * environments we proceed to interactive fill and trust GCM to decide
+ * whether it can render a popup; the spawn is bounded by
+ * `SPAWN_TIMEOUT_MS_INTERACTIVE` (120s) so a truly stuck popup falls
+ * through to anonymous rather than hanging the install indefinitely.
+ * Rationale: `process.stdin.isTTY` is the wrong signal for popup
+ * renderability (Copilot CLI / VS Code tasks / WSL X-forward all hit
+ * false negatives), and GCM already does its own GUI-availability
+ * detection more accurately than we can.
  */
 
 /**
@@ -87,8 +93,34 @@ interface CacheEntry {
 
 const CACHE = new Map<string, CacheEntry>();
 const PENDING = new Map<string, Promise<ResolvedAdoToken | null>>();
+/**
+ * Tracks `(org, repo)` pairs we've already logged an "env token in use"
+ * notice for. Module-level so a long-running host process emits the line
+ * once per pair instead of once per fetch — and so concurrent callers
+ * can't race past the dedup check. MUST be cleared in
+ * {@link _resetAdoTokenCache} so tests don't leak state across cases.
+ */
+const ENV_LOG_NOTICE_EMITTED = new Set<string>();
 const CACHE_TTL_MS = 60_000;
-const SPAWN_TIMEOUT_MS = 5_000;
+/**
+ * Silent peek MUST be instant (it's a warm-cache hit or fall through to
+ * non-zero exit). 5s is a generous ceiling — anything longer is GCM
+ * deadlocked and we want to fall through to the next tier quickly.
+ */
+const SPAWN_TIMEOUT_MS_SILENT = 5_000;
+/**
+ * Interactive fill spawns a real GCM popup; a user typing MFA codes /
+ * approving a notification on a separate device routinely takes 30-60s,
+ * and some Conditional Access policies push that toward 90s. 120s is the
+ * "if it's not done by now it's stuck" bound — beyond this the install
+ * falls through to anonymous rather than hang indefinitely.
+ */
+const SPAWN_TIMEOUT_MS_INTERACTIVE = 120_000;
+/**
+ * `git credential approve|reject` are non-interactive housekeeping calls
+ * (no popup, no network) — 5s is the right ceiling.
+ */
+const SPAWN_TIMEOUT_MS_CONFIRM = 5_000;
 
 /**
  * `git -c credential.useHttpPath=true` is the baseline — the
@@ -162,6 +194,11 @@ function runGitCredentialFill(
       return;
     }
 
+    // Silent peek must be instant (5s ceiling); interactive fill is
+    // bounded by 120s because a real user clicking through MFA can
+    // easily take 30-60s and we'd rather give them room than kill the
+    // popup mid-sign-in.
+    const timeoutMs = opts.silent ? SPAWN_TIMEOUT_MS_SILENT : SPAWN_TIMEOUT_MS_INTERACTIVE;
     const timer = setTimeout(() => {
       try {
         child.kill("SIGTERM");
@@ -170,7 +207,7 @@ function runGitCredentialFill(
         // reaching this line. The `close` listener will settle.
       }
       settle(null);
-    }, SPAWN_TIMEOUT_MS);
+    }, timeoutMs);
 
     let stdout = "";
     child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -297,9 +334,9 @@ function runGitCredentialConfirm(
       } catch {
         // ignore
       }
-      warn(`git credential ${action} timed out after ${SPAWN_TIMEOUT_MS}ms`);
+      warn(`git credential ${action} timed out after ${SPAWN_TIMEOUT_MS_CONFIRM}ms`);
       settle();
-    }, SPAWN_TIMEOUT_MS);
+    }, SPAWN_TIMEOUT_MS_CONFIRM);
 
     child.on("error", (cause: Error) => {
       clearTimeout(timer);
@@ -404,10 +441,6 @@ function readEnvToken(): string | undefined {
  * Detect a non-interactive runtime where we MUST NOT attempt to open a
  * sign-in popup. Returns `true` on:
  *
- *   - `process.stdin.isTTY !== true` — stdin is a pipe/file, not a real
- *     terminal; the caller cannot click a popup. NB: `isTTY` is `true`
- *     for terminals and `undefined` (NOT `false`) for non-terminals, so
- *     the check is `!== true` rather than `=== false` to catch both.
  *   - `process.env.CI === "true"` — most CI runners set this; even
  *     environments that allocate a fake TTY (e.g. GitHub Actions) opt
  *     out of interactive auth this way.
@@ -416,9 +449,21 @@ function readEnvToken(): string | undefined {
  *     unattended scripts run from a terminal multiplexer).
  */
 function isNonInteractive(): boolean {
+  // Explicit user opt-outs only. Do NOT infer interactivity from
+  // `process.stdin.isTTY` — that detects whether the Node process's
+  // stdin is a terminal, NOT whether GCM can render a popup. GCM's
+  // popup is a separate WPF/WebView2 window spawned by
+  // `git-credential-manager.exe` and depends on OS-level desktop
+  // session availability, not on parent process TTY state. Non-TTY
+  // child processes on a logged-in desktop (Copilot CLI, VS Code
+  // tasks, WSL with X forwarding) can absolutely render the popup.
+  //
+  // When no display is actually available (CI without an opt-in env,
+  // SSH without DISPLAY, SYSTEM service), GCM exits non-zero quickly
+  // and the resolver falls through to anonymous on its own — no
+  // pre-detection needed.
   if (process.env.GLYPHS_NON_INTERACTIVE === "1") return true;
   if (process.env.CI === "true") return true;
-  if (process.stdin.isTTY !== true) return true;
   return false;
 }
 
@@ -498,10 +543,24 @@ export async function resolveDefaultAdoToken(
   org: string,
   repo: string,
 ): Promise<ResolvedAdoToken | null> {
-  const envToken = readEnvToken();
-  if (envToken !== undefined) return { source: "env", token: envToken };
-
   const cacheKey = `${org}/${repo}`;
+
+  const envToken = readEnvToken();
+  if (envToken !== undefined) {
+    // First-hit-only stderr notice so a long-running host process
+    // (e.g. emploke server) doesn't silently keep using an env token
+    // that the user thought they'd unset in their interactive shell.
+    // The notice fires once per `(org, repo)` to avoid spamming
+    // tree-fan-out installs.
+    if (!ENV_LOG_NOTICE_EMITTED.has(cacheKey)) {
+      ENV_LOG_NOTICE_EMITTED.add(cacheKey);
+      process.stderr.write(
+        `[glyphs] using ADO token from environment (AZURE_DEVOPS_*_PAT / SYSTEM_ACCESSTOKEN) for dev.azure.com/${org}/${repo}\n`,
+      );
+    }
+    return { source: "env", token: envToken };
+  }
+
   const now = Date.now();
   const cached = CACHE.get(cacheKey);
   if (cached && cached.expiresAt > now) return cached.value;
@@ -539,4 +598,5 @@ export async function resolveDefaultAdoToken(
 export function _resetAdoTokenCache(): void {
   CACHE.clear();
   PENDING.clear();
+  ENV_LOG_NOTICE_EMITTED.clear();
 }
