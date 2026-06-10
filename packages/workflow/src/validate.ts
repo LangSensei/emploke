@@ -28,6 +28,7 @@ import {
 } from "./errors.js";
 import type {
   NodeKind,
+  SubstrateFailureReason,
   WorkflowCancellation,
   WorkflowFailure,
   WorkflowNodeStatus,
@@ -170,7 +171,9 @@ export function assertValidWorkflowNodeKind(kind: unknown): asserts kind is Node
 
 // ─── Terminal-payload shape validators ──────────────────────────────
 
-const FAILURE_KINDS = new Set(["coordinator"]);
+const FAILURE_KINDS = new Set(["coordinator", "substrate"]);
+const SUBSTRATE_FAILURE_REASONS: ReadonlySet<SubstrateFailureReason> =
+  new Set<SubstrateFailureReason>(["STUCK_RETRY_LIMIT"]);
 const CANCELLATION_KINDS = new Set(["user"]);
 
 /**
@@ -197,7 +200,7 @@ export function assertWorkflowFailureShape(id: string, value: WorkflowFailure): 
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new WorkflowError(`Workflow "${id}" corrupted: failure must be an object`);
   }
-  const v = value as { kind?: unknown; message?: unknown };
+  const v = value as { kind?: unknown; message?: unknown; reason?: unknown };
   if (typeof v.kind !== "string" || !FAILURE_KINDS.has(v.kind)) {
     throw new WorkflowError(
       `Workflow "${id}" corrupted: failure.kind must be one of: ${[...FAILURE_KINDS].join(", ")}`,
@@ -205,6 +208,16 @@ export function assertWorkflowFailureShape(id: string, value: WorkflowFailure): 
   }
   if (typeof v.message !== "string") {
     throw new WorkflowError(`Workflow "${id}" corrupted: failure.message must be a string`);
+  }
+  if (v.kind === "substrate") {
+    if (
+      typeof v.reason !== "string" ||
+      !(SUBSTRATE_FAILURE_REASONS as ReadonlySet<string>).has(v.reason)
+    ) {
+      throw new WorkflowError(
+        `Workflow "${id}" corrupted: failure.reason must be one of: ${[...SUBSTRATE_FAILURE_REASONS].join(", ")}`,
+      );
+    }
   }
 }
 

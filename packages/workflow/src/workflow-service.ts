@@ -49,6 +49,7 @@ import type {
   NodeKind,
   NodeRetryMetadata,
   RetryReason,
+  SubstrateFailureReason,
   WorkflowCancellation,
   WorkflowFailure,
   WorkflowNodeRunner,
@@ -76,7 +77,18 @@ const silentLogger: Logger = pino({ level: "silent" });
  * workflow chain. See {@link WorkflowService.checkStuckAndRecoverInTx}
  * for the rationale; five is the locked operational ceiling.
  */
-const STUCK_RETRY_MAX_ATTEMPTS = 5;
+export const STUCK_RETRY_MAX_ATTEMPTS = 5;
+
+/**
+ * Structured {@link WorkflowFailure} reason persisted on the workflow
+ * row when the stuck-coord detector trips the
+ * {@link STUCK_RETRY_MAX_ATTEMPTS} cap. The detector transitions the
+ * workflow to `failed` with `{ kind: 'substrate', reason:
+ * STUCK_RETRY_LIMIT }` in the same tx as the triggering mutation;
+ * the dashboard surfaces the reason on the workflow's Overview
+ * failure callout.
+ */
+export const STUCK_RETRY_LIMIT: SubstrateFailureReason = "STUCK_RETRY_LIMIT";
 
 /**
  * Engine seam the service uses to nudge the in-memory
@@ -2167,19 +2179,35 @@ export class WorkflowService {
     // progress (calls `add-subgraph` or `finish`) or fails the
     // workflow; a coord that keeps exiting without action up to the
     // cap is either buggy or running an agent that doesn't honor the
-    // retry contract. Stopping at the cap leaves the workflow with
-    // its accumulated retry history for operator inspection rather
-    // than letting the substrate loop forever consuming dispatch
-    // slots.
+    // retry contract. Once the cap trips we cannot leave the
+    // workflow `running` forever — that would silently consume a
+    // dispatch slot with no operator-visible failure. The detector
+    // transitions the workflow to `failed` with a structured
+    // {@link WorkflowFailure} (`kind: 'substrate'`, `reason:
+    // STUCK_RETRY_LIMIT`) inside this same tx so the terminal flip
+    // is atomic with the triggering mutation; the post-commit
+    // dispatch is a no-op (`inserted: false`).
     //
     // The cap is intentionally low — five gives a real coord enough
     // headroom to recover from a transient validation error or
     // missed inbox event but stops well before any operator-visible
     // resource pressure shows up.
     if (attempt > STUCK_RETRY_MAX_ATTEMPTS) {
+      const failure: WorkflowFailure = {
+        kind: "substrate",
+        reason: STUCK_RETRY_LIMIT,
+        message: `stuck-coord recovery cap (${STUCK_RETRY_LIMIT}): exceeded ${STUCK_RETRY_MAX_ATTEMPTS} consecutive retry attempts without forward progress`,
+      };
+      const flipped = this.repo.casUpdateWorkflowStatus(tx, {
+        id: workflowId,
+        fromStatus: "running",
+        toStatus: "failed",
+        endedAt: nowIso,
+        failureJson: JSON.stringify(failure),
+      });
       this.logger.warn(
-        { workflowId, prevCoordId: prevCoord.id, attempt, reason },
-        "stuck-coord recovery: retry attempt cap reached; no further retries inserted",
+        { workflowId, prevCoordId: prevCoord.id, attempt, reason, flipped },
+        "stuck-coord recovery: retry attempt cap reached; transitioning workflow to failed",
       );
       return { inserted: false };
     }

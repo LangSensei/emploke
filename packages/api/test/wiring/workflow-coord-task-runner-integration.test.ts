@@ -247,7 +247,7 @@ describe("makeCoordNodeRunner — integration with composeWorkflowModule", () =>
     const node = await h.module.service.getNode(initialCoordNodeId);
     expect(node.status).toBe("succeeded");
     // The initial coord succeeded without any children; the
-    // substrate's stuck-coord detector (Issue #352 group E) fires
+    // substrate's stuck-coord detector fires
     // and inserts a retry coord which the engine immediately
     // dispatches via the same fake tasks.dispatch. Total calls = 2.
     expect(h.dispatch).toHaveBeenCalledTimes(2);

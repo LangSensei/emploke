@@ -1,5 +1,5 @@
 /**
- * Tests for the substrate's stuck-coord recovery (Issue #352 group E).
+ * Tests for the substrate's stuck-coord recovery.
  *
  * The recovery mechanism has two observable surfaces:
  *
@@ -16,16 +16,19 @@
  *     callers can never push a workflow into a structurally-stuck
  *     shape in a single primitive.
  *
- * Tests below mirror §15 of the design (15.1–15.11). The public
- * stuck-recovery ops escape hatch (single + sweep entry points) was
- * removed in iter-2 (see PR description); the cases that previously
- * exercised those entry points are rewritten here as integration
- * tests that drive the detector through natural mutation paths — a
- * strictly stronger validation of the production code path.
+ * Tests below mirror §15 of the design (15.1–15.11). These tests
+ * drive the detector via natural mutations (e.g. `markNodeTerminal`
+ * on the last worker leaf) rather than calling a public
+ * `recoverStuck` entry-point — the substrate does not expose one;
+ * recovery is automatic.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { extractNodeRetryMetadata, WorkflowDagInvariantError } from "../src/index.js";
+import {
+  extractNodeRetryMetadata,
+  STUCK_RETRY_MAX_ATTEMPTS,
+  WorkflowDagInvariantError,
+} from "../src/index.js";
 import {
   bootstrap,
   fixedRandomUUID,
@@ -320,14 +323,15 @@ describe("WorkflowService — stuck-coord recovery", () => {
 
   // ─── 15.11 — Retry attempt cap (defensive safety net) ──────────────
 
-  it("§15.11 detector stops inserting retry coords after STUCK_RETRY_MAX_ATTEMPTS (5)", async () => {
+  it("§15.11 detector stops inserting retry coords after STUCK_RETRY_MAX_ATTEMPTS", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
     // Drive 5 successful retry-coord insertions: terminate the
-    // initial coord, then each retry, in sequence. After the cap
-    // (5) any further terminal would otherwise produce attempt=6 —
-    // the detector logs a warning and returns inserted=false instead.
+    // initial coord, then each retry, in sequence. Each terminal is
+    // a natural mutation (markNodeTerminal — a §13 detector trigger
+    // site) so this exercises the production code path end-to-end
+    // without any test-only entry points.
     let prevId = initialCoordNodeId;
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= STUCK_RETRY_MAX_ATTEMPTS; i++) {
       await h.service.markNodeTerminal(workflowId, prevId, { status: "succeeded" });
       const dag = await h.service.getDag(workflowId);
       // Pick the newest coord (the one whose retry.attempt matches i).
@@ -338,10 +342,49 @@ describe("WorkflowService — stuck-coord recovery", () => {
       expect(next).toBeDefined();
       prevId = next!.id;
     }
-    // 6th terminal: the detector hits the cap and returns no-op. The
-    // DAG node count stays at 6 (initial + 5 retries) — no 7th node.
+    // 6th terminal: the detector hits the cap and inserts no new
+    // retry coord. The DAG node count stays at
+    // STUCK_RETRY_MAX_ATTEMPTS + 1 (initial + 5 retries).
     await h.service.markNodeTerminal(workflowId, prevId, { status: "succeeded" });
     const dag = await h.service.getDag(workflowId);
-    expect(dag.nodes.length).toBe(6);
+    expect(dag.nodes.length).toBe(STUCK_RETRY_MAX_ATTEMPTS + 1);
+  });
+
+  it("§15.12 detector transitions the workflow to failed with STUCK_RETRY_LIMIT reason when the cap is exceeded", async () => {
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
+    // Same 5-retry setup as §15.11, driven via natural
+    // `markNodeTerminal` mutations.
+    let prevId = initialCoordNodeId;
+    for (let i = 1; i <= STUCK_RETRY_MAX_ATTEMPTS; i++) {
+      await h.service.markNodeTerminal(workflowId, prevId, { status: "succeeded" });
+      const dag = await h.service.getDag(workflowId);
+      const next = dag.nodes.find((n) => {
+        const meta = extractNodeRetryMetadata(n.metadata);
+        return meta !== undefined && meta.attempt === i;
+      });
+      expect(next).toBeDefined();
+      prevId = next!.id;
+    }
+    // Pre-6th-terminal: the workflow is still `running`.
+    expect((await h.service.getWorkflow(workflowId)).status).toBe("running");
+    // 6th terminal trips the cap. The detector flips the workflow
+    // to `failed` inside the same mutation tx, persisting a
+    // structured failure payload with `kind: 'substrate'` +
+    // `reason: 'STUCK_RETRY_LIMIT'`. The transition is atomic with
+    // the triggering mutation; the dashboard surfaces an
+    // operator-visible failure reason on `GET /workflows/:id`.
+    await h.service.markNodeTerminal(workflowId, prevId, { status: "succeeded" });
+    const after = await h.service.getWorkflow(workflowId);
+    expect(after.status).toBe("failed");
+    expect(after.failure).toBeDefined();
+    if (after.failure?.kind !== "substrate") {
+      throw new Error(`expected substrate failure, got ${String(after.failure?.kind)}`);
+    }
+    expect(after.failure.reason).toBe("STUCK_RETRY_LIMIT");
+    expect(after.failure.message).toContain("STUCK_RETRY_LIMIT");
+    // The endedAt timestamp is set by the same UPDATE as the status
+    // flip — the cross-field invariant ("workflow terminal ⇒
+    // endedAt non-null") still holds for the substrate-driven path.
+    expect(after.endedAt).toBeDefined();
   });
 });

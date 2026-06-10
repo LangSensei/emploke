@@ -55,7 +55,7 @@ function makeAutoSucceedRunner(
 ): AutoSucceedRunner {
   const dispatchCalls: Array<{ workflowId: string; nodeId: string }> = [];
   // Per-workflow first-dispatch gate (coord runner only). The
-  // substrate's stuck-coord detector (Issue #352 group E) inserts a
+  // substrate's stuck-coord detector inserts a
   // retry coord whenever a coord exits without children. Without
   // this gate, the retry's auto-success would trigger another retry,
   // ad infinitum (capped at 5 by the substrate but still 6 extra

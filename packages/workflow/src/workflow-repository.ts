@@ -482,22 +482,6 @@ export class WorkflowRepository {
       .get();
     return row === undefined ? null : WorkflowNodeEntity.fromRow(row);
   }
-
-  /**
-   * Replace the `metadata` column on a single node row, JSON-encoding
-   * the input. Used by the stuck-coord detector to backfill a retry
-   * marker on a node mid-tx; the substrate never overwrites metadata
-   * via any other path.
-   */
-  updateNodeMetadataTx(tx: Db, id: string, metadata: Readonly<Record<string, unknown>>): void {
-    assertValidWorkflowNodeId(id);
-    const result = tx
-      .update(workflowNodes)
-      .set({ metadata: JSON.stringify(metadata) })
-      .where(eq(workflowNodes.id, id))
-      .run();
-    if (result.changes === 0) throw new WorkflowNodeNotFoundError("<unknown>", id);
-  }
 }
 
 /**

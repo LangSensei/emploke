@@ -53,21 +53,48 @@ export interface WorkflowSuccess {
 }
 
 /**
- * Payload attached when a workflow transitions to `failed`. Set by
- * the coordinator's `finishWorkflow({outcome:'failed', failure})` call.
+ * Closed enum of substrate-detected failure reasons. Stored on
+ * {@link WorkflowFailure} when `kind === 'substrate'`. New reasons
+ * require a typed schema bump so every consumer can extend its
+ * rendering / coord-side handling explicitly.
  *
- * Single-arm interface — `kind` is retained as a discriminator so
- * future substrate-detected failure modes can be added without
- * breaking the wire shape.
- *
- *   - `coordinator` — the coordinator explicitly called failWorkflow.
- *
- * `message` is the human-readable summary the dashboard renders.
+ *   - `STUCK_RETRY_LIMIT` — the stuck-coord detector inserted
+ *     {@link STUCK_RETRY_MAX_ATTEMPTS} consecutive retry coords
+ *     without the workflow making forward progress; the substrate
+ *     gives up and transitions the workflow terminal so the slot
+ *     stops being held open. See
+ *     {@link WorkflowService.checkStuckAndRecoverInTx} for the
+ *     trigger.
  */
-export type WorkflowFailure = {
-  readonly kind: "coordinator";
-  readonly message: string;
-};
+export type SubstrateFailureReason = "STUCK_RETRY_LIMIT";
+
+/**
+ * Payload attached when a workflow transitions to `failed`.
+ *
+ * Discriminated on `kind`:
+ *
+ *   - `coordinator` — set by the coordinator's
+ *     `finishWorkflow({outcome:'failed', failure})` call. The
+ *     coordinator supplies the human-readable `message`.
+ *   - `substrate` — set by the substrate itself when an internal
+ *     safety net trips. Carries a {@link SubstrateFailureReason}
+ *     code plus a human-readable `message`; coord-side callers can
+ *     never construct this arm (external entry points reject
+ *     anything but `kind: 'coordinator'`).
+ *
+ * `message` is the human-readable summary the dashboard renders for
+ * both arms.
+ */
+export type WorkflowFailure =
+  | {
+      readonly kind: "coordinator";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "substrate";
+      readonly reason: SubstrateFailureReason;
+      readonly message: string;
+    };
 
 /**
  * Payload attached when a workflow transitions to `cancelled`. Set
