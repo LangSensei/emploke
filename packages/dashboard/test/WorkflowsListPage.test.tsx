@@ -89,8 +89,29 @@ beforeEach(() => {
   mockGetWorkflowDag.mockReset();
   mockCreateWorkflow.mockReset();
   mockListWorkflows.mockResolvedValue([]);
-  mockGetWorkflow.mockResolvedValue(undefined);
-  mockGetWorkflowDag.mockResolvedValue(undefined);
+  // Detail-fetch defaults: park `getWorkflow` / `getWorkflowDag` in a
+  // pending state so any test that exercises the list (causing the
+  // page's auto-selection to fire `useWorkflowDetail`) keeps the
+  // right pane parked on its loading skeleton.
+  //
+  // The prior defaults were `.mockResolvedValue(undefined)`. That
+  // violated the typed `Promise<WorkflowHeaderWire>` contract: the
+  // detail hook's `setWorkflow(header.value)` then handed `undefined`
+  // to `<WorkflowView>`, which dereferences `workflow.brief` (see
+  // `src/pages/workflows/WorkflowView.tsx:119`) and crashed the
+  // entire root mid-test. With no error boundary the React 19 root
+  // unmounted on the crash render, racing the `waitFor` MutationObserver
+  // — whichever committed first decided pass vs fail. Faster runners
+  // (macOS Apple Silicon in CI) lost the race more often, surfacing
+  // the bug as "macOS flake".
+  //
+  // A never-settling promise here is the right safe default for tests
+  // that do not opt into a specific detail-pane assertion. Tests that
+  // do (`renders one row per workflow...`, `opens the create modal...`)
+  // already override these with `mockResolvedValue(...)` of a real
+  // `WorkflowHeaderWire`, so this change is transparent to them.
+  mockGetWorkflow.mockReturnValue(new Promise<WorkflowHeaderWire>(() => {}));
+  mockGetWorkflowDag.mockReturnValue(new Promise<WorkflowDagWire>(() => {}));
 });
 
 afterEach(() => cleanup());
