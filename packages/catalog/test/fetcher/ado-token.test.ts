@@ -163,7 +163,7 @@ const ORIG_GLYPHS_NI = process.env.GLYPHS_NON_INTERACTIVE;
 const ORIG_IS_TTY_DESC = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 const ORIG_EMIT_WARNING = process.emitWarning.bind(process);
 
-function setTTY(value: boolean): void {
+function setTTY(value: boolean | undefined): void {
   Object.defineProperty(process.stdin, "isTTY", {
     value,
     configurable: true,
@@ -320,8 +320,48 @@ describe("resolveDefaultAdoToken — silent peek (warm cache, no popup)", () => 
 });
 
 describe("resolveDefaultAdoToken — non-interactive guard (fail fast, don't hang)", () => {
-  it("silent peek null + stdin non-TTY + no env PAT → throws FetchError with AZURE_DEVOPS_PAT remediation", async () => {
+  // Regression for #362: previously isNonInteractive() returned true for
+  // any non-TTY stdin, which made Copilot CLI / VS Code task runners /
+  // WSL X-forward children hit the escape-hatch unnecessarily even when
+  // GCM could perfectly well render its sign-in popup. The fix is to
+  // drop the `stdin.isTTY` heuristic entirely and let GCM decide — it
+  // exits non-zero quickly when no display is available, so the resolver
+  // still falls through to anonymous on its own.
+  it("silent peek null + stdin.isTTY=undefined + no env PAT → proceeds to interactive fill (regression for #362)", async () => {
+    setTTY(undefined);
+    spawnFactory = router({
+      silentFill: () => fillExitNonZero(),
+      interactiveFill: () => fillSuccess(["username=u@x.com\npassword=tokFromPopup\n"]),
+    });
+    const r = await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    expect(r).toEqual({
+      source: "git-credential",
+      token: "tokFromPopup",
+      username: "u@x.com",
+    });
+    // The second runGitCredentialFill MUST be the interactive variant
+    // ({ silent: false }) — that's the whole point of the fix.
+    const interactiveCalls = spawnCalls.filter((c) => isInteractiveFill(c.args));
+    expect(interactiveCalls).toHaveLength(1);
+  });
+
+  it("silent peek null + stdin.isTTY=false + no env PAT → proceeds to interactive fill (does NOT throw)", async () => {
+    // Companion regression: some shells report isTTY=false rather than
+    // undefined. Same guarantee applies — neither value short-circuits
+    // the interactive path anymore.
     setTTY(false);
+    spawnFactory = router({
+      silentFill: () => fillExitNonZero(),
+      interactiveFill: () => fillSuccess(["username=u\npassword=tok\n"]),
+    });
+    const r = await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    expect(r).toEqual({ source: "git-credential", token: "tok", username: "u" });
+    expect(spawnCalls.filter((c) => isInteractiveFill(c.args))).toHaveLength(1);
+  });
+
+  it("silent peek null + CI=true (even on TTY) + no env PAT → throws FetchError without spawning interactive fill", async () => {
+    setTTY(true);
+    process.env.CI = "true";
     spawnFactory = router({ silentFill: () => fillExitNonZero() });
     let caught: unknown = null;
     try {
@@ -334,19 +374,10 @@ describe("resolveDefaultAdoToken — non-interactive guard (fail fast, don't han
     expect(msg).toContain("AZURE_DEVOPS_PAT");
     expect(msg).toContain("dev.azure.com/MyOrg/MyRepo");
     expect(msg).toContain("git ls-remote");
-    // MUST NOT attempt interactive fill (would hang on an unrenderable popup)
     expect(spawnCalls.some((c) => isInteractiveFill(c.args))).toBe(false);
   });
 
-  it("silent peek null + CI=true (even on TTY) + no env PAT → throws FetchError", async () => {
-    setTTY(true);
-    process.env.CI = "true";
-    spawnFactory = router({ silentFill: () => fillExitNonZero() });
-    await expect(resolveDefaultAdoToken("MyOrg", "MyRepo")).rejects.toThrow(/AZURE_DEVOPS_PAT/);
-    expect(spawnCalls.some((c) => isInteractiveFill(c.args))).toBe(false);
-  });
-
-  it("silent peek null + GLYPHS_NON_INTERACTIVE=1 (even on TTY) + no env PAT → throws FetchError", async () => {
+  it("silent peek null + GLYPHS_NON_INTERACTIVE=1 (even on TTY) + no env PAT → throws FetchError without spawning interactive fill", async () => {
     setTTY(true);
     process.env.GLYPHS_NON_INTERACTIVE = "1";
     spawnFactory = router({ silentFill: () => fillExitNonZero() });
@@ -570,7 +601,7 @@ describe("tryGitCredentialFill — interactive variant", () => {
     expect(r).toEqual({ username: "u", password: "opaque-garbage-not-a-jwt-or-pat" });
   });
 
-  it("kills git and returns null on timeout", async () => {
+  it("kills git and returns null at the interactive 120s timeout (not 5s — users need MFA headroom)", async () => {
     let killed = false;
     spawnFactory = (): MockChildProcess => {
       const ee = makeMockChild();
@@ -584,7 +615,16 @@ describe("tryGitCredentialFill — interactive variant", () => {
     vi.useFakeTimers();
     try {
       const promise = tryGitCredentialFill("MyOrg", "MyRepo");
+      // The silent path's 5s ceiling MUST NOT fire on the interactive
+      // variant — a user clicking through Microsoft sign-in + 2FA can
+      // easily take 30-60s and some CA policies push that toward 90s.
       await vi.advanceTimersByTimeAsync(5_000);
+      expect(killed).toBe(false);
+      // 119_999ms total — still below the bound.
+      await vi.advanceTimersByTimeAsync(114_999);
+      expect(killed).toBe(false);
+      // Cross the 120s boundary → the interactive timer fires.
+      await vi.advanceTimersByTimeAsync(1);
       const r = await promise;
       expect(r).toBeNull();
       expect(killed).toBe(true);
@@ -696,5 +736,103 @@ describe("invalidateAdoTokenCache", () => {
     expect(r2?.token).toBe("t2");
     const r1 = await resolveDefaultAdoToken("A", "R1");
     expect(r1?.token).toBe("t3");
+  });
+});
+
+describe("resolveDefaultAdoToken — silent peek timeout (still bounded at 5s)", () => {
+  it("silent fill that never closes is killed at 5s, then the resolver short-circuits via CI=true", async () => {
+    // Silent peek is internal — exercise its 5s ceiling through the
+    // resolver. CI=true makes the post-silent-fail path deterministic
+    // (escape-hatch FetchError) without spawning another never-closing
+    // child for the interactive tier.
+    setTTY(true);
+    process.env.CI = "true";
+    let killed = false;
+    spawnFactory = router({
+      silentFill: (): MockChildProcess => {
+        const ee = makeMockChild();
+        ee.kill = vi.fn().mockImplementation(() => {
+          killed = true;
+          return true;
+        });
+        ee.stdout = new EventEmitter();
+        // No close emission — only the resolver's timer can settle this.
+        return ee;
+      },
+    });
+    vi.useFakeTimers();
+    try {
+      // Attach the rejection handler synchronously so the eventual
+      // FetchError doesn't surface as an unhandled rejection while the
+      // timer is being advanced.
+      const settled = resolveDefaultAdoToken("MyOrg", "MyRepo").catch((e: unknown) => e);
+      // Just below the 5s silent ceiling — timer MUST NOT have fired.
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(killed).toBe(false);
+      // Cross the boundary — silent timer fires, child is killed,
+      // resolver falls through to the non-interactive guard.
+      await vi.advanceTimersByTimeAsync(1);
+      const outcome = await settled;
+      expect(killed).toBe(true);
+      expect(outcome).toBeInstanceOf(FetchError);
+      // Crucially: the silent path's 5s ceiling fired — we did NOT wait
+      // 120s (which would be the interactive ceiling) before settling.
+      expect(spawnCalls.filter((c) => isSilentFill(c.args))).toHaveLength(1);
+      expect(spawnCalls.some((c) => isInteractiveFill(c.args))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("resolveDefaultAdoToken — env-var hit stderr notice (once per (org, repo))", () => {
+  // Helper to count `[glyphs] using ADO token from environment` lines so
+  // assertions are robust against the test harness writing other stderr.
+  function countEnvNotices(): number {
+    return stderrChunks
+      .join("")
+      .split(/\r?\n/)
+      .filter((l) => l.includes("[glyphs] using ADO token from environment")).length;
+  }
+
+  it("emits a one-line stderr notice on the first env-sourced resolve per (org, repo)", async () => {
+    process.env.AZURE_DEVOPS_PAT = "envtok";
+    await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    expect(countEnvNotices()).toBe(1);
+    const text = stderrChunks.join("");
+    expect(text).toContain(
+      "[glyphs] using ADO token from environment (AZURE_DEVOPS_*_PAT / SYSTEM_ACCESSTOKEN)",
+    );
+    expect(text).toContain("dev.azure.com/MyOrg/MyRepo");
+  });
+
+  it("does NOT re-emit the notice on subsequent env-sourced resolves for the same (org, repo)", async () => {
+    process.env.AZURE_DEVOPS_PAT = "envtok";
+    await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    expect(countEnvNotices()).toBe(1);
+  });
+
+  it("emits a separate notice per distinct (org, repo) pair", async () => {
+    process.env.AZURE_DEVOPS_PAT = "envtok";
+    await resolveDefaultAdoToken("OrgA", "RepoA");
+    await resolveDefaultAdoToken("OrgA", "RepoB");
+    await resolveDefaultAdoToken("OrgB", "RepoA");
+    expect(countEnvNotices()).toBe(3);
+    const text = stderrChunks.join("");
+    expect(text).toContain("dev.azure.com/OrgA/RepoA");
+    expect(text).toContain("dev.azure.com/OrgA/RepoB");
+    expect(text).toContain("dev.azure.com/OrgB/RepoA");
+  });
+
+  it("_resetAdoTokenCache clears the env-log set — the next env-sourced resolve re-emits", async () => {
+    process.env.AZURE_DEVOPS_PAT = "envtok";
+    await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    expect(countEnvNotices()).toBe(1);
+    const baseline = countEnvNotices();
+    _resetAdoTokenCache();
+    await resolveDefaultAdoToken("MyOrg", "MyRepo");
+    expect(countEnvNotices()).toBe(baseline + 1);
   });
 });
