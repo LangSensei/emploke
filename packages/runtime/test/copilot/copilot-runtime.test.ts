@@ -553,6 +553,9 @@ describe("CopilotRuntime", () => {
       const dir = path.join(stateDir, FIXED_UUID);
       await mkdir(dir, { recursive: true });
       // Build a > 4MB events.jsonl by repeating a fat user.message line.
+      // One-shot write (not an awaited appendFile loop): on Windows CI,
+      // hundreds of serialised small async writes through libuv + NTFS
+      // exceed the 15s default test timeout.
       const fatPayload = "x".repeat(8000);
       const fatLine = `${JSON.stringify({
         type: "user.message",
@@ -561,15 +564,11 @@ describe("CopilotRuntime", () => {
         timestamp: "2026-05-12T03:54:11.016Z",
         data: { content: fatPayload },
       })}\n`;
-      const targetBytes = 5 * 1024 * 1024;
+      // Only exceed the 4MB cap by a small margin to keep CI cost low.
+      const targetBytes = 4 * 1024 * 1024 + 64 * 1024;
       const repeats = Math.ceil(targetBytes / fatLine.length);
       const eventsPath = path.join(dir, "events.jsonl");
-      // Write incrementally to avoid holding 5MB string in memory twice.
-      await writeFile(eventsPath, "");
-      const { appendFile } = await import("node:fs/promises");
-      for (let i = 0; i < repeats; i++) {
-        await appendFile(eventsPath, fatLine);
-      }
+      await writeFile(eventsPath, fatLine.repeat(repeats), "utf8");
       const rt = new CopilotRuntime({ copilotStateDir: stateDir });
       const r = await rt.readActivity({ runtimeSessionId: FIXED_UUID });
       expect(r).not.toBeNull();
