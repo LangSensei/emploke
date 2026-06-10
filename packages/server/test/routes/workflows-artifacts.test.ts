@@ -72,6 +72,7 @@ function makeCoord(): WorkflowNodeEntity {
     createdAt: "2026-06-07T00:00:00.000Z",
     readyAt: "2026-06-07T00:00:00.000Z",
     runningAt: "2026-06-07T00:00:00.000Z",
+    metadata: "{}",
     endedAt: null,
   });
 }
@@ -87,6 +88,7 @@ function makeWorker(): WorkflowNodeEntity {
     createdAt: "2026-06-07T00:00:01.000Z",
     readyAt: "2026-06-07T00:00:01.000Z",
     runningAt: "2026-06-07T00:00:02.000Z",
+    metadata: "{}",
     endedAt: "2026-06-07T00:00:03.000Z",
   });
 }

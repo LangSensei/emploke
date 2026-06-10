@@ -57,6 +57,7 @@ function makeDag(wf: WorkflowHeaderWire): WorkflowDagWire {
         status: "running",
         phase: 0,
         spec: { kind: "coordinator", agent: wf.coordinatorAgent },
+        metadata: {},
         createdAt: wf.createdAt,
         readyAt: wf.createdAt,
         runningAt: wf.createdAt,
@@ -123,11 +124,13 @@ describe("WorkflowsPage — list rendering + sort", () => {
     const older = makeWorkflow({
       id: "wf-older",
       brief: "Older one",
+      metadata: {},
       createdAt: "2026-05-20T00:00:00.000Z",
     });
     const newer = makeWorkflow({
       id: "wf-newer",
       brief: "Newer one",
+      metadata: {},
       createdAt: "2026-05-28T00:00:00.000Z",
     });
     mockListWorkflows.mockResolvedValue([older, newer]);

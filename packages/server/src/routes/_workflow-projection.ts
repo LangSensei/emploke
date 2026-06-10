@@ -106,6 +106,7 @@ export function projectWorkflowNodeSync(node: WorkflowNodeEntity): WorkflowNodeW
     phase: node.phase,
     status: node.status,
     spec: projectNodeSpec(node),
+    metadata: node.metadata,
     createdAt: node.createdAt,
     ...(node.readyAt !== undefined ? { readyAt: node.readyAt } : {}),
     ...(node.runningAt !== undefined ? { runningAt: node.runningAt } : {}),

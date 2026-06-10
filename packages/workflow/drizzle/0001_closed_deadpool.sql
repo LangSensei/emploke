@@ -1,0 +1,1 @@
+ALTER TABLE `workflow_nodes` ADD `metadata` text DEFAULT '{}' NOT NULL;

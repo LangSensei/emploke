@@ -5,6 +5,7 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import pino, { type Logger } from "pino";
 import {
   COORDINATOR_KIND,
+  classifyStuckReason,
   computePhaseFromParents,
   type NodeRef,
   nodeEntityFor,
@@ -14,6 +15,7 @@ import {
   resolveSubgraphTopology,
   type SubgraphEdgeShape,
   type SubgraphTempNodeShape,
+  structuralLeaves,
   validateSubgraphShape,
   WORKER_KIND,
   workflowEntityFor,
@@ -26,6 +28,7 @@ import {
   OrphanCoordInsertError,
   ParentStateError,
   WorkflowAlreadyTerminalError,
+  WorkflowDagInvariantError,
   WorkflowEdgeCycleError,
   WorkflowEdgeNotFoundError,
   WorkflowError,
@@ -44,6 +47,9 @@ import type * as schema from "./schema.js";
 import { workflows } from "./schema.js";
 import type {
   NodeKind,
+  NodeRetryMetadata,
+  RetryReason,
+  SubstrateFailureReason,
   WorkflowCancellation,
   WorkflowFailure,
   WorkflowNodeRunner,
@@ -54,12 +60,35 @@ import type {
   WorkflowSuccess,
 } from "./types.js";
 import { assertValidWorkflowId, generateWorkflowId, generateWorkflowNodeId } from "./validate.js";
-import type { WorkflowEdgeEntity, WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
+import {
+  extractNodeRetryMetadata,
+  type WorkflowEdgeEntity,
+  type WorkflowEntity,
+  type WorkflowNodeEntity,
+} from "./workflow-entity.js";
 import type { WorkflowRepository } from "./workflow-repository.js";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
 const silentLogger: Logger = pino({ level: "silent" });
+
+/**
+ * Maximum number of consecutive retry-coord insertions per stuck-
+ * workflow chain. See {@link WorkflowService.checkStuckAndRecoverInTx}
+ * for the rationale; five is the locked operational ceiling.
+ */
+export const STUCK_RETRY_MAX_ATTEMPTS = 5;
+
+/**
+ * Structured {@link WorkflowFailure} reason persisted on the workflow
+ * row when the stuck-coord detector trips the
+ * {@link STUCK_RETRY_MAX_ATTEMPTS} cap. The detector transitions the
+ * workflow to `failed` with `{ kind: 'substrate', reason:
+ * STUCK_RETRY_LIMIT }` in the same tx as the triggering mutation;
+ * the dashboard surfaces the reason on the workflow's Overview
+ * failure callout.
+ */
+export const STUCK_RETRY_LIMIT: SubstrateFailureReason = "STUCK_RETRY_LIMIT";
 
 /**
  * Engine seam the service uses to nudge the in-memory
@@ -223,6 +252,22 @@ export interface WorkflowDagSnapshot {
   readonly nodes: readonly WorkflowNodeEntity[];
   readonly edges: readonly WorkflowEdgeEntity[];
 }
+
+/**
+ * Internal closure-state type used by the eight mutation primitives
+ * to capture the {@link WorkflowService.checkStuckAndRecoverInTx}
+ * outcome from inside the tx callback. Hoisted to a named alias so
+ * the closure-scoped variable doesn't collapse to `never` under the
+ * compiler's flow-narrowing of the discriminated union initializer.
+ */
+type StuckRecoveryOutcome =
+  | { readonly inserted: false }
+  | {
+      readonly inserted: true;
+      readonly retryNodeId: string;
+      readonly reason: RetryReason;
+      readonly attempt: number;
+    };
 
 /**
  * Public surface for `@emploke/workflow`. Owns:
@@ -609,6 +654,7 @@ export class WorkflowService {
 
     let resultPhase = 0;
     let uniqueParents: readonly string[] = [];
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
     this.db.transaction((tx) => {
       // Defense-in-depth: re-check workflow is still running inside
       // the write tx.
@@ -684,6 +730,8 @@ export class WorkflowService {
           this.repo.insertEdge(tx, { workflowId, from: p, to: nodeId });
         }
       }
+
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
 
     // Post-commit eager-dispatch reaction. Without this, a coord that
@@ -701,6 +749,8 @@ export class WorkflowService {
       await this.dispatchAtomic(nodeId);
     }
 
+    await this.dispatchRetryIfInserted(retryResult);
+
     this.nudgeEngine(workflowId);
     return { nodeId, phase: resultPhase };
   }
@@ -712,6 +762,7 @@ export class WorkflowService {
     let toKind = "";
     let toNodeStatusAfter: WorkflowNodeStatus = "not_started";
     let dispatchCandidates: string[] = [];
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
 
     const workflowId = args.workflowId;
 
@@ -779,6 +830,9 @@ export class WorkflowService {
       // plus any not_started descendant whose phase was recomputed.
       // (The recompute set IS the set of not_started descendants.)
       dispatchCandidates = Array.from(phaseDiff.keys());
+
+      const nowIso = this.now().toISOString();
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
 
     // Post-commit eager-dispatch reaction. dispatchAtomic re-checks
@@ -802,6 +856,8 @@ export class WorkflowService {
       }
     }
 
+    await this.dispatchRetryIfInserted(retryResult);
+
     this.nudgeEngine(workflowId);
     return { toPhase: resultToPhase };
   }
@@ -820,6 +876,7 @@ export class WorkflowService {
   async cancelNode(args: CancelNodeArgs): Promise<void> {
     let wasRunning = false;
     let nodeKind = "";
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
 
     const workflowId = args.workflowId;
 
@@ -847,6 +904,7 @@ export class WorkflowService {
         status: "cancelled",
         endedAt: nowIso,
       });
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
 
     if (wasRunning) {
@@ -860,6 +918,7 @@ export class WorkflowService {
         );
       }
     }
+    await this.dispatchRetryIfInserted(retryResult);
     this.nudgeEngine(workflowId);
   }
 
@@ -1007,6 +1066,7 @@ export class WorkflowService {
    */
   async removeNode(args: RemoveNodeArgs): Promise<void> {
     const workflowId = args.workflowId;
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
 
     this.db.transaction((tx) => {
       const wf = this.repo.readWorkflowTx(tx, workflowId);
@@ -1051,11 +1111,12 @@ export class WorkflowService {
       // turn (the helper handles the cascade).
       const phaseDiff = this.recomputePhasesInTx(tx, workflowId, childIds);
       this.repo.updateNodePhases(tx, phaseDiff);
+
+      const nowIso = this.now().toISOString();
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
 
-    // TODO(phase-3-dispatch): no nodes become dispatchable from a
-    // pure removal; left as a comment for symmetry with the other
-    // structural primitives.
+    await this.dispatchRetryIfInserted(retryResult);
     this.nudgeEngine(workflowId);
   }
 
@@ -1081,6 +1142,7 @@ export class WorkflowService {
    */
   async removeEdge(args: RemoveEdgeArgs): Promise<void> {
     const workflowId = args.workflowId;
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
 
     this.db.transaction((tx) => {
       const wf = this.repo.readWorkflowTx(tx, workflowId);
@@ -1132,7 +1194,12 @@ export class WorkflowService {
 
       const phaseDiff = this.recomputePhasesInTx(tx, workflowId, [args.toNodeId]);
       this.repo.updateNodePhases(tx, phaseDiff);
+
+      const nowIso = this.now().toISOString();
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
+
+    await this.dispatchRetryIfInserted(retryResult);
 
     // TODO(phase-3-dispatch): no nodes become dispatchable from a
     // pure edge removal; left as a comment for symmetry with the
@@ -1208,6 +1275,7 @@ export class WorkflowService {
       assertCoordinatorSpecAgent(validatedSpec);
     }
 
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
     this.db.transaction((tx) => {
       const wf = this.repo.readWorkflowTx(tx, workflowId);
       if (wf === null) throw new WorkflowNotFoundError(workflowId);
@@ -1250,7 +1318,11 @@ export class WorkflowService {
           this.repo.updateWorkflowCoordinatorAgentTx(tx, workflowId, agent);
         }
       }
+
+      const nowIso = this.now().toISOString();
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
+    await this.dispatchRetryIfInserted(retryResult);
     this.nudgeEngine(workflowId);
   }
 
@@ -1410,6 +1482,7 @@ export class WorkflowService {
 
     const nowIso = this.now().toISOString();
     const insertedNodes: AddSubgraphInsertedNode[] = [];
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
 
     this.db.transaction((tx) => {
       const wf = this.repo.readWorkflowTx(tx, workflowId);
@@ -1641,6 +1714,33 @@ export class WorkflowService {
         const phaseDiff = this.recomputePhasesInTx(tx, workflowId, Array.from(existingTargetIds));
         this.repo.updateNodePhases(tx, phaseDiff);
       }
+
+      // Commit-time DAG well-formedness invariant. At every quiescent
+      // state the workflow's structural leaf frontier must be exactly
+      // {1 coordinator}. The substrate's low-level primitives are
+      // sequenceable and the detector below recovers from transient
+      // multi-leaf states, but `addSubgraph` is the one atomic-batch
+      // primitive whose intermediate state is never visible — the
+      // batch either commits as a well-formed step or rolls back
+      // wholesale. Reject here before the detector ever runs so the
+      // operator sees the structural rejection, not a silent retry
+      // insertion.
+      const finalNodes = this.repo.listNodesByWorkflowTx(tx, workflowId);
+      const finalEdges = this.repo.listEdgesByWorkflowTx(tx, workflowId);
+      const finalLeaves = structuralLeaves(
+        finalNodes,
+        finalEdges.map((e) => ({ from: e.from, to: e.to })),
+      );
+      const invariantOk = finalLeaves.length === 1 && finalLeaves[0]!.kind === COORDINATOR_KIND;
+      if (!invariantOk) {
+        throw new WorkflowDagInvariantError(
+          workflowId,
+          finalLeaves.map((n) => n.id),
+          finalLeaves.map((n) => n.kind),
+        );
+      }
+
+      retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
     });
 
     // TODO(phase-3-dispatch): dispatch reaction over inserted nodes
@@ -1650,6 +1750,7 @@ export class WorkflowService {
     // already; the batch primitive's reaction belongs in the Phase
     // 3+4 wiring.
 
+    await this.dispatchRetryIfInserted(retryResult);
     this.nudgeEngine(workflowId);
     return { insertedNodes };
   }
@@ -1823,6 +1924,7 @@ export class WorkflowService {
   ): Promise<void> {
     const nowIso = this.now().toISOString();
     let didWrite = false;
+    let retryResult: StuckRecoveryOutcome = { inserted: false };
     try {
       this.db.transaction((tx) => {
         const node = this.repo.readNodeTx(tx, nodeId);
@@ -1862,11 +1964,13 @@ export class WorkflowService {
           endedAt: nowIso,
         });
         didWrite = true;
+        retryResult = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
       });
     } catch (err) {
       this.logger.error({ workflowId, nodeId, result, err }, "markNodeTerminal: write tx threw");
       throw err;
     }
+    await this.dispatchRetryIfInserted(retryResult);
     if (didWrite) {
       this.nudgeEngine(workflowId);
     }
@@ -1938,6 +2042,209 @@ export class WorkflowService {
       .set({ coordinatorAgent: args.validatedSpec.agent })
       .where(eq(workflows.id, args.workflowId))
       .run();
+  }
+
+  /**
+   * Insert a retry coordinator-kind node by directly composing
+   * repository writes. Skips `runner.validate` — the spec is just
+   * `{ agent }` copied from the previous coord, which was validated
+   * when that coord was originally inserted (re-validating inside the
+   * detector's tx would require an async call from within a write
+   * lock, and the spec has not been mutated).
+   *
+   * The `parentIds` list is built by the detector and MUST include
+   * the prev-coord id (i.e. `prevCoord.id` is always present) so the
+   * generic `OrphanCoordInsertError` invariant is satisfied even in
+   * the `workers_finished_without_coord` case where the structural
+   * leaves are all workers. The caller deduplicates while preserving
+   * insertion order; the helper trusts that contract.
+   *
+   * Mirrors {@link insertCoordNodeInTx} for the denorm-update path:
+   * the new coord becomes the workflow's latest coord, so its agent
+   * replaces `workflows.coordinator_agent` in the same tx.
+   *
+   * Returns the inserted node id + phase so the caller can wire up
+   * post-commit eager-dispatch.
+   */
+  private insertCoordRetryNodeInTx(
+    tx: Db,
+    args: {
+      readonly workflowId: string;
+      readonly parentIds: ReadonlyArray<string>;
+      readonly agent: string;
+      readonly retry: NodeRetryMetadata;
+      readonly nowIso: string;
+    },
+  ): { readonly nodeId: string; readonly phase: number } {
+    const nodeId = generateWorkflowNodeId(this.randomUUID);
+    const parentEntities = this.repo.readNodesByIds(tx, args.parentIds);
+    const phase = computePhaseFromParents(parentEntities);
+    const spec: { readonly agent: string } = { agent: args.agent };
+    const metadata: Readonly<Record<string, unknown>> = { retry: args.retry };
+    const node = nodeEntityFor({
+      id: nodeId,
+      workflowId: args.workflowId,
+      kind: COORDINATOR_KIND,
+      spec,
+      phase,
+      status: "not_started",
+      metadata,
+      nowIso: args.nowIso,
+    });
+    this.repo.insertNode(tx, node);
+    for (const p of args.parentIds) {
+      this.repo.insertEdge(tx, { workflowId: args.workflowId, from: p, to: nodeId });
+    }
+    tx.update(workflows)
+      .set({ coordinatorAgent: args.agent })
+      .where(eq(workflows.id, args.workflowId))
+      .run();
+    return { nodeId, phase };
+  }
+
+  /**
+   * Substrate-internal stuck-coord detector. Runs at the END of
+   * every mutation tx body (after the primary writes, before commit)
+   * for the eight structural primitives — see the per-primitive call
+   * sites for the contract.
+   *
+   * Conditions for retry insertion (all must hold):
+   *
+   *   1. The workflow header is still `running` (terminal headers
+   *      from a concurrent `finishWorkflow` / `cancelWorkflow` race
+   *      cleanly: the post-commit nudge becomes a no-op because the
+   *      detector already returned `inserted: false`).
+   *   2. Every node in the workflow is in a terminal status
+   *      (`succeeded` / `failed` / `cancelled`). `not_started`,
+   *      `ready`, and `running` all indicate live work and abort the
+   *      detector — `ready` is explicitly non-terminal even though
+   *      the engine sometimes uses it as a stepping-stone before
+   *      `running`.
+   *   3. The structural leaves of the workflow classify as one of
+   *      the two reasons (see {@link classifyStuckReason}). Any
+   *      mixed leaf set (coord + workers, or unknown) is a no-op —
+   *      a coord leaf at the frontier means the workflow still has
+   *      a driver and recovery would be redundant.
+   *   4. A most-recent terminal coord exists (the `of` pointer for
+   *      the retry's `metadata.retry`). For a workflow with at
+   *      least one terminal coord this always holds — by I4 a stuck
+   *      workflow has run at least the initial coord which has
+   *      since terminated.
+   *
+   * Concurrency: SQLite serializes writes, so a second tx attempting
+   * to insert a retry would observe the just-inserted not_started
+   * retry leaf and fail the "all terminal" check, returning
+   * `inserted: false`. No second retry is possible until the inserted
+   * one terminates.
+   *
+   * Returns the structured outcome rather than a bare boolean so the
+   * caller can dispatch the freshly inserted coord post-commit and
+   * surface the retry id to operator logs.
+   */
+  private checkStuckAndRecoverInTx(
+    tx: Db,
+    workflowId: string,
+    nowIso: string,
+  ): StuckRecoveryOutcome {
+    const wf = this.repo.readWorkflowTx(tx, workflowId);
+    if (wf === null || wf.status !== "running") return { inserted: false };
+
+    const allNodes = this.repo.listNodesByWorkflowTx(tx, workflowId);
+    if (allNodes.length === 0) return { inserted: false };
+    for (const n of allNodes) {
+      if (n.status === "not_started" || n.status === "ready" || n.status === "running") {
+        return { inserted: false };
+      }
+    }
+
+    const leaves = this.repo.listLeavesInTx(tx, workflowId);
+    const reason = classifyStuckReason(leaves);
+    if (reason === undefined) return { inserted: false };
+
+    const prevCoord = this.repo.findMostRecentCoordTerminalInTx(tx, workflowId);
+    if (prevCoord === null) return { inserted: false };
+
+    const prevAgent = (prevCoord.spec as { readonly agent?: unknown })?.agent;
+    if (typeof prevAgent !== "string" || prevAgent.length === 0) {
+      throw new WorkflowError(
+        `stuck-coord recovery: workflow "${workflowId}" prev coord "${prevCoord.id}" has no agent on spec`,
+      );
+    }
+
+    const prevRetry = extractNodeRetryMetadata(prevCoord.metadata);
+    const attempt = (prevRetry?.attempt ?? 0) + 1;
+
+    // Safety net: cap consecutive retry-coord chains. A well-behaved
+    // coord reads `metadata.retry` on wake and either makes forward
+    // progress (calls `add-subgraph` or `finish`) or fails the
+    // workflow; a coord that keeps exiting without action up to the
+    // cap is either buggy or running an agent that doesn't honor the
+    // retry contract. Once the cap trips we cannot leave the
+    // workflow `running` forever — that would silently consume a
+    // dispatch slot with no operator-visible failure. The detector
+    // transitions the workflow to `failed` with a structured
+    // {@link WorkflowFailure} (`kind: 'substrate'`, `reason:
+    // STUCK_RETRY_LIMIT`) inside this same tx so the terminal flip
+    // is atomic with the triggering mutation; the post-commit
+    // dispatch is a no-op (`inserted: false`).
+    //
+    // The cap is intentionally low — five gives a real coord enough
+    // headroom to recover from a transient validation error or
+    // missed inbox event but stops well before any operator-visible
+    // resource pressure shows up.
+    if (attempt > STUCK_RETRY_MAX_ATTEMPTS) {
+      const failure: WorkflowFailure = {
+        kind: "substrate",
+        reason: STUCK_RETRY_LIMIT,
+        message: `stuck-coord recovery cap (${STUCK_RETRY_LIMIT}): exceeded ${STUCK_RETRY_MAX_ATTEMPTS} consecutive retry attempts without forward progress`,
+      };
+      const flipped = this.repo.casUpdateWorkflowStatus(tx, {
+        id: workflowId,
+        fromStatus: "running",
+        toStatus: "failed",
+        endedAt: nowIso,
+        failureJson: JSON.stringify(failure),
+      });
+      this.logger.warn(
+        { workflowId, prevCoordId: prevCoord.id, attempt, reason, flipped },
+        "stuck-coord recovery: retry attempt cap reached; transitioning workflow to failed",
+      );
+      return { inserted: false };
+    }
+
+    const seen = new Set<string>();
+    const parentIds: string[] = [];
+    for (const id of [prevCoord.id, ...leaves.map((n) => n.id)]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      parentIds.push(id);
+    }
+
+    const retry: NodeRetryMetadata = { of: prevCoord.id, reason, attempt };
+    const { nodeId: retryNodeId } = this.insertCoordRetryNodeInTx(tx, {
+      workflowId,
+      parentIds,
+      agent: prevAgent,
+      retry,
+      nowIso,
+    });
+    this.logger.info(
+      { workflowId, retryNodeId, reason, attempt, ofCoord: prevCoord.id },
+      "stuck-coord recovery: inserted retry coord",
+    );
+    return { inserted: true, retryNodeId, reason, attempt };
+  }
+
+  /**
+   * Helper for the eight mutation primitives: after their tx commits,
+   * dispatch the retry coord (if one was inserted by the detector).
+   * Wrapped as a method so the call sites can stay one-liners and the
+   * compiler's narrowing-across-closures quirk for mutable union
+   * variables is sidestepped by a fresh parameter binding.
+   */
+  private async dispatchRetryIfInserted(outcome: StuckRecoveryOutcome): Promise<void> {
+    if (!outcome.inserted) return;
+    await this.dispatchAtomic(outcome.retryNodeId);
   }
 
   /**

@@ -34,6 +34,7 @@ export {
   OrphanCoordInsertError,
   ParentStateError,
   WorkflowAlreadyTerminalError,
+  WorkflowDagInvariantError,
   WorkflowEdgeCycleError,
   WorkflowEdgeNotFoundError,
   WorkflowEnumValueCorruptionError,
@@ -64,6 +65,9 @@ export {
 // ─── Re-exported types ──────────────────────────────────────────────
 export type {
   NodeKind,
+  NodeRetryMetadata,
+  RetryReason,
+  SubstrateFailureReason,
   WorkflowCancellation,
   WorkflowFailure,
   WorkflowNodeRunner,
@@ -88,6 +92,7 @@ export {
 } from "./validate.js";
 // ─── Entity classes ─────────────────────────────────────────────────
 export {
+  extractNodeRetryMetadata,
   WorkflowEdgeEntity,
   WorkflowEntity,
   WorkflowNodeEntity,
@@ -111,6 +116,8 @@ export {
   type RemoveEdgeArgs,
   type RemoveNodeArgs,
   type ReplaceNodeSpecArgs,
+  STUCK_RETRY_LIMIT,
+  STUCK_RETRY_MAX_ATTEMPTS,
   type WorkflowDagSnapshot,
   WorkflowService,
   type WorkflowServiceOpts,

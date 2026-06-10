@@ -153,18 +153,40 @@ export interface WorkflowSuccessWire {
 }
 
 /**
+ * Closed enum of substrate-detected workflow failure reasons.
+ * Carried on {@link WorkflowFailureWire} when `kind === 'substrate'`.
+ * Mirrors `SubstrateFailureReason` in `@emploke/workflow`.
+ *
+ *   - `STUCK_RETRY_LIMIT` — the stuck-coord detector reached the
+ *     maximum consecutive retry-coord attempts without the workflow
+ *     making forward progress; the substrate transitioned the
+ *     workflow to `failed` so the slot stops being held open.
+ */
+export type WorkflowSubstrateFailureReasonWire = "STUCK_RETRY_LIMIT";
+
+/**
  * Wire projection of a failed workflow's terminal payload.
- * Single-arm interface — `kind` retained as a discriminator so future
- * substrate-detected failure modes can be added without breaking the
- * wire shape.
+ * Discriminated on `kind`:
  *
  *   - `coordinator` — the coordinator explicitly called `/finish`
  *                     with `outcome: 'failed'` and a message.
+ *   - `substrate`   — an internal substrate safety net terminated
+ *                     the workflow. Carries a structured `reason`
+ *                     code in addition to the human-readable
+ *                     `message`. External wire callers can never
+ *                     construct this arm — the `/finish` route
+ *                     rejects anything but `kind: 'coordinator'`.
  */
-export type WorkflowFailureWire = {
-  readonly kind: "coordinator";
-  readonly message: string;
-};
+export type WorkflowFailureWire =
+  | {
+      readonly kind: "coordinator";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "substrate";
+      readonly reason: WorkflowSubstrateFailureReasonWire;
+      readonly message: string;
+    };
 
 /**
  * Wire projection of a cancelled workflow's terminal payload.
@@ -204,6 +226,15 @@ export interface WorkflowNodeWire {
    */
   readonly taskId?: string;
   readonly spec: WorkflowNodeWireSpec;
+  /**
+   * Free-form per-node metadata (always an object — defaults to
+   * `{}` if no entries). The substrate currently writes one
+   * key: `retry` with shape `{ of: string; reason: string;
+   * attempt: number }` when a node is a retry-coord inserted by
+   * the stuck-workflow detector. Other keys may be added by higher
+   * tiers; consumers should treat unknown keys as opaque.
+   */
+  readonly metadata: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
   readonly readyAt?: string;
   readonly runningAt?: string;

@@ -53,21 +53,48 @@ export interface WorkflowSuccess {
 }
 
 /**
- * Payload attached when a workflow transitions to `failed`. Set by
- * the coordinator's `finishWorkflow({outcome:'failed', failure})` call.
+ * Closed enum of substrate-detected failure reasons. Stored on
+ * {@link WorkflowFailure} when `kind === 'substrate'`. New reasons
+ * require a typed schema bump so every consumer can extend its
+ * rendering / coord-side handling explicitly.
  *
- * Single-arm interface — `kind` is retained as a discriminator so
- * future substrate-detected failure modes can be added without
- * breaking the wire shape.
- *
- *   - `coordinator` — the coordinator explicitly called failWorkflow.
- *
- * `message` is the human-readable summary the dashboard renders.
+ *   - `STUCK_RETRY_LIMIT` — the stuck-coord detector inserted
+ *     {@link STUCK_RETRY_MAX_ATTEMPTS} consecutive retry coords
+ *     without the workflow making forward progress; the substrate
+ *     gives up and transitions the workflow terminal so the slot
+ *     stops being held open. See
+ *     {@link WorkflowService.checkStuckAndRecoverInTx} for the
+ *     trigger.
  */
-export type WorkflowFailure = {
-  readonly kind: "coordinator";
-  readonly message: string;
-};
+export type SubstrateFailureReason = "STUCK_RETRY_LIMIT";
+
+/**
+ * Payload attached when a workflow transitions to `failed`.
+ *
+ * Discriminated on `kind`:
+ *
+ *   - `coordinator` — set by the coordinator's
+ *     `finishWorkflow({outcome:'failed', failure})` call. The
+ *     coordinator supplies the human-readable `message`.
+ *   - `substrate` — set by the substrate itself when an internal
+ *     safety net trips. Carries a {@link SubstrateFailureReason}
+ *     code plus a human-readable `message`; coord-side callers can
+ *     never construct this arm (external entry points reject
+ *     anything but `kind: 'coordinator'`).
+ *
+ * `message` is the human-readable summary the dashboard renders for
+ * both arms.
+ */
+export type WorkflowFailure =
+  | {
+      readonly kind: "coordinator";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "substrate";
+      readonly reason: SubstrateFailureReason;
+      readonly message: string;
+    };
 
 /**
  * Payload attached when a workflow transitions to `cancelled`. Set
@@ -122,6 +149,45 @@ export type WorkflowNodeStatus =
  * corruption / older-binary leftover row).
  */
 export type NodeKind = "coordinator" | "worker";
+
+// ─── Node metadata: retry-coord recovery ─────────────────────────────
+
+/**
+ * Closed enum of substrate-internal reasons the stuck-coord detector
+ * inserts a retry coordinator node. Stored on the retry coord's
+ * `metadata.retry.reason`. New reasons require a typed schema bump —
+ * the literal-union forces every coord-side prompt branch to handle
+ * the new case explicitly.
+ *
+ *   - `coord_exited_without_action` — the previous coord terminated
+ *     with no `add-subgraph` / `finish` call; the workflow's leaf
+ *     frontier collapsed to that lone terminal coord.
+ *   - `workers_finished_without_coord` — the previous coord planned
+ *     worker(s) but never planned a follow-up coord; all workers have
+ *     now terminated and no coord is at the leaf frontier.
+ */
+export type RetryReason = "coord_exited_without_action" | "workers_finished_without_coord";
+
+/**
+ * Shape persisted on a retry coord's `metadata.retry`. The block
+ * always exists in full when present; partial blocks (e.g. an `of`
+ * with no `reason`) are treated as absent by
+ * {@link extractNodeRetryMetadata}.
+ *
+ *   - `of` — id of the previous coord that failed to make forward
+ *     progress. NOT necessarily a structural parent in every case —
+ *     in `workers_finished_without_coord` the retry's structural
+ *     parents include both the failing coord AND the terminal workers.
+ *   - `reason` — see {@link RetryReason}.
+ *   - `attempt` — 1-based consecutive-retry counter (chains across
+ *     both reasons until a normally-terminated coord breaks the chain
+ *     by carrying no `metadata.retry` block).
+ */
+export type NodeRetryMetadata = {
+  readonly of: string;
+  readonly reason: RetryReason;
+  readonly attempt: number;
+};
 
 // ─── Derived-view helpers (NOT persisted) ───────────────────────────
 

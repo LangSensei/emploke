@@ -16,7 +16,7 @@ import {
   WorkflowSubgraphTempIdInvalidError,
   WorkflowSubgraphTempParentlessError,
 } from "./errors.js";
-import type { NodeKind, WorkflowNodeStatus } from "./types.js";
+import type { NodeKind, RetryReason, WorkflowNodeStatus } from "./types.js";
 import { WorkflowEntity, WorkflowNodeEntity } from "./workflow-entity.js";
 
 export const COORDINATOR_KIND: NodeKind = "coordinator";
@@ -59,6 +59,7 @@ export function nodeEntityFor(args: {
   readonly spec: unknown;
   readonly phase: number;
   readonly status: WorkflowNodeStatus;
+  readonly metadata?: Readonly<Record<string, unknown>>;
   readonly nowIso: string;
 }): WorkflowNodeEntity {
   return WorkflowNodeEntity.fromRow({
@@ -68,6 +69,7 @@ export function nodeEntityFor(args: {
     specJson: JSON.stringify(args.spec),
     phase: args.phase,
     status: args.status,
+    metadata: JSON.stringify(args.metadata ?? {}),
     createdAt: args.nowIso,
     readyAt: null,
     runningAt: null,
@@ -389,4 +391,56 @@ export function resolveSubgraphTopology(
     );
   }
   return order;
+}
+
+// ─── Stuck-coord recovery: pure leaf classifiers ────────────────────
+
+/**
+ * Pure classifier mapping a workflow's leaf-frontier shape to a
+ * substrate retry reason.
+ *
+ *   - `coord_exited_without_action` — exactly one leaf and it's the
+ *     terminal coord that just finished without inserting any new
+ *     work (the structural "leaves = {1 terminal coord}" snapshot is
+ *     the visible signature; the detector reaches this branch only
+ *     after first confirming the workflow has any history at all).
+ *   - `workers_finished_without_coord` — every leaf is a terminal
+ *     worker; the previous coord has already terminated upstream and
+ *     no follow-up coord was planned. The retry coord's `metadata.of`
+ *     points at the most-recent terminal coord (located by the
+ *     repository helper) because the workers themselves never carry
+ *     the "of" relationship.
+ *
+ * Returns `undefined` if the leaves don't fit either signature —
+ * caller must NOT retry in that state (the workflow either has live
+ * work, or already has a coord-kind leaf to drive the next step).
+ */
+export function classifyStuckReason(
+  leaves: readonly WorkflowNodeEntity[],
+): RetryReason | undefined {
+  if (leaves.length === 0) return undefined;
+  if (!leaves.every((n) => TERMINAL_NODE_STATUSES.has(n.status))) return undefined;
+  if (leaves.length === 1 && leaves[0]!.kind === COORDINATOR_KIND) {
+    return "coord_exited_without_action";
+  }
+  if (leaves.every((n) => n.kind === WORKER_KIND)) {
+    return "workers_finished_without_coord";
+  }
+  return undefined;
+}
+
+/**
+ * Computes the structural leaf frontier (nodes with `out_degree=0`)
+ * over a closed (nodes, edges) snapshot. Pure: caller owns the
+ * snapshot freshness. Used by `addSubgraph`'s commit-time
+ * {@link WorkflowDagInvariantError} gate after the batch is
+ * materialised.
+ */
+export function structuralLeaves(
+  nodes: readonly WorkflowNodeEntity[],
+  edges: readonly { readonly from: string; readonly to: string }[],
+): WorkflowNodeEntity[] {
+  const hasChild = new Set<string>();
+  for (const e of edges) hasChild.add(e.from);
+  return nodes.filter((n) => !hasChild.has(n.id));
 }

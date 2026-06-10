@@ -103,6 +103,53 @@ describe("WorkflowEntity — v2.2 terminal payload columns", () => {
       ).toThrow();
     });
 
+    it("round-trips substrate failure.kind + reason + message", () => {
+      const e = WorkflowEntity.fromRow(
+        rowBase({
+          status: "failed",
+          endedAt: NOW,
+          failure: JSON.stringify({
+            kind: "substrate",
+            reason: "STUCK_RETRY_LIMIT",
+            message: "cap tripped",
+          }),
+        }),
+      );
+      expect(e.failure).toEqual({
+        kind: "substrate",
+        reason: "STUCK_RETRY_LIMIT",
+        message: "cap tripped",
+      });
+    });
+
+    it("rejects substrate failure JSON with unknown reason", () => {
+      expect(() =>
+        WorkflowEntity.fromRow(
+          rowBase({
+            status: "failed",
+            endedAt: NOW,
+            failure: JSON.stringify({
+              kind: "substrate",
+              reason: "BOGUS_REASON",
+              message: "x",
+            }),
+          }),
+        ),
+      ).toThrow();
+    });
+
+    it("rejects substrate failure JSON missing the reason field", () => {
+      expect(() =>
+        WorkflowEntity.fromRow(
+          rowBase({
+            status: "failed",
+            endedAt: NOW,
+            failure: JSON.stringify({ kind: "substrate", message: "x" }),
+          }),
+        ),
+      ).toThrow();
+    });
+
     it("coerces legacy failure.kind 'coord' to 'coordinator' on read", () => {
       const e = WorkflowEntity.fromRow(
         rowBase({

@@ -420,6 +420,68 @@ export class WorkflowRepository {
     const row = tx.select().from(workflowNodes).where(eq(workflowNodes.id, id)).get();
     return row === undefined ? null : WorkflowNodeEntity.fromRow(row);
   }
+
+  // ─── Stuck-coord recovery helpers ─────────────────────────
+
+  /**
+   * Tx-aware enumeration of the workflow's structural leaves — nodes
+   * whose id never appears in any edge's `from_node_id` for this
+   * workflow. Computed via an outer-join NOT-IN subquery so the query
+   * stays single-trip and the substrate's small DAGs make the
+   * O(N+E) cost a non-concern.
+   *
+   * Order is `(created_at, id)` ascending so the detector's
+   * classifier sees a deterministic leaf list (the order isn't
+   * semantically meaningful but determinism keeps test reasoning
+   * tractable).
+   */
+  listLeavesInTx(tx: Db, workflowId: string): readonly WorkflowNodeEntity[] {
+    assertValidWorkflowId(workflowId);
+    const rows = tx
+      .select()
+      .from(workflowNodes)
+      .where(
+        and(
+          eq(workflowNodes.workflowId, workflowId),
+          sql`${workflowNodes.id} NOT IN (SELECT ${workflowEdges.fromNodeId} FROM ${workflowEdges} WHERE ${workflowEdges.workflowId} = ${workflowId})`,
+        ),
+      )
+      .orderBy(workflowNodes.createdAt, workflowNodes.id)
+      .all();
+    return rows.map((row) => WorkflowNodeEntity.fromRow(row));
+  }
+
+  /**
+   * Return the most-recent terminal coordinator-kind node for a
+   * workflow ordered by `(ended_at DESC, created_at DESC, id DESC)`.
+   * Used by the stuck-coord detector's
+   * `workers_finished_without_coord` branch where the previous coord
+   * has already terminated upstream of the worker leaves and the
+   * retry coord needs an `of` pointer.
+   *
+   * Returns `null` if no terminal coord exists (the workflow is
+   * either freshly created with only the bootstrap coord still
+   * running, or a corrupted state where the coord chain is entirely
+   * non-terminal — detector treats this as "not stuck").
+   */
+  findMostRecentCoordTerminalInTx(tx: Db, workflowId: string): WorkflowNodeEntity | null {
+    assertValidWorkflowId(workflowId);
+    const terminal: WorkflowNodeStatus[] = ["succeeded", "failed", "cancelled"];
+    const row = tx
+      .select()
+      .from(workflowNodes)
+      .where(
+        and(
+          eq(workflowNodes.workflowId, workflowId),
+          eq(workflowNodes.kind, "coordinator"),
+          inArray(workflowNodes.status, terminal as string[]),
+        ),
+      )
+      .orderBy(desc(workflowNodes.endedAt), desc(workflowNodes.createdAt), desc(workflowNodes.id))
+      .limit(1)
+      .get();
+    return row === undefined ? null : WorkflowNodeEntity.fromRow(row);
+  }
 }
 
 /**

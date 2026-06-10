@@ -82,6 +82,7 @@ describe("workflows schema", () => {
         "ended_at",
         "id",
         "kind",
+        "metadata",
         "phase",
         "ready_at",
         "running_at",
