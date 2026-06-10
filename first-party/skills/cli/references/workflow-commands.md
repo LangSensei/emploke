@@ -49,6 +49,10 @@ own playbook to keep the human-vs-orchestrator boundary explicit.
 ## `emploke workflow list`
 
 - Args: none
+- Optional flags:
+  - `--q <pattern>` — substring match on the workflow id (maps to the HTTP query slot `q`; escapes SQL `LIKE` metacharacters server-side)
+  - `--coordinator-agent <fqn>` — exact match on the workflow's denormalised `coordinator_agent` column (HTTP query: `coordinatorAgent`)
+  - `--created-since <iso>` — ISO 8601 lower bound (inclusive) on `created_at` (HTTP query: `createdSince`); same semantics as `task list --created-since`
 - Route: `GET /workspaces/:id/workflows`
 - Output (table): columns `id | brief | coordinatorAgent | status | createdAt`
 - Output (json): `WorkflowHeaderWire[]` — each element omits `iterationCount`
@@ -56,6 +60,12 @@ own playbook to keep the human-vs-orchestrator boundary explicit.
 
 ```sh
 emploke workflow list --json | jq '.[] | {id, status, coordinatorAgent}'
+
+# Narrow to one coordinator agent's recent runs:
+emploke workflow list \
+  --coordinator-agent emploke/coordinator \
+  --created-since     2026-06-01T00:00:00Z \
+  --json
 ```
 
 ---
