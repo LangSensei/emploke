@@ -14,7 +14,15 @@
  * live in the parent catalog package.
  */
 
-export { resolveDefaultAdoToken, tryGitCredentialFill } from "./ado-token.js";
+export {
+  type AdoCredential,
+  gitCredentialApprove,
+  gitCredentialReject,
+  invalidateAdoTokenCache,
+  type ResolvedAdoToken,
+  resolveDefaultAdoToken,
+  tryGitCredentialFill,
+} from "./ado-token.js";
 export { AzureDevOpsFetcher } from "./azure-devops-fetcher.js";
 export { FetchError, FetcherError, OriginParseError } from "./errors.js";
 export type { EntryFile, Fetcher } from "./fetcher.js";

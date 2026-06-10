@@ -1,100 +1,162 @@
 import { spawn } from "node:child_process";
+import { FetchError } from "./errors.js";
 
 /**
  * Default-token resolution for `AzureDevOpsFetcher`.
  *
- * Two-tier fallback chain (env var first, `git credential fill` second).
- * Designed so the common cases — CI pipelines with `SYSTEM_ACCESSTOKEN`
- * set, local dev with Git Credential Manager already configured — Just
- * Work without any new emploke configuration:
+ * Two-tier fallback chain — explicit env var first, then `git` credential
+ * helper. Designed so the common cases (CI with `SYSTEM_ACCESSTOKEN`, local
+ * dev with Git Credential Manager already configured) Just Work without any
+ * new emploke configuration:
  *
  *   1. `process.env.AZURE_DEVOPS_EXT_PAT ?? process.env.AZURE_DEVOPS_PAT
  *      ?? process.env.SYSTEM_ACCESSTOKEN` — explicit env always wins.
- *      `AZURE_DEVOPS_EXT_PAT` matches the official `az devops` /
- *      `azure-devops` CLI extension's documented env name, `AZURE_DEVOPS_PAT`
- *      is the secondary convention many internal tools use, and
- *      `SYSTEM_ACCESSTOKEN` is the auto-injected pipeline token in Azure
- *      Pipelines jobs.
+ *      Returned with `{ source: "env" }` so the caller can skip the
+ *      `approve`/`reject` round-trip (env tokens have no GCM entry).
  *   2. `git -c credential.useHttpPath=true credential fill` — invoked once
- *      per `(org, repo)` per {@link CACHE_TTL_MS}. Captures the token
- *      from the user's existing Git Credential Manager configuration
- *      (PAT, Azure AD JWT, MSAL cached identity, …) without requiring
- *      the user to copy-paste tokens into env vars. `useHttpPath=true`
- *      AND a `path=...` entry in the request body are BOTH required for
- *      `dev.azure.com` — without them GCM cannot determine the
- *      organization name. The flag is passed per-invocation via `git -c`
- *      so we don't depend on user-level git config.
+ *      per `(org, repo)` per {@link CACHE_TTL_MS}. The resolver runs a
+ *      **silent peek** first (`GCM_INTERACTIVE=Never` + `-c
+ *      credential.interactive=false`) so warm-cache calls produce no
+ *      sign-in popup AND no stderr noise. Only when the silent peek
+ *      returns nothing AND we detect an interactive TTY does the resolver
+ *      fall back to the real interactive fill (which is where a Microsoft
+ *      sign-in window may appear); in non-interactive environments the
+ *      cold-cache path fast-fails with an escape-hatch
+ *      {@link FetchError} instead of hanging on an invisible popup.
  *   3. `null` — caller emits an anonymous request. Public ADO repos are
- *      rare so this typically surfaces as a 401/403 from the upstream
- *      Items API, with a sensible error message.
+ *      rare, so this typically surfaces as a 401/403 from the upstream
+ *      Items API with a sensible error message.
  *
  * Why a process-wide cache keyed on `(org, repo)`: a deep dependency
- * closure can fan out to N item fetches; spawning `git` N times would
- * add ~100-200ms × N on Windows. The cache key includes `repo` because
- * GCM may have different cached credentials per repo, so caching only
- * by host would return the wrong cred. 60s is short enough that a
+ * closure can fan out to N item fetches; spawning `git` N times would add
+ * ~100-200ms × N on Windows. The cache key includes `repo` because GCM
+ * may have different cached credentials per repo, so caching only by host
+ * would return the wrong cred. 60s is short enough that a
  * `git credential reject` followed by a refresh is reflected within a
- * minute.
+ * minute. Stale entries are also explicitly invalidated by
+ * {@link invalidateAdoTokenCache} on 401/403 responses, so the next
+ * resolve always re-prompts GCM rather than reusing a known-bad token.
  *
- * Why we never throw: token resolution is best-effort. A `git` failure
- * (binary missing, GCM unconfigured, keyring locked, timeout) must not
- * cascade into "install impossible" — the request always falls through
- * to anonymous, and the upstream HTTP layer surfaces a sensible 401/403
- * if that turns out to be insufficient.
+ * Why an in-flight `PENDING` map: without it, N concurrent callers on a
+ * cold cache (the tree-fan-out case) would all bypass the cache check
+ * before the first resolve completes, each spawning `git credential fill`
+ * in parallel, each triggering its own GCM popup. The map collapses the
+ * fan-out to a single shared `Promise`. Combined with the tree-mode
+ * pre-warm in `AzureDevOpsFetcher.fetchTree`, this is belt-and-braces
+ * defence against the "8-popup storm" UX failure (see pitfall 21 in
+ * `design.md`).
+ *
+ * Why we never throw on `git` failures: token resolution is best-effort.
+ * A `git` failure (binary missing, GCM unconfigured, keyring locked,
+ * timeout) must not cascade into "install impossible" — the request
+ * always falls through to anonymous, and the upstream HTTP layer surfaces
+ * a sensible 401/403 if that turns out to be insufficient. The ONE
+ * exception is the non-interactive guard: when we detect we're running in
+ * a non-TTY / CI environment AND no env-var PAT is set AND silent peek
+ * found no cached cred, we throw {@link FetchError} with an escape-hatch
+ * message rather than fall through silently — because the alternative
+ * (proceeding to interactive fill) would hang forever waiting on an
+ * unrenderable sign-in popup.
  */
 
+/**
+ * Outcome of a successful credential resolve. `source: "env"` means the
+ * token came from one of the supported environment variables and has no
+ * associated GCM entry — callers MUST NOT call `gitCredentialApprove` /
+ * `gitCredentialReject` for env-var-sourced tokens (those helpers would
+ * either be no-ops or, worse, poison GCM's per-org cache with an env-var
+ * PAT). `source: "git-credential"` means the token came from `git
+ * credential fill`; the caller MUST run the matching `approve` on 2xx and
+ * `reject` (plus {@link invalidateAdoTokenCache}) on 401/403 to keep
+ * GCM's persistent cache in sync with the server's view of the token.
+ */
+export type ResolvedAdoToken =
+  | { readonly source: "env"; readonly token: string; readonly username?: undefined }
+  | { readonly source: "git-credential"; readonly token: string; readonly username: string };
+
+/** Raw `(username, password)` block parsed from `git credential fill`. */
+export interface AdoCredential {
+  readonly username: string;
+  readonly password: string;
+}
+
 interface CacheEntry {
-  readonly token: string | null;
+  readonly value: ResolvedAdoToken | null;
   readonly expiresAt: number;
 }
 
 const CACHE = new Map<string, CacheEntry>();
+const PENDING = new Map<string, Promise<ResolvedAdoToken | null>>();
 const CACHE_TTL_MS = 60_000;
 const SPAWN_TIMEOUT_MS = 5_000;
 
 /**
- * Run `git -c credential.useHttpPath=true credential fill` and return the
- * `password=` value from stdout if successful.
+ * `git -c credential.useHttpPath=true` is the baseline — the
+ * `useHttpPath=true` flag is what makes GCM include the request `path=`
+ * in its credential lookup key (without it, GCM throws "Cannot determine
+ * the organization name for this 'dev.azure.com' remote URL").
  *
- * Returns `null` (NEVER throws) on any failure mode:
- *   - `git` not installed (spawn ENOENT)
- *   - non-zero exit (GCM not configured, keyring locked, user cancelled, …)
- *   - timeout (`git` hangs > {@link SPAWN_TIMEOUT_MS}, e.g. GCM trying to
- *     pop an interactive auth window on a headless host)
- *   - stdout missing `password=...` line or with an empty value
- *
- * stdin is wired to `"pipe"` (not `"ignore"`) because GCM needs the
- * `protocol=`/`host=`/`path=` request body to determine which ADO
- * organisation it's authenticating against. We write the request, close
- * stdin, and rely on the 5s timeout + `stdio[2] = "ignore"` to keep GCM
- * from blocking on `/dev/tty` if it tries to prompt the user.
- *
- * The token is treated as OPAQUE — we deliberately do NOT pattern-match
- * the value (PATs and Azure AD JWTs have completely different shapes;
- * MSAL tokens may evolve). Empty-string passwords are the only thing
- * we reject.
+ * The silent-peek variant ADDS `-c credential.interactive=false`. Some
+ * helpers honour the git-config flag, others honour the `GCM_INTERACTIVE`
+ * env var — we pass BOTH so the silent peek survives differences across
+ * GCM versions / non-MS credential helpers.
  */
-export async function tryGitCredentialFill(org: string, repo: string): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
+const BASE_GIT_ARGS = ["-c", "credential.useHttpPath=true"] as const;
+const SILENT_GIT_ARGS = ["-c", "credential.interactive=false"] as const;
+const SILENT_ENV: Readonly<Record<string, string>> = { GCM_INTERACTIVE: "Never" };
+
+interface FillOptions {
+  /** When true, suppress the interactive popup — GCM exits non-zero
+   *  instead of opening the sign-in window if no cached cred is available. */
+  readonly silent?: boolean;
+}
+
+/**
+ * Spawn `git ... credential fill`, write the per-`(org, repo)` request to
+ * stdin, and parse `username=` / `password=` from stdout. Returns `null`
+ * (NEVER throws) on any failure mode (spawn ENOENT, non-zero exit,
+ * timeout, missing/empty `password=`). The `password=` is treated as
+ * OPAQUE — PATs and Azure AD JWTs look completely different so the
+ * resolver deliberately does NOT pattern-match the value.
+ *
+ * `stdio[2]` is `"ignore"` so any GCM stderr (which has historically
+ * leaked partial response bodies into log lines) NEVER reaches our error
+ * messages. `stdio[0]` MUST be `"pipe"` (not `"ignore"`) because we have
+ * to write the `protocol`/`host`/`path` request body — without it, GCM
+ * would hang waiting for the request on stdin.
+ */
+function runGitCredentialFill(
+  org: string,
+  repo: string,
+  opts: FillOptions = {},
+): Promise<AdoCredential | null> {
+  return new Promise<AdoCredential | null>((resolve) => {
     let settled = false;
-    const settle = (v: string | null): void => {
+    const settle = (v: AdoCredential | null): void => {
       if (settled) return;
       settled = true;
       resolve(v);
     };
 
+    const gitArgs: string[] = [...BASE_GIT_ARGS];
+    if (opts.silent) gitArgs.push(...SILENT_GIT_ARGS);
+    gitArgs.push("credential", "fill");
+
+    // The silent variant ALSO sets `GCM_INTERACTIVE=Never` in the spawn
+    // env (belt-and-braces with the `-c credential.interactive=false`
+    // git arg). We only override `env` when needed so the non-silent
+    // path inherits the parent env unchanged (Node defaults to inherit).
+    const spawnOpts: Parameters<typeof spawn>[2] = {
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    };
+    if (opts.silent) {
+      spawnOpts.env = { ...process.env, ...SILENT_ENV };
+    }
+
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("git", ["-c", "credential.useHttpPath=true", "credential", "fill"], {
-        // stdin: pipe — we MUST write the request body.
-        // stdout: pipe — read the credentials response.
-        // stderr: ignore — GCM may log warnings we don't care about, and
-        // any text echoed there must NEVER reach our error messages
-        // (token-leak guard: stderr from GCM has historically included
-        // partial response bodies).
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      });
+      child = spawn("git", gitArgs, spawnOpts);
     } catch {
       settle(null);
       return;
@@ -104,9 +166,8 @@ export async function tryGitCredentialFill(org: string, repo: string): Promise<s
       try {
         child.kill("SIGTERM");
       } catch {
-        // Ignore — the child may have already exited between the timer
-        // firing and reaching this line. The `close` listener below will
-        // settle if so.
+        // Child may already have exited between the timer firing and
+        // reaching this line. The `close` listener will settle.
       }
       settle(null);
     }, SPAWN_TIMEOUT_MS);
@@ -126,85 +187,356 @@ export async function tryGitCredentialFill(org: string, repo: string): Promise<s
         return;
       }
       // `git credential fill` emits one `key=value` per line, terminated
-      // by a blank line. We only care about `password=...`.
-      const lines = stdout.split(/\r?\n/);
+      // by a blank line. We care about `username=` (echoed for GCM's
+      // approve/reject round-trip) and `password=` (the actual token).
+      let username: string | null = null;
       let password: string | null = null;
-      for (const line of lines) {
-        if (line.startsWith("password=")) {
-          password = line.slice("password=".length);
-          break;
-        }
+      for (const line of stdout.split(/\r?\n/)) {
+        if (line.startsWith("username=")) username = line.slice("username=".length);
+        else if (line.startsWith("password=")) password = line.slice("password=".length);
       }
       if (password === null || password.length === 0) {
         settle(null);
         return;
       }
-      settle(password);
+      settle({ username: username ?? "", password });
     });
 
-    // Write the credential request. The `path=` entry is what makes
-    // GCM able to resolve the org-specific credential for dev.azure.com;
-    // without it GCM throws "Cannot determine the organization name".
     const stdin = child.stdin;
     if (stdin === null) {
-      // Spawned without a writable stdin — settle as null. The close
-      // listener will fire when the child exits.
+      // Spawned without a writable stdin — the `close` listener will
+      // settle when the child exits.
       return;
     }
+    // `path=<org>/_git/<repo>` is REQUIRED for GCM to resolve
+    // dev.azure.com credentials; without it GCM throws "Cannot determine
+    // the organization name". (See pitfall 1 in the design doc.)
     const request = `protocol=https\nhost=dev.azure.com\npath=${org}/_git/${repo}\n\n`;
     try {
       stdin.write(request, () => {
-        // Best-effort close; any error here is harmless because the close
-        // listener above will settle when the child exits or the timeout
-        // fires.
+        try {
+          stdin.end();
+        } catch {
+          // ignore — close listener handles settlement
+        }
+      });
+    } catch {
+      // stdin may have closed before the write landed; settle on close.
+    }
+  });
+}
+
+/**
+ * Public wrapper for the interactive variant of `git credential fill`.
+ * Kept exported (and structurally distinct from the silent peek) so tests
+ * can exercise the spawn/parse contract end-to-end without depending on
+ * the resolver's UX-detection logic.
+ *
+ * Returns `{ username, password } | null`. The username is essential for
+ * the {@link gitCredentialApprove} / {@link gitCredentialReject}
+ * round-trip — GCM keys per-credential entries on `(protocol, host,
+ * path, username)` and an approve/reject without the matching username
+ * is a silent no-op.
+ */
+export async function tryGitCredentialFill(
+  org: string,
+  repo: string,
+): Promise<AdoCredential | null> {
+  return runGitCredentialFill(org, repo, { silent: false });
+}
+
+/**
+ * Run `git -c credential.useHttpPath=true credential <approve|reject>`,
+ * echoing the full request block (including `username=` and `password=`)
+ * back to GCM so it can confirm or discard its cached credential.
+ *
+ * MUST NOT throw — these are best-effort hygiene calls that the main
+ * fetcher path fires-and-forgets after the HTTP response has already
+ * resolved. Any internal failure is surfaced via `process.emitWarning`
+ * with the matching `EMPLOKE_GCM_*` code and swallowed.
+ */
+function runGitCredentialConfirm(
+  action: "approve" | "reject",
+  org: string,
+  repo: string,
+  username: string,
+  password: string,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const warnCode =
+      action === "approve" ? "EMPLOKE_GCM_APPROVE_FAILED" : "EMPLOKE_GCM_REJECT_FAILED";
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const warn = (msg: string): void => {
+      try {
+        process.emitWarning(msg, { code: warnCode });
+      } catch {
+        // emitWarning is defensive — never let a logger problem propagate.
+      }
+    };
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("git", [...BASE_GIT_ARGS, "credential", action], {
+        stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
+      });
+    } catch (cause) {
+      warn(`git credential ${action} spawn failed: ${(cause as Error).message}`);
+      settle();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      warn(`git credential ${action} timed out after ${SPAWN_TIMEOUT_MS}ms`);
+      settle();
+    }, SPAWN_TIMEOUT_MS);
+
+    child.on("error", (cause: Error) => {
+      clearTimeout(timer);
+      warn(`git credential ${action} errored: ${cause.message}`);
+      settle();
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        warn(`git credential ${action} exited with code ${code ?? "unknown"}`);
+      }
+      settle();
+    });
+
+    const stdin = child.stdin;
+    if (stdin === null) {
+      warn(`git credential ${action} spawn produced no writable stdin`);
+      return;
+    }
+    // Echo back the full request block. GCM uses (protocol, host, path,
+    // username) as the cache key; omitting the username makes the
+    // approve/reject a no-op against the wrong cache entry. The blank
+    // line at the end terminates the request.
+    const request =
+      `protocol=https\nhost=dev.azure.com\npath=${org}/_git/${repo}\n` +
+      `username=${username}\npassword=${password}\n\n`;
+    try {
+      stdin.write(request, () => {
         try {
           stdin.end();
         } catch {
           // ignore
         }
       });
-    } catch {
-      // stdin may have closed before the write landed; settle on the
-      // close listener path.
+    } catch (cause) {
+      warn(`git credential ${action} stdin write failed: ${(cause as Error).message}`);
     }
   });
 }
 
 /**
- * Resolve the default Azure DevOps Services token for the given
- * `(org, repo)` pair. Implements the two-tier fallback chain documented
- * at the top of this file. Result is cached per `(org, repo)` for
- * {@link CACHE_TTL_MS} milliseconds. A `null` result is cached too —
- * critical for keeping a workspace with no GCM from spawning `git` once
- * per item fetch across a deep dependency graph.
+ * Confirm to GCM that the credential previously returned by `fill` was
+ * accepted by the server. Run after a 2xx response. NEVER throws — any
+ * failure is reported via `process.emitWarning({ code:
+ * "EMPLOKE_GCM_APPROVE_FAILED" })` and swallowed.
+ *
+ * Without this confirmation, GCM treats the credential as untrusted and
+ * does NOT persist it to OS-level credential storage (e.g. wincredman on
+ * Windows). The next cold-cache call then re-prompts the sign-in UI even
+ * though the user successfully authenticated moments earlier. See
+ * `design.md` §5.6 for the empirical evidence behind this behaviour.
+ */
+export async function gitCredentialApprove(
+  org: string,
+  repo: string,
+  username: string,
+  password: string,
+): Promise<void> {
+  await runGitCredentialConfirm("approve", org, repo, username, password);
+}
+
+/**
+ * Tell GCM that the credential previously returned by `fill` was rejected
+ * by the server (typically a 401/403 response). Forces GCM to discard
+ * the stale entry so the next `fill` call acquires a fresh credential.
+ * NEVER throws — any failure is reported via `process.emitWarning({ code:
+ * "EMPLOKE_GCM_REJECT_FAILED" })` and swallowed.
+ *
+ * The companion {@link invalidateAdoTokenCache} call clears the
+ * in-process 60s cache so the next {@link resolveDefaultAdoToken} call
+ * doesn't re-return the same stale token before GCM is re-prompted.
+ */
+export async function gitCredentialReject(
+  org: string,
+  repo: string,
+  username: string,
+  password: string,
+): Promise<void> {
+  await runGitCredentialConfirm("reject", org, repo, username, password);
+}
+
+/**
+ * Drop the in-process 60s cache entry for a single `(org, repo)` pair.
+ * Must be called alongside {@link gitCredentialReject} on a 401/403
+ * response, otherwise the next {@link resolveDefaultAdoToken} call would
+ * return the cached stale token before GCM gets a chance to issue a
+ * fresh one.
+ */
+export function invalidateAdoTokenCache(org: string, repo: string): void {
+  CACHE.delete(`${org}/${repo}`);
+}
+
+function readEnvToken(): string | undefined {
+  return (
+    process.env.AZURE_DEVOPS_EXT_PAT ??
+    process.env.AZURE_DEVOPS_PAT ??
+    process.env.SYSTEM_ACCESSTOKEN
+  );
+}
+
+/**
+ * Detect a non-interactive runtime where we MUST NOT attempt to open a
+ * sign-in popup. Returns `true` on:
+ *
+ *   - `process.stdin.isTTY !== true` — stdin is a pipe/file, not a real
+ *     terminal; the caller cannot click a popup. NB: `isTTY` is `true`
+ *     for terminals and `undefined` (NOT `false`) for non-terminals, so
+ *     the check is `!== true` rather than `=== false` to catch both.
+ *   - `process.env.CI === "true"` — most CI runners set this; even
+ *     environments that allocate a fake TTY (e.g. GitHub Actions) opt
+ *     out of interactive auth this way.
+ *   - `process.env.GLYPHS_NON_INTERACTIVE === "1"` — explicit opt-out
+ *     for users who want fail-fast behaviour even on a real TTY (e.g.
+ *     unattended scripts run from a terminal multiplexer).
+ */
+function isNonInteractive(): boolean {
+  if (process.env.GLYPHS_NON_INTERACTIVE === "1") return true;
+  if (process.env.CI === "true") return true;
+  if (process.stdin.isTTY !== true) return true;
+  return false;
+}
+
+/**
+ * The escape-hatch message used by the non-interactive guard. Includes
+ * both the env-var workaround (CI / automated) and the `git ls-remote`
+ * workaround (interactive but currently inside a non-TTY shell) so the
+ * user gets unambiguous remediation regardless of which environment
+ * tripped the guard.
+ */
+function escapeHatchMessage(org: string, repo: string): string {
+  return (
+    `ADO authentication required for dev.azure.com/${org}/${repo}.\n` +
+    `  Option 1 (CI / non-interactive): set environment variable AZURE_DEVOPS_PAT\n` +
+    `    with a Personal Access Token from\n` +
+    `    https://dev.azure.com/${org}/_usersSettings/tokens\n` +
+    `  Option 2 (interactive): run any git command against the repo first\n` +
+    `    (e.g. git ls-remote https://dev.azure.com/${org}/_git/${repo})\n` +
+    `    to seed the credential cache, then retry.`
+  );
+}
+
+/**
+ * Core silent-peek → maybe-interactive flow. Throws {@link FetchError}
+ * ONLY when we detect a non-interactive runtime with no cached cred and
+ * no env-var fallback (the alternative would hang on an invisible
+ * popup). Returns `null` on the interactive path if the user cancels the
+ * sign-in or `git` fails — caller falls through to anonymous in that case.
+ */
+async function doResolveWithGcm(org: string, repo: string): Promise<ResolvedAdoToken | null> {
+  // Silent peek first — succeeds quietly when GCM already has a cached
+  // credential, fails fast (non-zero exit) when it would otherwise pop
+  // the sign-in UI. This is what keeps warm-cache calls noise-free.
+  const silent = await runGitCredentialFill(org, repo, { silent: true });
+  if (silent !== null) {
+    return { source: "git-credential", token: silent.password, username: silent.username };
+  }
+  // Silent peek returned nothing — we'd have to go interactive to get a
+  // credential. If we can't, fail loud rather than hang.
+  if (isNonInteractive()) {
+    const uri = `https://dev.azure.com/${org}/_git/${repo}`;
+    throw new FetchError(uri, escapeHatchMessage(org, repo));
+  }
+  // On a real TTY: warn the user BEFORE the popup so they understand
+  // the source of the sign-in window that's about to appear.
+  process.stderr.write(
+    `[glyphs] Authenticating to dev.azure.com/${org} — a Microsoft sign-in window may appear...\n`,
+  );
+  const interactive = await runGitCredentialFill(org, repo, { silent: false });
+  if (interactive === null) return null;
+  return {
+    source: "git-credential",
+    token: interactive.password,
+    username: interactive.username,
+  };
+}
+
+/**
+ * Resolve the default Azure DevOps Services credential for `(org, repo)`.
+ * Implements the full chain documented at the top of this file:
+ * env-var → silent peek → (TTY ? interactive fill : escape-hatch throw).
  *
  * The env-var check is NOT cached: each call re-reads `process.env` so
  * that a long-lived host process picks up a mid-run env mutation
  * immediately. Only the (relatively expensive) `git credential fill`
- * invocation is cached.
+ * tier is cached.
+ *
+ * Concurrent callers for the same `(org, repo)` SHARE a single in-flight
+ * Promise via the `PENDING` map. Without this, a tree-fan-out worker
+ * pool would all hit the cold-cache resolve in parallel — each spawning
+ * its own `git credential fill` — and trigger N parallel GCM popups.
+ * Combined with the explicit pre-warm in
+ * {@link AzureDevOpsFetcher.fetchTree}, this guarantees at most one
+ * popup per tree install. (See pitfall 21 in `design.md`.)
  */
-export async function resolveDefaultAdoToken(org: string, repo: string): Promise<string | null> {
-  const env =
-    process.env.AZURE_DEVOPS_EXT_PAT ??
-    process.env.AZURE_DEVOPS_PAT ??
-    process.env.SYSTEM_ACCESSTOKEN;
-  if (env) return env;
+export async function resolveDefaultAdoToken(
+  org: string,
+  repo: string,
+): Promise<ResolvedAdoToken | null> {
+  const envToken = readEnvToken();
+  if (envToken !== undefined) return { source: "env", token: envToken };
 
   const cacheKey = `${org}/${repo}`;
   const now = Date.now();
   const cached = CACHE.get(cacheKey);
-  if (cached && cached.expiresAt > now) return cached.token;
+  if (cached && cached.expiresAt > now) return cached.value;
 
-  const token = await tryGitCredentialFill(org, repo);
-  CACHE.set(cacheKey, { token, expiresAt: now + CACHE_TTL_MS });
-  return token;
+  const inflight = PENDING.get(cacheKey);
+  if (inflight) return inflight;
+
+  // Snapshot the resolve in a single Promise that all concurrent callers
+  // for this cacheKey share. Cache on success (including a `null` result
+  // — negative caching is critical so a workspace with no GCM doesn't
+  // spawn `git` once per item across a deep dep graph), do NOT cache on
+  // throw (we want the next call to re-attempt rather than re-throw a
+  // stale error). The `finally` clears PENDING regardless so a thrown
+  // resolve doesn't permanently poison the slot.
+  const promise = (async (): Promise<ResolvedAdoToken | null> => {
+    try {
+      const result = await doResolveWithGcm(org, repo);
+      CACHE.set(cacheKey, { value: result, expiresAt: Date.now() + CACHE_TTL_MS });
+      return result;
+    } finally {
+      PENDING.delete(cacheKey);
+    }
+  })();
+
+  PENDING.set(cacheKey, promise);
+  return promise;
 }
 
 /**
- * Test-only: clear the per-(org, repo) cache between cases. Not exported
- * from the package index — tests reach into this module directly,
- * matching the `_resetGhTokenCache` pattern in `gh-token.ts`.
+ * Test-only: clear the per-(org, repo) cache AND the in-flight map
+ * between cases. Not exported from the package index — tests reach into
+ * this module directly, matching the `_resetGhTokenCache` pattern in
+ * `gh-token.ts`.
  */
 export function _resetAdoTokenCache(): void {
   CACHE.clear();
+  PENDING.clear();
 }

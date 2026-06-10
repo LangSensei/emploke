@@ -1,4 +1,10 @@
-import { resolveDefaultAdoToken } from "./ado-token.js";
+import {
+  gitCredentialApprove,
+  gitCredentialReject,
+  invalidateAdoTokenCache,
+  type ResolvedAdoToken,
+  resolveDefaultAdoToken,
+} from "./ado-token.js";
 import { FetchError } from "./errors.js";
 import type { EntryFile, Fetcher } from "./fetcher.js";
 import { parseOrigin } from "./origin.js";
@@ -34,15 +40,39 @@ import { parseOrigin } from "./origin.js";
  *    mirrors the single-file subpath branch in `GitHubFetcher` so
  *    consumers see the same `relPath` regardless of which transport ran.
  *
- * **Auth**: optional. The token is resolved via {@link resolveDefaultAdoToken}
- * which checks `AZURE_DEVOPS_EXT_PAT` → `AZURE_DEVOPS_PAT` →
- * `SYSTEM_ACCESSTOKEN` env vars first and then falls back to
- * `git -c credential.useHttpPath=true credential fill` (cached per
- * `(org, repo)` for 60s). When a token is present it is wrapped in a
- * `Basic` header — `Authorization: Basic base64(":" + token)`. **ALWAYS
- * Basic, never Bearer**: ADO's REST API accepts both PATs and Azure AD
- * JWTs through the same Basic-auth header (with an empty username),
- * which avoids needing to detect the token type at the auth layer.
+ * **Auth — three-step git credential helper protocol**. The token is
+ * resolved once (via {@link resolveDefaultAdoToken}) and the same
+ * {@link ResolvedAdoToken} is threaded through every HTTP request the
+ * fetcher makes for a single `fetchFile` / `fetchTree` invocation:
+ *
+ *   1. **`fill`** — `resolveDefaultAdoToken` runs `git credential fill`
+ *      (with a silent-peek first) to obtain the credential. Cached
+ *      per-`(org, repo)` for 60s in the in-process cache.
+ *   2. **HTTP request** with `Authorization: Basic base64(":" + token)`.
+ *      ALWAYS Basic, NEVER Bearer: ADO accepts both PATs and Azure AD
+ *      JWTs through the same Basic-with-empty-username form, so the
+ *      auth layer doesn't need to detect token type.
+ *   3. **`approve` on 2xx / `reject` on 401/403** — but ONLY when the
+ *      token came from `git credential fill` (`source ===
+ *      "git-credential"`). Env-var-sourced tokens have no GCM entry to
+ *      confirm/discard. Running `approve` after a successful response is
+ *      what makes GCM persist the credential to OS-level storage
+ *      (wincredman / keychain / libsecret); without it, GCM treats every
+ *      successful fill as untrusted and re-prompts on the next cold
+ *      cache. `reject` on 401/403 forces GCM to discard the stale entry,
+ *      paired with {@link invalidateAdoTokenCache} so the next resolve
+ *      doesn't re-return the same stale token from the in-process cache.
+ *      Both calls are fire-and-forget — they never throw, and they
+ *      never block the HTTP main path.
+ *
+ * **Tree-mode single resolve**: `fetchTree` resolves the credential
+ * EXACTLY ONCE before fanning out to the bounded worker pool. Workers
+ * receive the resolved `cred` and never re-call `resolveDefaultAdoToken`
+ * — otherwise N parallel workers on a cold-cache first run would each
+ * trigger a GCM popup (the "8-popup storm" UX failure). The
+ * `resolveDefaultAdoToken` resolver also dedupes concurrent callers
+ * internally via an in-flight Promise map, but the explicit pre-warm is
+ * belt-and-braces: it eliminates the race window regardless.
  *
  * **No ref pinning**: the origin grammar deliberately rejects `&version=`,
  * so every install reads from the repo's default branch at the time of
@@ -99,7 +129,11 @@ export class AzureDevOpsFetcher implements Fetcher {
       const relTrimmed = relPath.replace(/^\/+/, "");
       targetPath = `${subTrimmed}/${relTrimmed}`;
     }
-    return this.fetchItemRaw(uri, org, project, repo, targetPath);
+    // Resolve the credential ONCE per fetchFile call — `fetchItemRaw`
+    // takes the resolved cred so it can run the matching
+    // approve/reject after the HTTP response.
+    const cred = await resolveDefaultAdoToken(org, repo);
+    return this.fetchItemRaw(uri, org, project, repo, targetPath, cred);
   }
 
   async *fetchTree(uri: string): AsyncIterable<EntryFile> {
@@ -109,13 +143,20 @@ export class AzureDevOpsFetcher implements Fetcher {
     }
     const { org, project, repo, path: subPath } = origin;
 
-    const listing = await this.listTreeAt(uri, org, project, repo, subPath);
+    // Pre-warm: resolve the credential EXACTLY ONCE before fanning out
+    // to the parallel worker pool. Without this, N concurrent workers
+    // on a cold cache would each call `resolveDefaultAdoToken` and
+    // potentially trigger N GCM popups. The shared `cred` is threaded
+    // through every request below.
+    const cred = await resolveDefaultAdoToken(org, repo);
+
+    const listing = await this.listTreeAt(uri, org, project, repo, subPath, cred);
 
     // Empty listing → ADO treats `scopePath` as a single file rather
     // than a directory. Fall back to a direct file fetch and yield as
     // basename, matching `GitHubFetcher`'s single-file subpath branch.
     if (listing.length === 0) {
-      const content = await this.fetchItemRaw(uri, org, project, repo, subPath);
+      const content = await this.fetchItemRaw(uri, org, project, repo, subPath, cred);
       const slashIdx = subPath.lastIndexOf("/");
       const basename = slashIdx >= 0 ? subPath.slice(slashIdx + 1) : subPath;
       yield { relPath: basename, content };
@@ -142,6 +183,8 @@ export class AzureDevOpsFetcher implements Fetcher {
 
     // Bounded worker pool — collect-then-yield for stable order and clean
     // error short-circuit. Mirrors `GitHubFetcher.fetchTreeViaBlobs`.
+    // Workers share the pre-resolved `cred`: they do NOT call
+    // resolveDefaultAdoToken themselves.
     const results: EntryFile[] = new Array(planned.length);
     let cursor = 0;
     const worker = async (): Promise<void> => {
@@ -150,7 +193,7 @@ export class AzureDevOpsFetcher implements Fetcher {
         if (i >= planned.length) return;
         const job = planned[i];
         if (job === undefined) return;
-        const content = await this.fetchItemRaw(uri, org, project, repo, job.adoPath);
+        const content = await this.fetchItemRaw(uri, org, project, repo, job.adoPath, cred);
         results[i] = { relPath: job.relPath, content };
       }
     };
@@ -168,6 +211,10 @@ export class AzureDevOpsFetcher implements Fetcher {
    * keep only the fields we use. Empty `value` is a real ADO response (it
    * signals "scopePath is not a directory" rather than throwing 404) and
    * is propagated to the caller as `[]` for the single-file fallback.
+   *
+   * The caller passes in the pre-resolved `cred` so this method (and the
+   * sibling `fetchItemRaw`) can run the matching `approve` / `reject` on
+   * the response WITHOUT having to re-resolve.
    */
   private async listTreeAt(
     uri: string,
@@ -175,13 +222,14 @@ export class AzureDevOpsFetcher implements Fetcher {
     project: string,
     repo: string,
     scopePath: string,
+    cred: ResolvedAdoToken | null,
   ): Promise<TreeItem[]> {
     const url = this.itemsUrl(org, project, repo, [
       ["scopePath", scopePath],
       ["recursionLevel", "Full"],
       ["api-version", API_VERSION],
     ]);
-    const headers = await this.buildHeaders("application/json", org, repo);
+    const headers = this.buildHeadersFromCred("application/json", cred);
 
     let response: Response;
     try {
@@ -199,6 +247,7 @@ export class AzureDevOpsFetcher implements Fetcher {
       try {
         await response.text();
       } catch {}
+      this.maybeConfirmCred(response, cred, org, repo);
       throw new FetchError(
         uri,
         `Azure DevOps Items API returned ${response.status} ${response.statusText} for tree listing of "${scopePath}"`,
@@ -214,6 +263,7 @@ export class AzureDevOpsFetcher implements Fetcher {
         { cause },
       );
     }
+    this.maybeConfirmCred(response, cred, org, repo);
     const items: TreeItem[] = [];
     if (Array.isArray(json.value)) {
       for (const e of json.value) {
@@ -235,6 +285,10 @@ export class AzureDevOpsFetcher implements Fetcher {
    * with `Accept: application/octet-stream` returns the raw file bytes.
    * Same leak-guard pattern as {@link listTreeAt}: the response body is
    * never surfaced in the error message.
+   *
+   * Caller passes in the pre-resolved `cred` so this method can run the
+   * matching `approve` (on 2xx) / `reject` + invalidate (on 401/403)
+   * without having to re-resolve the credential.
    */
   private async fetchItemRaw(
     uri: string,
@@ -242,12 +296,13 @@ export class AzureDevOpsFetcher implements Fetcher {
     project: string,
     repo: string,
     path: string,
+    cred: ResolvedAdoToken | null,
   ): Promise<Buffer> {
     const url = this.itemsUrl(org, project, repo, [
       ["path", path],
       ["api-version", API_VERSION],
     ]);
-    const headers = await this.buildHeaders("application/octet-stream", org, repo);
+    const headers = this.buildHeadersFromCred("application/octet-stream", cred);
 
     let response: Response;
     try {
@@ -261,6 +316,7 @@ export class AzureDevOpsFetcher implements Fetcher {
       try {
         await response.text();
       } catch {}
+      this.maybeConfirmCred(response, cred, org, repo);
       throw new FetchError(
         uri,
         `Azure DevOps Items API returned ${response.status} ${response.statusText} for ${path}`,
@@ -270,7 +326,48 @@ export class AzureDevOpsFetcher implements Fetcher {
     if (buf.length > MAX_FILE_BYTES) {
       throw new FetchError(uri, `file exceeds ${MAX_FILE_BYTES}-byte cap`);
     }
+    this.maybeConfirmCred(response, cred, org, repo);
     return buf;
+  }
+
+  /**
+   * Run the matching three-step git credential helper action against the
+   * response status:
+   *
+   *   - 2xx → `gitCredentialApprove` (fire-and-forget)
+   *   - 401/403 → `gitCredentialReject` + `invalidateAdoTokenCache`
+   *     (both fire-and-forget — the reject is best-effort hygiene, the
+   *     cache invalidation is synchronous and never throws)
+   *   - any other status (404, 5xx, …) → no-op (the credential is still
+   *     valid; the wrong-path / server-side failure shouldn't poison
+   *     GCM's per-org cache)
+   *
+   * NEVER runs for `source: "env"` or anonymous (`cred === null`):
+   *
+   *   - env-var tokens have no GCM entry to confirm/discard; calling
+   *     approve with an env-var PAT would either be a silent no-op or
+   *     worse, store a PAT into GCM's per-org cache.
+   *   - anonymous calls trivially have nothing to confirm.
+   *
+   * The `void` discard on the returned promise is intentional —
+   * approve/reject never throw, and we don't want to block the main
+   * fetch path on a `git` round-trip that's only there for hygiene.
+   */
+  private maybeConfirmCred(
+    response: Response,
+    cred: ResolvedAdoToken | null,
+    org: string,
+    repo: string,
+  ): void {
+    if (cred === null || cred.source !== "git-credential") return;
+    if (response.ok) {
+      void gitCredentialApprove(org, repo, cred.username, cred.token);
+      return;
+    }
+    if (response.status === 401 || response.status === 403) {
+      void gitCredentialReject(org, repo, cred.username, cred.token);
+      invalidateAdoTokenCache(org, repo);
+    }
   }
 
   /**
@@ -298,7 +395,9 @@ export class AzureDevOpsFetcher implements Fetcher {
   }
 
   /**
-   * Build the standard request headers used across every Items API call.
+   * Build the standard request headers given a pre-resolved credential.
+   * Kept synchronous and free of I/O so the same `cred` can be reused
+   * across every request in a `fetchTree` fan-out without re-resolving.
    *
    * `Authorization: Basic base64(":" + token)` works for both PATs and
    * Azure AD JWTs — ADO accepts the same Basic-with-empty-username form
@@ -310,18 +409,16 @@ export class AzureDevOpsFetcher implements Fetcher {
    * configured, which is the dominant case for Microsoft-internal ADO
    * workflows.
    */
-  private async buildHeaders(
+  private buildHeadersFromCred(
     accept: string,
-    org: string,
-    repo: string,
-  ): Promise<Record<string, string>> {
+    cred: ResolvedAdoToken | null,
+  ): Record<string, string> {
     const headers: Record<string, string> = {
       "User-Agent": "emploke-catalog",
       Accept: accept,
     };
-    const token = await resolveDefaultAdoToken(org, repo);
-    if (token) {
-      const b64 = Buffer.from(`:${token}`, "utf8").toString("base64");
+    if (cred !== null) {
+      const b64 = Buffer.from(`:${cred.token}`, "utf8").toString("base64");
       headers.Authorization = `Basic ${b64}`;
     }
     return headers;
