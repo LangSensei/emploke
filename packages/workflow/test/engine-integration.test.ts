@@ -64,6 +64,15 @@ interface RecordingRunner extends WorkflowNodeRunner {
 function makeAutoSucceedRunner(label: string): RecordingRunner {
   const dispatchCalls: Array<{ workflowId: string; nodeId: string }> = [];
   const cancelCalls: string[] = [];
+  // Track per-workflow first-dispatch. Only the first dispatch for a
+  // given workflow auto-succeeds; subsequent dispatches (which the
+  // substrate's stuck-coord detector inserts as retry coords when a
+  // coord exits without making forward progress) are recorded but
+  // left in `running`. Without this guard, every auto-success would
+  // trigger another retry coord, which would auto-succeed, ad
+  // infinitum — a microtask-driven loop that would deadlock vitest's
+  // setTimeout-based test timeout.
+  const autoSucceededWorkflows = new Set<string>();
   let seq = 0;
   let dispatchFn: (opts: {
     readonly workflowId: string;
@@ -95,6 +104,16 @@ function makeAutoSucceedRunner(label: string): RecordingRunner {
     },
     async dispatch(opts) {
       dispatchCalls.push({ workflowId: opts.workflowId, nodeId: opts.nodeId });
+      // Per-workflow first-dispatch gate (enforced HERE, before
+      // delegating to dispatchFn, so that test-overridden dispatch
+      // functions installed via setDispatch don't have to re-implement
+      // it). Subsequent dispatches for a workflow whose coord already
+      // auto-succeeded once are recorded but left in `running` —
+      // see the autoSucceededWorkflows comment above.
+      if (autoSucceededWorkflows.has(opts.workflowId)) {
+        return;
+      }
+      autoSucceededWorkflows.add(opts.workflowId);
       return dispatchFn(opts);
     },
     async hasInFlightForNode(_nodeId) {
@@ -206,7 +225,12 @@ describe("WorkflowEngine integration", () => {
       "worker becomes succeeded",
     );
 
-    expect(h.coord.dispatchCalls.length).toBe(1);
+    // The initial coord auto-succeeded (1 dispatch); the substrate's
+    // stuck-coord detector then inserted a retry coord (the leaf
+    // frontier collapsed to the terminal initial coord), which the
+    // engine dispatched (2nd dispatch) but which the test runner
+    // left running. The worker is a single dispatch.
+    expect(h.coord.dispatchCalls.length).toBe(2);
     expect(h.worker.dispatchCalls.length).toBe(1);
   });
 

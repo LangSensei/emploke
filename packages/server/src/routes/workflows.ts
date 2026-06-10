@@ -21,6 +21,7 @@
  *
  *   - `GET    /`                          — list workflows; `?status=` narrows
  *   - `POST   /`                          — seed a workflow + its initial coord
+ *   - `POST   /recover-stuck`             — recover a stuck workflow or all (admin)
  *   - `GET    /:wfid`                     — header only (with `iterationCount`)
  *   - `GET    /:wfid/dag`                 — full snapshot (header + nodes + edges) with taskId enrichment
  *   - `POST   /:wfid/cancel`              — external cancel; returns updated header
@@ -85,6 +86,8 @@ import type {
   CreateWorkflowBody,
   FinishWorkflowBody,
   NodeRefWire,
+  RecoverStuckResponse,
+  RecoverStuckResultWire,
   ReplaceNodeSpecBody,
   WorkflowArtifactsResponse,
   WorkflowArtifactWire,
@@ -480,6 +483,44 @@ function validateCancelWorkflowBody(raw: unknown): ValidationResult<ValidatedCan
 }
 
 /**
+ * Validate the body of `POST /workspaces/:id/workflows/recover-stuck`.
+ * Exactly one of `workflowId` (single-workflow recovery) or `all: true`
+ * (sweep all running workflows) MUST be present. The substrate's
+ * downstream validators re-check that `workflowId` is well-formed; the
+ * boundary check here only enforces presence + type.
+ */
+function validateRecoverStuckBody(
+  raw: unknown,
+): ValidationResult<{ readonly workflowId?: string; readonly all?: boolean }> {
+  if (!isPlainObject(raw)) return { ok: false, error: "request body must be an object" };
+  for (const k of Object.keys(raw)) {
+    if (k !== "workflowId" && k !== "all") {
+      return { ok: false, error: `unknown key "${k}" in body` };
+    }
+  }
+  const workflowId = raw.workflowId;
+  const all = raw.all;
+  if (workflowId !== undefined && typeof workflowId !== "string") {
+    return { ok: false, error: "workflowId must be a string when supplied" };
+  }
+  if (all !== undefined && typeof all !== "boolean") {
+    return { ok: false, error: "all must be a boolean when supplied" };
+  }
+  const hasWorkflowId = typeof workflowId === "string" && workflowId !== "";
+  const hasAll = all === true;
+  if (hasWorkflowId === hasAll) {
+    return {
+      ok: false,
+      error: "exactly one of { workflowId } or { all: true } must be supplied",
+    };
+  }
+  return {
+    ok: true,
+    value: hasAll ? { all: true } : { workflowId: workflowId as string },
+  };
+}
+
+/**
  * Translate the wire-shape {@link NodeRefWire} (structural-discriminator
  * union by `nodeId` vs `tempId` presence) to the substrate's
  * {@link NodeRef} (explicit-tag union). The wire form is JSON-friendly
@@ -563,6 +604,52 @@ export function workflowsRoutes(
       return respondError(c, err, {
         route: "workflows.create",
         policy: workflowsErrorPolicy,
+      });
+    }
+  });
+
+  // ── POST /recover-stuck — admin recovery sweep ───────────────────
+  // Body shape: `{ workflowId }` (single) or `{ all: true }` (sweep).
+  // The substrate's `recoverStuck` / `recoverStuckAll` are idempotent
+  // — a non-stuck workflow returns `inserted: false` without writes.
+  // Registered BEFORE the `/:wfid/...` routes so the literal path
+  // segment is matched without Hono routing it to the parametric
+  // handler.
+  app.post("/recover-stuck", async (c) => {
+    const parsed = await parseJsonBody(c);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const validated = validateRecoverStuckBody(parsed.body);
+    if (!validated.ok) return c.json({ error: validated.error }, 400);
+    const body = validated.value;
+    try {
+      const substrateResults =
+        body.all === true
+          ? await resolve(c).recoverStuckAll()
+          : [await resolve(c).recoverStuck(body.workflowId as string)];
+      const results: readonly RecoverStuckResultWire[] = substrateResults.map((r) =>
+        r.inserted
+          ? {
+              workflowId: r.workflowId,
+              inserted: true,
+              retryNodeId: r.retryNodeId,
+              reason: r.reason,
+              attempt: r.attempt,
+            }
+          : { workflowId: r.workflowId, inserted: false },
+      );
+      const inserted = results.filter((r) => r.inserted).length;
+      logEvent(c, "workflow.recoverStuck", {
+        mode: body.all === true ? "all" : "one",
+        scanned: results.length,
+        inserted,
+      });
+      const response: RecoverStuckResponse = { results };
+      return c.json(response);
+    } catch (err) {
+      return respondError(c, err, {
+        route: "workflows.recoverStuck",
+        policy: workflowsErrorPolicy,
+        meta: body.all === true ? { mode: "all" } : { mode: "one", workflowId: body.workflowId },
       });
     }
   });

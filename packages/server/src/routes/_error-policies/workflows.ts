@@ -58,6 +58,7 @@ import {
   OrphanCoordInsertError,
   ParentStateError,
   WorkflowAlreadyTerminalError,
+  WorkflowDagInvariantError,
   WorkflowEdgeCycleError,
   WorkflowEdgeNotFoundError,
   WorkflowEnumValueCorruptionError,
@@ -149,6 +150,12 @@ export const workflowsErrorPolicy: ErrorPolicy = {
     [WorkflowRemoveEdgeOrphansChildError, 409],
     [WorkflowSubgraphCyclicError, 409],
     [WorkflowSubgraphMultipleCoordTempsError, 409],
+    // §3 leaf-frontier invariant — `addSubgraph` batch produced 0,
+    // 2+, or worker-only leaves. Caller observed a stale DAG state
+    // and submitted a batch that would have left the workflow
+    // structurally stuck. 409 because it's a state-conflict against
+    // the substrate's well-formedness rules.
+    [WorkflowDagInvariantError, 409],
 
     // Task-package surface — reachable from worker-kind handler
     // dispatch paths surfaced via the DAG-mutation routes. Listed

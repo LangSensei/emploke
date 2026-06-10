@@ -204,6 +204,15 @@ export interface WorkflowNodeWire {
    */
   readonly taskId?: string;
   readonly spec: WorkflowNodeWireSpec;
+  /**
+   * Free-form per-node metadata (always an object — defaults to
+   * `{}` if no entries). The substrate currently writes one
+   * key: `retry` (see `RetryRecord` below) when a node is a
+   * retry-coord inserted by the stuck-workflow detector. Other
+   * keys may be added by higher tiers; consumers should treat
+   * unknown keys as opaque.
+   */
+  readonly metadata: Readonly<Record<string, unknown>>;
   readonly createdAt: string;
   readonly readyAt?: string;
   readonly runningAt?: string;
@@ -495,4 +504,60 @@ export type WorkflowArtifactWire =
  */
 export interface WorkflowArtifactsResponse {
   readonly artifacts: readonly WorkflowArtifactWire[];
+}
+
+/**
+ * Classifier output for why the substrate considered a workflow
+ * stuck — surfaced verbatim in the wire {@link RecoverStuckResultWire}
+ * so admin tooling can render meaningful explanations. Mirrors
+ * `RetryReason` in `@emploke/workflow`; kept as a literal-union here
+ * so this pkg has no runtime dep on the substrate.
+ *
+ *   - `coord_exited_without_action` — the prev coord terminated and
+ *     all leaves are coord-kind (it produced no successor children).
+ *   - `workers_finished_without_coord` — the prev coord terminated,
+ *     workers ran to completion, but no coord successor was added.
+ */
+export type WorkflowRetryReasonWire =
+  | "coord_exited_without_action"
+  | "workers_finished_without_coord";
+
+/**
+ * Request body for `POST /workspaces/:id/workflows/recover-stuck`.
+ * Exactly one of `workflowId` (single-workflow recovery) or `all`
+ * (sweep all running workflows) MUST be present.
+ */
+export type RecoverStuckBody =
+  | { readonly workflowId: string; readonly all?: false }
+  | { readonly all: true; readonly workflowId?: undefined };
+
+/**
+ * Wire projection of one substrate recover-stuck outcome. Mirrors
+ * `RecoverStuckResult` in `@emploke/workflow`. Discriminated by
+ * `inserted`: when `false` the workflow was not stuck (or had no
+ * recoverable leaf frontier); when `true` the substrate inserted a
+ * retry coord and the response carries its id + classifier output.
+ */
+export type RecoverStuckResultWire =
+  | {
+      readonly workflowId: string;
+      readonly inserted: false;
+    }
+  | {
+      readonly workflowId: string;
+      readonly inserted: true;
+      readonly retryNodeId: string;
+      readonly reason: WorkflowRetryReasonWire;
+      readonly attempt: number;
+    };
+
+/**
+ * Wire response shape for `POST /workspaces/:id/workflows/recover-stuck`.
+ * Always a list — single-workflow mode returns one entry, sweep mode
+ * returns one entry per running workflow scanned (including the
+ * no-op `inserted: false` entries so callers can confirm the sweep
+ * ran).
+ */
+export interface RecoverStuckResponse {
+  readonly results: readonly RecoverStuckResultWire[];
 }

@@ -10,6 +10,7 @@ function makeNode(overrides: Partial<WorkflowNodeWire> = {}): WorkflowNodeWire {
     status: "running",
     phase: 0,
     spec: { kind: "worker", agent: "emploke/dev", brief: "default brief" },
+    metadata: {},
     createdAt: "2026-05-28T00:00:00.000Z",
     ...overrides,
   };
@@ -98,12 +99,14 @@ describe("WorkflowDagView — phase grouping", () => {
           makeNode({
             id: "n-later",
             phase: 0,
+            metadata: {},
             createdAt: "2026-05-28T00:02:00.000Z",
             spec: { kind: "worker", agent: "emploke/dev", brief: "later" },
           }),
           makeNode({
             id: "n-earlier",
             phase: 0,
+            metadata: {},
             createdAt: "2026-05-28T00:01:00.000Z",
             spec: { kind: "worker", agent: "emploke/dev", brief: "earlier" },
           }),
@@ -356,6 +359,7 @@ describe("WorkflowDagView — Mode B node activation (spec v2.1)", () => {
           makeNode({
             id: "n-b",
             phase: 0,
+            metadata: {},
             createdAt: "2026-05-28T00:01:00.000Z",
             taskId: "task-b",
             spec: { kind: "worker", agent: "emploke/dev", brief: "b" },

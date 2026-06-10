@@ -51,6 +51,7 @@ function makeNode(
     specJson: JSON.stringify(over?.spec ?? { agent: "agent-1" }),
     phase: over?.phase ?? 0,
     status: over?.status ?? "not_started",
+    metadata: "{}",
     createdAt: NOW,
     readyAt: null,
     runningAt: null,

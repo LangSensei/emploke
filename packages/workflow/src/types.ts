@@ -123,6 +123,45 @@ export type WorkflowNodeStatus =
  */
 export type NodeKind = "coordinator" | "worker";
 
+// ─── Node metadata: retry-coord recovery ─────────────────────────────
+
+/**
+ * Closed enum of substrate-internal reasons the stuck-coord detector
+ * inserts a retry coordinator node. Stored on the retry coord's
+ * `metadata.retry.reason`. New reasons require a typed schema bump —
+ * the literal-union forces every coord-side prompt branch to handle
+ * the new case explicitly.
+ *
+ *   - `coord_exited_without_action` — the previous coord terminated
+ *     with no `add-subgraph` / `finish` call; the workflow's leaf
+ *     frontier collapsed to that lone terminal coord.
+ *   - `workers_finished_without_coord` — the previous coord planned
+ *     worker(s) but never planned a follow-up coord; all workers have
+ *     now terminated and no coord is at the leaf frontier.
+ */
+export type RetryReason = "coord_exited_without_action" | "workers_finished_without_coord";
+
+/**
+ * Shape persisted on a retry coord's `metadata.retry`. The block
+ * always exists in full when present; partial blocks (e.g. an `of`
+ * with no `reason`) are treated as absent by
+ * {@link extractNodeRetryMetadata}.
+ *
+ *   - `of` — id of the previous coord that failed to make forward
+ *     progress. NOT necessarily a structural parent in every case —
+ *     in `workers_finished_without_coord` the retry's structural
+ *     parents include both the failing coord AND the terminal workers.
+ *   - `reason` — see {@link RetryReason}.
+ *   - `attempt` — 1-based consecutive-retry counter (chains across
+ *     both reasons until a normally-terminated coord breaks the chain
+ *     by carrying no `metadata.retry` block).
+ */
+export type NodeRetryMetadata = {
+  readonly of: string;
+  readonly reason: RetryReason;
+  readonly attempt: number;
+};
+
 // ─── Derived-view helpers (NOT persisted) ───────────────────────────
 
 /**

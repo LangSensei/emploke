@@ -36,6 +36,8 @@ import type {
 } from "./schema.js";
 import type {
   NodeKind,
+  NodeRetryMetadata,
+  RetryReason,
   WorkflowCancellation,
   WorkflowFailure,
   WorkflowNodeSpecEnvelope,
@@ -213,6 +215,7 @@ export class WorkflowNodeEntity {
     readonly spec: unknown,
     readonly phase: number,
     readonly status: WorkflowNodeStatus,
+    readonly metadata: Readonly<Record<string, unknown>>,
     readonly createdAt: string,
     readonly readyAt: string | undefined,
     readonly runningAt: string | undefined,
@@ -229,6 +232,10 @@ export class WorkflowNodeEntity {
    *   - `WorkflowNodeKindShapeError` if `kind` is not a known
    *     `NodeKind` (defensive guard against schema corruption).
    *   - `WorkflowError` if `spec_json` is not valid JSON.
+   *   - `WorkflowError` if `metadata` is not a valid JSON object
+   *     (the column was added with the stuck-coord-recovery work; the
+   *     parser mirrors the workflow-header `parseMetadataJson` but
+   *     emits node-specific error text).
    */
   static fromRow(row: WorkflowNodeRow): WorkflowNodeEntity {
     assertValidWorkflowNodeId(row.id);
@@ -236,6 +243,7 @@ export class WorkflowNodeEntity {
     assertValidWorkflowNodeKind(row.kind);
     assertValidWorkflowNodeStatusEnum(row.status);
     const spec = parseSpecJson(row.id, row.specJson);
+    const metadata = parseNodeMetadataJson(row.id, row.metadata);
     return new WorkflowNodeEntity(
       row.id,
       row.workflowId,
@@ -243,6 +251,7 @@ export class WorkflowNodeEntity {
       spec,
       row.phase,
       row.status,
+      metadata,
       row.createdAt,
       row.readyAt ?? undefined,
       row.runningAt ?? undefined,
@@ -264,6 +273,7 @@ export class WorkflowNodeEntity {
       specJson: JSON.stringify(this.spec),
       phase: this.phase,
       status: this.status,
+      metadata: JSON.stringify(this.metadata),
       createdAt: this.createdAt,
       readyAt: this.readyAt ?? null,
       runningAt: this.runningAt ?? null,
@@ -329,6 +339,57 @@ function parseSpecJson(nodeId: string, raw: string): unknown {
       `Workflow node "${nodeId}" corrupted: spec_json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Node-side analogue of {@link parseMetadataJson}. Same JSON-object
+ * contract — the column defaults to `"{}"` so a hand-edited or
+ * legacy row that smuggles in a non-object literal is rejected at
+ * read time. Kept separate from the workflow-header parser because
+ * its error messages hardcode `Workflow "..."` and clients debugging
+ * a corrupted node row are better served by `Workflow node "..."`.
+ */
+function parseNodeMetadataJson(nodeId: string, raw: string): Readonly<Record<string, unknown>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new WorkflowError(
+      `Workflow node "${nodeId}" corrupted: metadata is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new WorkflowError(
+      `Workflow node "${nodeId}" corrupted: metadata must be a JSON object, got ${typeof parsed}`,
+    );
+  }
+  return Object.freeze({ ...(parsed as Record<string, unknown>) });
+}
+
+/**
+ * Type-guard accessor for the stuck-coord-recovery retry block on a
+ * node's `metadata`. Returns `undefined` for any malformed shape
+ * rather than throwing — defense in depth for forward-compatible
+ * metadata. Callers that observe `undefined` should treat the node
+ * as a fresh (non-retry) coord; the `attempt` counter restart
+ * semantics live on the detector, not here.
+ */
+const RETRY_REASONS: ReadonlySet<RetryReason> = new Set<RetryReason>([
+  "coord_exited_without_action",
+  "workers_finished_without_coord",
+]);
+
+export function extractNodeRetryMetadata(
+  meta: Readonly<Record<string, unknown>>,
+): NodeRetryMetadata | undefined {
+  const retry = meta.retry;
+  if (retry === null || typeof retry !== "object" || Array.isArray(retry)) return undefined;
+  const r = retry as Record<string, unknown>;
+  const { of, reason, attempt } = r;
+  if (typeof of !== "string" || of.length === 0) return undefined;
+  if (typeof reason !== "string" || !RETRY_REASONS.has(reason as RetryReason)) return undefined;
+  if (typeof attempt !== "number" || !Number.isInteger(attempt) || attempt < 1) return undefined;
+  return { of, reason: reason as RetryReason, attempt };
 }
 
 /**

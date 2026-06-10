@@ -24,6 +24,14 @@ export const MIGRATIONS: readonly MigrationMeta[] = [
     folderMillis: 1,
     hash: "3ce054a4c9d068bbc43906a7390ff7a4a95966e954951b3fb6e1fe0352d89c95",
   },
+  {
+    sql: [
+      "ALTER TABLE `workflow_nodes` ADD `metadata` text DEFAULT '{}' NOT NULL;"
+    ],
+    bps: true,
+    folderMillis: 2,
+    hash: "13000ce98cc3e4ca0edb012b7c26dc89a424d0bd4baeeff39e17b0fa0f6dfb2a",
+  },
 ];
 
 /**

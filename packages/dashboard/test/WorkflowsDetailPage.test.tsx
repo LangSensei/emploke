@@ -56,6 +56,7 @@ function makeDag(wf: WorkflowHeaderWire): WorkflowDagWire {
         status: wf.status === "running" ? "running" : "succeeded",
         phase: 0,
         spec: { kind: "coordinator", agent: wf.coordinatorAgent },
+        metadata: {},
         createdAt: wf.createdAt,
         readyAt: wf.createdAt,
         runningAt: wf.createdAt,
@@ -111,6 +112,7 @@ describe("WorkflowsPage — detail header", () => {
           status: "running",
           phase: 0,
           spec: { kind: "coordinator", agent: wf.coordinatorAgent },
+          metadata: {},
           createdAt: wf.createdAt,
         },
         {
@@ -119,6 +121,7 @@ describe("WorkflowsPage — detail header", () => {
           status: "running",
           phase: 1,
           spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
+          metadata: {},
           createdAt: wf.createdAt,
         },
       ],

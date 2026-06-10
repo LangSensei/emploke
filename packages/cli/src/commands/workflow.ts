@@ -77,6 +77,8 @@ import type {
   CancelWorkflowBody,
   CreateWorkflowBody,
   FinishWorkflowBody,
+  RecoverStuckBody,
+  RecoverStuckResponse,
   ReplaceNodeSpecBody,
   WorkflowHeaderWire,
   WorkflowNodeKindWire,
@@ -764,6 +766,51 @@ export async function workflowFinish(opts: WorkflowFinishOpts): Promise<CommandR
       exitCode: 0,
       stdout: `workflow ${opts.wfid} finished as ${opts.outcome}\n${renderHeader(updated, opts)}`,
     };
+  } catch (err) {
+    return formatError(err);
+  }
+}
+
+// ─── recover-stuck ─────────────────────────────────────────────────────
+export interface WorkflowRecoverStuckOpts extends CommonFlags {
+  /** Recover a single workflow if it's stuck. */
+  readonly wfid?: string;
+  /** Sweep all running workflows; recover any that are stuck. */
+  readonly all?: boolean;
+}
+
+export async function workflowRecoverStuck(opts: WorkflowRecoverStuckOpts): Promise<CommandResult> {
+  const hasWfid = typeof opts.wfid === "string" && opts.wfid.trim() !== "";
+  const hasAll = opts.all === true;
+  if (hasWfid === hasAll) {
+    return {
+      exitCode: 2,
+      stderr: "exactly one of --wfid <id> or --all must be supplied\n",
+    };
+  }
+  const client = await makeClient(opts);
+  try {
+    const id = await resolveWorkspace(opts);
+    const body: RecoverStuckBody = hasAll ? { all: true } : { workflowId: opts.wfid as string };
+    const response: RecoverStuckResponse = await client.call("workflows.recoverStuck", {
+      params: { id },
+      body,
+    });
+    const fmt = pickFormat(opts, "table");
+    if (fmt === "json") return { exitCode: 0, stdout: formatJson(response) };
+    if (response.results.length === 0) {
+      return { exitCode: 0, stdout: "no running workflows scanned\n" };
+    }
+    const lines = response.results.map((r) =>
+      r.inserted
+        ? `${r.workflowId}: inserted retry coord ${r.retryNodeId} (reason=${r.reason}, attempt=${r.attempt})`
+        : `${r.workflowId}: not stuck`,
+    );
+    const inserted = response.results.filter((r) => r.inserted).length;
+    const footer = hasAll
+      ? `\nscanned ${response.results.length} workflow(s); recovered ${inserted}`
+      : "";
+    return { exitCode: 0, stdout: `${lines.join("\n")}${footer}\n` };
   } catch (err) {
     return formatError(err);
   }

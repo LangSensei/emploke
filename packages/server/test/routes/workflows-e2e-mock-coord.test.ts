@@ -49,26 +49,44 @@ interface AutoSucceedRunner extends WorkflowNodeRunner {
   }>;
 }
 
-function makeAutoSucceedRunner(label: string): AutoSucceedRunner {
+function makeAutoSucceedRunner(
+  label: string,
+  opts: { readonly gated: boolean },
+): AutoSucceedRunner {
   const dispatchCalls: Array<{ workflowId: string; nodeId: string }> = [];
+  // Per-workflow first-dispatch gate (coord runner only). The
+  // substrate's stuck-coord detector (Issue #352 group E) inserts a
+  // retry coord whenever a coord exits without children. Without
+  // this gate, the retry's auto-success would trigger another retry,
+  // ad infinitum (capped at 5 by the substrate but still 6 extra
+  // dispatches per workflow). Gating keeps later COORD dispatches
+  // recorded but in `running` so the test scenarios stay
+  // deterministic. Worker runner is ungated — multiple workers per
+  // workflow should all auto-succeed. Mirrors
+  // `engine-integration.test.ts`.
+  const autoSucceededWorkflows = new Set<string>();
   let seq = 0;
   const runner: AutoSucceedRunner = {
     dispatchCalls,
     async validate(spec) {
       return spec;
     },
-    async dispatch(opts: {
+    async dispatch(dispatchOpts: {
       readonly workflowId: string;
       readonly nodeId: string;
       readonly spec: unknown;
       readonly nodeDir: string;
       readonly onTerminal: (result: WorkflowNodeTerminalResult) => void;
     }) {
-      dispatchCalls.push({ workflowId: opts.workflowId, nodeId: opts.nodeId });
+      dispatchCalls.push({ workflowId: dispatchOpts.workflowId, nodeId: dispatchOpts.nodeId });
+      if (opts.gated && autoSucceededWorkflows.has(dispatchOpts.workflowId)) {
+        return;
+      }
+      autoSucceededWorkflows.add(dispatchOpts.workflowId);
       // Push the terminal onto the microtask queue so the engine has
       // a chance to commit `ready → running` first (mirrors production
       // timing where dispatch returns before the unit settles).
-      queueMicrotask(() => opts.onTerminal({ status: "succeeded" }));
+      queueMicrotask(() => dispatchOpts.onTerminal({ status: "succeeded" }));
       seq += 1;
       // Stub still tracks a per-call identifier mirroring the runner's
       // task-id log line; the substrate does not consume it.
@@ -91,8 +109,8 @@ interface Harness {
 }
 
 async function makeHarness(): Promise<Harness> {
-  const coord = makeAutoSucceedRunner("coord");
-  const worker = makeAutoSucceedRunner("worker");
+  const coord = makeAutoSucceedRunner("coord", { gated: true });
+  const worker = makeAutoSucceedRunner("worker", { gated: false });
   const dbHandle = openTestWorkflowDb();
   const workspaceDir = mkdtempSync(path.join(tmpdir(), "wf-e2e-coord-"));
   const module = await composeWorkflowModule({
@@ -169,16 +187,20 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
     expect(created.status).toBe("running");
     expect(created.iterationCount).toBe(1);
 
-    // 2. Wait for the coord runner to auto-succeed. The engine flips
-    //    the coord row to `succeeded`, freeing the workflow for the
-    //    next mutation.
+    // 2. Wait for the initial coord to auto-succeed. The substrate's
+    //    stuck-coord detector then inserts a retry coord and the
+    //    engine dispatches it; the runner's per-workflow gate keeps
+    //    that retry coord in `running` so this assertion narrows to
+    //    the initial coord's status only (not "every node succeeded"
+    //    — the retry coord stays non-terminal by design).
     await waitUntil(
       async () => {
         const dagRes = await h.app.request(`/${wfid}/dag`);
         const dag = (await dagRes.json()) as {
-          nodes: Array<{ status: string }>;
+          nodes: Array<{ spec: { kind: string }; status: string }>;
         };
-        return dag.nodes.every((n) => n.status === "succeeded");
+        const initial = dag.nodes.find((n) => n.spec.kind === "coordinator");
+        return initial?.status === "succeeded";
       },
       5000,
       "initial coord auto-succeeds",
@@ -187,18 +209,28 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
     // 3. Add a worker via the addSubgraph HTTP surface (exercising the
     //    most complex mutation primitive in one call: temp-id alloc,
     //    intra-batch edge translation, NodeRefWire→NodeRef boundary).
-    //    We attach the new worker to the (now-succeeded) initial coord
-    //    via `existingParents`. The substrate's structural rule for
-    //    worker parents is "≥1 parent in non-failed terminal" — the
-    //    coord just succeeded, so the worker is immediately eligible.
+    //    The batch attaches the worker to the (now-succeeded) initial
+    //    coord (worker's "all parents succeeded" readiness rule), and
+    //    attaches a trailing coord cend to BOTH the detector-inserted
+    //    retry coord AND the worker (via a temp edge). With cend
+    //    pulling retry off the leaf set, the final leaves = {cend}
+    //    satisfies the §3 commit-time {1 coord leaf} invariant; cend
+    //    also has a coord-kind parent (the retry) so the
+    //    OrphanCoordInsertError check passes.
     const dagBeforeRes = await h.app.request(`/${wfid}/dag`);
     const dagBefore = (await dagBeforeRes.json()) as {
-      nodes: Array<{ id: string; spec: { kind: string } }>;
+      nodes: Array<{ id: string; spec: { kind: string }; status: string }>;
     };
-    const coordNode = dagBefore.nodes.find((n) => n.spec.kind === "coordinator");
-    expect(coordNode).toBeDefined();
-    const coordId = coordNode?.id;
-    if (typeof coordId !== "string") throw new Error("coord node not found");
+    const coordNodes = dagBefore.nodes.filter((n) => n.spec.kind === "coordinator");
+    const initialCoord = coordNodes.find((n) => n.status === "succeeded");
+    const retryCoord = coordNodes.find((n) => n.status !== "succeeded");
+    expect(initialCoord).toBeDefined();
+    expect(retryCoord).toBeDefined();
+    const initialCoordId = initialCoord?.id;
+    const retryCoordId = retryCoord?.id;
+    if (typeof initialCoordId !== "string" || typeof retryCoordId !== "string") {
+      throw new Error("coord nodes not found");
+    }
 
     const subgraphRes = await h.app.request(`/${wfid}/subgraph`, {
       method: "POST",
@@ -209,19 +241,26 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
             tempId: "w1",
             kind: "worker",
             spec: { agent: "mock-worker", brief: "do thing" },
-            existingParents: [coordId],
+            existingParents: [initialCoordId],
+          },
+          {
+            tempId: "cend",
+            kind: "coordinator",
+            spec: { agent: "mock-coord" },
+            existingParents: [retryCoordId],
           },
         ],
-        edges: [],
+        edges: [{ from: { tempId: "w1" }, to: { tempId: "cend" } }],
       }),
     });
     expect(subgraphRes.status).toBe(200);
     const subgraphBody = (await subgraphRes.json()) as {
       insertedNodes: Array<{ tempId: string; nodeId: string; phase: number }>;
     };
-    expect(subgraphBody.insertedNodes).toHaveLength(1);
-    expect(subgraphBody.insertedNodes[0]?.tempId).toBe("w1");
-    const workerNodeId = subgraphBody.insertedNodes[0]?.nodeId as string;
+    expect(subgraphBody.insertedNodes).toHaveLength(2);
+    const workerInserted = subgraphBody.insertedNodes.find((n) => n.tempId === "w1");
+    expect(workerInserted).toBeDefined();
+    const workerNodeId = workerInserted?.nodeId as string;
 
     // 4. Wait for the worker to auto-succeed.
     await waitUntil(
@@ -259,9 +298,13 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
     const cancelErr = (await cancelRes.json()) as { code?: string };
     expect(cancelErr.code).toBe("WorkflowAlreadyTerminalError");
 
-    // 7. Sanity-check the runner call counts — the flow exercised one
-    //    coord dispatch + one worker dispatch.
-    expect(h.coord.dispatchCalls).toHaveLength(1);
+    // 7. Sanity-check the runner call counts. Coord dispatches: the
+    //    initial coord (auto-succeeded) and the detector-inserted
+    //    retry coord (gated → running) = 2. The trailing cend coord
+    //    never dispatches because its retry-coord parent is still
+    //    `running` and coord-readiness requires ALL parents
+    //    terminal. Worker dispatches: just w1 = 1.
+    expect(h.coord.dispatchCalls).toHaveLength(2);
     expect(h.worker.dispatchCalls).toHaveLength(1);
   }, 15000);
 
@@ -275,21 +318,26 @@ describe("workflowsRoutes — E2E mock-coord acceptance", () => {
     expect(createRes.status).toBe(201);
     const wfid = ((await createRes.json()) as { id: string }).id;
 
-    // Wait for coord to terminate.
+    // Wait for the initial coord to terminate. The substrate's
+    // stuck-coord detector then inserts a retry coord that the gated
+    // runner leaves in `running`; narrow the predicate to the
+    // initial coord rather than "every node succeeded".
     await waitUntil(
       async () => {
         const dag = (await (await h.app.request(`/${wfid}/dag`)).json()) as {
-          nodes: Array<{ status: string }>;
+          nodes: Array<{ spec: { kind: string }; status: string }>;
         };
-        return dag.nodes.every((n) => n.status === "succeeded");
+        return dag.nodes.find((n) => n.spec.kind === "coordinator")?.status === "succeeded";
       },
       5000,
       "initial coord auto-succeeds",
     );
     const dagBefore = (await (await h.app.request(`/${wfid}/dag`)).json()) as {
-      nodes: Array<{ id: string; spec: { kind: string } }>;
+      nodes: Array<{ id: string; spec: { kind: string }; status: string }>;
     };
-    const coordId = dagBefore.nodes.find((n) => n.spec.kind === "coordinator")?.id as string;
+    const coordId = dagBefore.nodes.find(
+      (n) => n.spec.kind === "coordinator" && n.status === "succeeded",
+    )?.id as string;
 
     // addNode — single worker A attached to the coord.
     const addARes = await h.app.request(`/${wfid}/nodes`, {

@@ -479,6 +479,7 @@ export const handlers = [
       status: "running",
       phase: 0,
       spec: { kind: "coordinator", agent: body.coordinatorAgent },
+      metadata: {},
       createdAt: now,
       readyAt: now,
       runningAt: now,

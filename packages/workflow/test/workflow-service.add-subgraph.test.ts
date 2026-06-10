@@ -50,18 +50,29 @@ describe("WorkflowService.addSubgraph", () => {
           spec: { agent: "w", brief: "b" },
           existingParents: [],
         },
+        // Trailing coord temp to satisfy §3 invariant (leaves = {1 coord}).
+        {
+          tempId: "t-end",
+          kind: "coordinator",
+          spec: { agent: "coord-end" },
+          existingParents: [initialCoordNodeId],
+        },
       ],
-      edges: [{ from: { kind: "temp", tempId: "t-a" }, to: { kind: "temp", tempId: "t-b" } }],
+      edges: [
+        { from: { kind: "temp", tempId: "t-a" }, to: { kind: "temp", tempId: "t-b" } },
+        { from: { kind: "temp", tempId: "t-b" }, to: { kind: "temp", tempId: "t-end" } },
+      ],
     });
-    expect(res.insertedNodes.length).toBe(2);
+    expect(res.insertedNodes.length).toBe(3);
     const tA = res.insertedNodes.find((n) => n.tempId === "t-a")!;
     const tB = res.insertedNodes.find((n) => n.tempId === "t-b")!;
+    const tEnd = res.insertedNodes.find((n) => n.tempId === "t-end")!;
     expect(tA.phase).toBe(1);
     expect(tB.phase).toBe(2);
     // Verify the persisted DAG matches.
     const dag = await h.service.getDag(workflowId);
     expect(dag.nodes.map((n) => n.id).sort()).toEqual(
-      [initialCoordNodeId, tA.nodeId, tB.nodeId].sort(),
+      [initialCoordNodeId, tA.nodeId, tB.nodeId, tEnd.nodeId].sort(),
     );
     const edgeSet = new Set(dag.edges.map((e) => `${e.from}->${e.to}`));
     expect(edgeSet.has(`${initialCoordNodeId}->${tA.nodeId}`)).toBe(true);
@@ -111,15 +122,24 @@ describe("WorkflowService.addSubgraph", () => {
           spec: { agent: "w", brief: "5" },
           existingParents: [],
         },
+        // Trailing coord temp to satisfy §3 invariant (leaves = {1 coord}).
+        {
+          tempId: "t-end",
+          kind: "coordinator",
+          spec: { agent: "coord-end" },
+          existingParents: [initialCoordNodeId],
+        },
       ],
       edges: [
         { from: { kind: "temp", tempId: "t1" }, to: { kind: "temp", tempId: "t3" } },
         { from: { kind: "temp", tempId: "t2" }, to: { kind: "temp", tempId: "t3" } },
         { from: { kind: "temp", tempId: "t3" }, to: { kind: "temp", tempId: "t4" } },
         { from: { kind: "temp", tempId: "t3" }, to: { kind: "temp", tempId: "t5" } },
+        { from: { kind: "temp", tempId: "t4" }, to: { kind: "temp", tempId: "t-end" } },
+        { from: { kind: "temp", tempId: "t5" }, to: { kind: "temp", tempId: "t-end" } },
       ],
     });
-    expect(res.insertedNodes.length).toBe(5);
+    expect(res.insertedNodes.length).toBe(6);
     const byTemp = new Map(res.insertedNodes.map((n) => [n.tempId, n]));
     // existingRoot is phase 1 (child of coord at phase 0). t1/t2
     // attach to it → phase 2. t3 attaches to t1 and t2 → phase 3.
@@ -142,21 +162,10 @@ describe("WorkflowService.addSubgraph", () => {
           spec: { agent: "coord-v2" },
           existingParents: [initialCoordNodeId],
         },
-        {
-          tempId: "worker-after",
-          kind: "worker",
-          spec: { agent: "w", brief: "after" },
-          existingParents: [],
-        },
       ],
-      edges: [
-        {
-          from: { kind: "temp", tempId: "next-coord" },
-          to: { kind: "temp", tempId: "worker-after" },
-        },
-      ],
+      edges: [],
     });
-    expect(res.insertedNodes.length).toBe(2);
+    expect(res.insertedNodes.length).toBe(1);
     const wf = await h.service.getWorkflow(workflowId);
     expect(wf.coordinatorAgent).toBe("coord-v2");
   });
@@ -194,8 +203,18 @@ describe("WorkflowService.addSubgraph", () => {
           spec: { agent: "w", brief: "deep" },
           existingParents: [w1],
         },
+        // Trailing coord temp to satisfy §3 invariant (leaves = {1 coord}).
+        {
+          tempId: "tEnd",
+          kind: "coordinator",
+          spec: { agent: "coord-end" },
+          existingParents: [initialCoordNodeId],
+        },
       ],
-      edges: [{ from: { kind: "temp", tempId: "tDeep" }, to: { kind: "existing", id: w2 } }],
+      edges: [
+        { from: { kind: "temp", tempId: "tDeep" }, to: { kind: "existing", id: w2 } },
+        { from: { kind: "existing", id: w2 }, to: { kind: "temp", tempId: "tEnd" } },
+      ],
     });
     expect((await h.service.getNode(w2)).phase).toBe(3);
   });
@@ -492,11 +511,20 @@ describe("WorkflowService.addSubgraph", () => {
           spec: { agent: "w", brief: "x" },
           existingParents: [initialCoordNodeId, initialCoordNodeId, initialCoordNodeId],
         },
+        // Trailing coord temp to satisfy §3 invariant (leaves = {1 coord}).
+        {
+          tempId: "t-end",
+          kind: "coordinator",
+          spec: { agent: "coord-end" },
+          existingParents: [initialCoordNodeId],
+        },
       ],
-      edges: [],
+      edges: [
+        { from: { kind: "temp", tempId: "t" }, to: { kind: "temp", tempId: "t-end" } },
+      ],
     });
-    expect(res.insertedNodes.length).toBe(1);
-    const t = res.insertedNodes[0]!;
+    expect(res.insertedNodes.length).toBe(2);
+    const t = res.insertedNodes.find((n) => n.tempId === "t")!;
     expect(t.phase).toBe(1);
     // Exactly one edge from coord → t (dedup collapsed the triple).
     const dag = await h.service.getDag(workflowId);
@@ -522,14 +550,22 @@ describe("WorkflowService.addSubgraph", () => {
           spec: { agent: "w", brief: "b" },
           existingParents: [],
         },
+        // Trailing coord temp to satisfy §3 invariant (leaves = {1 coord}).
+        {
+          tempId: "t-end",
+          kind: "coordinator",
+          spec: { agent: "coord-end" },
+          existingParents: [initialCoordNodeId],
+        },
       ],
       // Same (from, to) pair declared twice — collapse to one edge.
       edges: [
         { from: { kind: "temp", tempId: "a" }, to: { kind: "temp", tempId: "b" } },
         { from: { kind: "temp", tempId: "a" }, to: { kind: "temp", tempId: "b" } },
+        { from: { kind: "temp", tempId: "b" }, to: { kind: "temp", tempId: "t-end" } },
       ],
     });
-    expect(res.insertedNodes.length).toBe(2);
+    expect(res.insertedNodes.length).toBe(3);
     const aNode = res.insertedNodes.find((n) => n.tempId === "a")!;
     const bNode = res.insertedNodes.find((n) => n.tempId === "b")!;
     const dag = await h.service.getDag(workflowId);

@@ -12,6 +12,8 @@
  * status without sniffing message text.
  */
 
+import type { NodeKind } from "./types.js";
+
 export class WorkflowError extends Error {
   override readonly name: string = "WorkflowError";
   constructor(message: string, options?: { cause?: unknown }) {
@@ -322,6 +324,43 @@ export class WorkflowRemoveEdgeOrphansChildError extends WorkflowError {
   ) {
     super(
       `Removing edge ${fromNodeId}→${toNodeId} in workflow "${workflowId}" would orphan to-node "${toNodeId}" (zero remaining parents)`,
+    );
+  }
+}
+
+// ─── DAG well-formedness invariant (workflow leaf frontier) ─────────
+
+/**
+ * Thrown by `addSubgraph` when applying the batch would leave the
+ * workflow's structural leaf frontier (nodes with `out_degree=0`)
+ * in a shape that violates the substrate's well-formedness invariant:
+ * at any quiescent state the leaves must be exactly **{1 coord node}**.
+ *
+ * The structural payload (`actualLeafIds` / `actualLeafKinds`) lets
+ * diagnostic output point the operator at the offending leaves
+ * without re-querying. The error fires AFTER the batch's other gates
+ * pass — a malformed cycle / orphan / etc. errors out earlier with
+ * its own specific class.
+ *
+ * Low-level mutations (`addNode`, `addEdge`, `removeNode`,
+ * `removeEdge`, `replaceNodeSpec`, `cancelNode`, `markNodeTerminal`)
+ * deliberately do NOT validate this invariant pre-write — they're
+ * sequenceable primitives and the substrate's stuck-coord detector
+ * runs at the end of every mutation tx as a safety net. `addSubgraph`
+ * is the one atomic-batch primitive where invariant violation cannot
+ * be sequenced away, hence the upfront commit-time check.
+ */
+export class WorkflowDagInvariantError extends WorkflowError {
+  override readonly name = "WorkflowDagInvariantError";
+  constructor(
+    public readonly workflowId: string,
+    public readonly actualLeafIds: readonly string[],
+    public readonly actualLeafKinds: readonly NodeKind[],
+    message?: string,
+  ) {
+    super(
+      message ??
+        `Workflow "${workflowId}" violates DAG invariant: leaf frontier must be exactly {1 coordinator}, got ${actualLeafIds.length} leaves of kinds [${actualLeafKinds.join(", ")}]`,
     );
   }
 }

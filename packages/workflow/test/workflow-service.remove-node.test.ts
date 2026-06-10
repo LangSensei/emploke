@@ -148,10 +148,19 @@ describe("WorkflowService.removeNode", () => {
           spec: { agent: "w", brief: "t" },
           existingParents: [coord],
         },
+        // Trailing coord temp to satisfy §3 invariant (leaves = {1 coord}).
+        {
+          tempId: "tEnd",
+          kind: "coordinator",
+          spec: { agent: "coord-end" },
+          existingParents: [coord],
+        },
       ],
       edges: [
         { from: { kind: "temp", tempId: "t" }, to: { kind: "existing", id: d } },
         { from: { kind: "temp", tempId: "t" }, to: { kind: "existing", id: e } },
+        { from: { kind: "existing", id: d }, to: { kind: "temp", tempId: "tEnd" } },
+        { from: { kind: "existing", id: e }, to: { kind: "temp", tempId: "tEnd" } },
       ],
     });
     expect((await h.service.getNode(a)).phase).toBe(1);

@@ -28,6 +28,7 @@ function makeNode(overrides: Partial<WorkflowNodeWire>): WorkflowNodeWire {
     status: "running",
     phase: 0,
     spec: { kind: "worker", agent: "emploke/dev", brief: "x" },
+    metadata: {},
     createdAt: "2026-05-28T00:00:00.000Z",
     ...overrides,
   };

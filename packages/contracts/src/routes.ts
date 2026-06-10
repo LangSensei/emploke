@@ -61,6 +61,8 @@ import type {
   CancelWorkflowBody,
   CreateWorkflowBody,
   FinishWorkflowBody,
+  RecoverStuckBody,
+  RecoverStuckResponse,
   ReplaceNodeSpecBody,
   WorkflowArtifactsResponse,
   WorkflowDagWire,
@@ -886,6 +888,20 @@ export const ROUTES = {
     { params: WorkflowNodePathParams; body: ReplaceNodeSpecBody },
     WorkflowNodeWire
   >("PATCH", "/api/workspaces/:id/workflows/:wfid/nodes/:nid/spec"),
+  /**
+   * Admin recovery sweep — applies the substrate's stuck-coord
+   * detector to a single workflow (`{ workflowId }`) or every
+   * currently-running workflow (`{ all: true }`). Idempotent: a
+   * non-stuck workflow returns `{ inserted: false }` without writes.
+   * Response is always a list (single-workflow mode returns one
+   * entry) so the dashboard / CLI can render the outcome uniformly.
+   * Path is workspace-scoped (`/recover-stuck` — no `:wfid` segment)
+   * because the sweep mode is workspace-wide.
+   */
+  "workflows.recoverStuck": defineRoute<
+    { params: WorkspacePathParams; body: RecoverStuckBody },
+    RecoverStuckResponse
+  >("POST", "/api/workspaces/:id/workflows/recover-stuck"),
 
   "tasks.dispatch": defineRoute<{ params: WorkspacePathParams; body: TaskDispatchBody }, Task>(
     "POST",
