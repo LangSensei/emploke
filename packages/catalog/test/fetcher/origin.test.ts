@@ -89,6 +89,101 @@ describe("normalizeOrigin", () => {
   });
 });
 
+describe("parseOrigin — Azure DevOps Services", () => {
+  it("parses a simple dev.azure.com URL with a directory path", () => {
+    const o = parseOrigin("https://dev.azure.com/MyOrg/MyProject/_git/MyRepo?path=/skills/x");
+    expect(o.scheme).toBe("azure-devops");
+    if (o.scheme !== "azure-devops") throw new Error("narrow");
+    expect(o.org).toBe("MyOrg");
+    expect(o.project).toBe("MyProject");
+    expect(o.repo).toBe("MyRepo");
+    expect(o.path).toBe("/skills/x");
+  });
+
+  it("URL-decodes a project name with %20 spaces", () => {
+    const o = parseOrigin(
+      "https://dev.azure.com/O365Exchange/O365%20Core/_git/M365Bestla?path=/.claude/skills/bestla-pr-review",
+    );
+    expect(o.scheme).toBe("azure-devops");
+    if (o.scheme !== "azure-devops") throw new Error("narrow");
+    expect(o.project).toBe("O365 Core");
+    expect(o.org).toBe("O365Exchange");
+    expect(o.repo).toBe("M365Bestla");
+    expect(o.path).toBe("/.claude/skills/bestla-pr-review");
+  });
+
+  it("rejects &version=GBmain with an actionable ref-pinning message", () => {
+    expect(() =>
+      parseOrigin(
+        "https://dev.azure.com/MyOrg/MyProject/_git/MyRepo?path=/skills/x&version=GBmain",
+      ),
+    ).toThrow(/version=.*not supported/i);
+  });
+
+  it("rejects {org}.visualstudio.com legacy host with a dev.azure.com pointer", () => {
+    expect(() =>
+      parseOrigin(
+        "https://contoso.visualstudio.com/DefaultCollection/MyProject/_git/MyRepo?path=/x",
+      ),
+    ).toThrow(/visualstudio\.com is the legacy/i);
+  });
+
+  it("rejects on-prem TFS tfs.<x>.com/tfs/... URLs", () => {
+    expect(() =>
+      parseOrigin("https://tfs.foo.com/tfs/DefaultCollection/Proj/_git/Repo?path=/x"),
+    ).toThrow(/on-prem.*tfs/i);
+  });
+
+  it("rejects dev.azure.com URL with missing ?path=", () => {
+    expect(() => parseOrigin("https://dev.azure.com/MyOrg/MyProject/_git/MyRepo")).toThrow(
+      /requires a \?path/i,
+    );
+  });
+
+  it("rejects dev.azure.com URL with empty ?path=", () => {
+    expect(() => parseOrigin("https://dev.azure.com/MyOrg/MyProject/_git/MyRepo?path=")).toThrow(
+      /requires a \?path/i,
+    );
+  });
+
+  it("rejects dev.azure.com URL with malformed path segments (no _git)", () => {
+    expect(() => parseOrigin("https://dev.azure.com/MyOrg/MyProject/MyRepo?path=/x")).toThrow(
+      /must be of the form/i,
+    );
+  });
+
+  it("normalizeOrigin round-trips an ADO origin (parse → normalize → reparse → normalize stable)", () => {
+    const input =
+      "https://dev.azure.com/O365Exchange/O365%20Core/_git/M365Bestla?path=/.claude/skills/bestla-pr-review";
+    const normOnce = normalizeOrigin(parseOrigin(input));
+    const normTwice = normalizeOrigin(parseOrigin(normOnce));
+    expect(normTwice).toBe(normOnce);
+    expect(normOnce).toBe(input);
+  });
+
+  it("treats two equivalent ADO URLs (trailing path slash) as the same normalized form", () => {
+    const a = normalizeOrigin(
+      parseOrigin("https://dev.azure.com/MyOrg/MyProject/_git/MyRepo?path=/skills/x/"),
+    );
+    const b = normalizeOrigin(
+      parseOrigin("https://dev.azure.com/MyOrg/MyProject/_git/MyRepo?path=/skills/x"),
+    );
+    expect(a).toBe(b);
+  });
+
+  it("does NOT case-fold org or repo (ADO is case-sensitive, unlike GitHub)", () => {
+    const a = normalizeOrigin(
+      parseOrigin("https://dev.azure.com/MyOrg/MyProject/_git/MyRepo?path=/x"),
+    );
+    const b = normalizeOrigin(
+      parseOrigin("https://dev.azure.com/myorg/MyProject/_git/myrepo?path=/x"),
+    );
+    expect(a).not.toBe(b);
+    expect(a).toContain("/MyOrg/");
+    expect(a).toContain("/MyRepo?");
+  });
+});
+
 describe("error hierarchy", () => {
   it("OriginParseError extends FetcherError", () => {
     const e = new OriginParseError("bad", "reason");

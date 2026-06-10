@@ -4,7 +4,8 @@
  *
  *   - `parseOrigin` / `normalizeOrigin` — URI grammar
  *   - `Fetcher` interface (pure stream, fs-agnostic)
- *   - `FileFetcher`, `GitHubFetcher` — built-in implementations
+ *   - `FileFetcher`, `GitHubFetcher`, `AzureDevOpsFetcher` — built-in
+ *     implementations
  *   - `FetcherRegistry` — scheme → fetcher dispatch
  *   - `OriginParseError`, `FetchError`
  *
@@ -13,6 +14,8 @@
  * live in the parent catalog package.
  */
 
+export { resolveDefaultAdoToken, tryGitCredentialFill } from "./ado-token.js";
+export { AzureDevOpsFetcher } from "./azure-devops-fetcher.js";
 export { FetchError, FetcherError, OriginParseError } from "./errors.js";
 export type { EntryFile, Fetcher } from "./fetcher.js";
 export { FileFetcher } from "./file-fetcher.js";
