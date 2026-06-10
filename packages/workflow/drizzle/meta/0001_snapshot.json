@@ -32,29 +32,19 @@
       "indexes": {
         "workflow_edges_from_idx": {
           "name": "workflow_edges_from_idx",
-          "columns": [
-            "workflow_id",
-            "from_node_id"
-          ],
+          "columns": ["workflow_id", "from_node_id"],
           "isUnique": false
         },
         "workflow_edges_to_idx": {
           "name": "workflow_edges_to_idx",
-          "columns": [
-            "workflow_id",
-            "to_node_id"
-          ],
+          "columns": ["workflow_id", "to_node_id"],
           "isUnique": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
         "workflow_edges_workflow_id_from_node_id_to_node_id_pk": {
-          "columns": [
-            "workflow_id",
-            "from_node_id",
-            "to_node_id"
-          ],
+          "columns": ["workflow_id", "from_node_id", "to_node_id"],
           "name": "workflow_edges_workflow_id_from_node_id_to_node_id_pk"
         }
       },
@@ -146,17 +136,12 @@
       "indexes": {
         "workflow_nodes_workflow_idx": {
           "name": "workflow_nodes_workflow_idx",
-          "columns": [
-            "workflow_id"
-          ],
+          "columns": ["workflow_id"],
           "isUnique": false
         },
         "workflow_nodes_status_idx": {
           "name": "workflow_nodes_status_idx",
-          "columns": [
-            "workflow_id",
-            "status"
-          ],
+          "columns": ["workflow_id", "status"],
           "isUnique": false
         }
       },
@@ -257,16 +242,12 @@
       "indexes": {
         "workflows_status_idx": {
           "name": "workflows_status_idx",
-          "columns": [
-            "status"
-          ],
+          "columns": ["status"],
           "isUnique": false
         },
         "workflows_coordinator_agent_idx": {
           "name": "workflows_coordinator_agent_idx",
-          "columns": [
-            "coordinator_agent"
-          ],
+          "columns": ["coordinator_agent"],
           "isUnique": false
         }
       },

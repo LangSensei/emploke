@@ -519,9 +519,7 @@ describe("WorkflowService.addSubgraph", () => {
           existingParents: [initialCoordNodeId],
         },
       ],
-      edges: [
-        { from: { kind: "temp", tempId: "t" }, to: { kind: "temp", tempId: "t-end" } },
-      ],
+      edges: [{ from: { kind: "temp", tempId: "t" }, to: { kind: "temp", tempId: "t-end" } }],
     });
     expect(res.insertedNodes.length).toBe(2);
     const t = res.insertedNodes.find((n) => n.tempId === "t")!;
