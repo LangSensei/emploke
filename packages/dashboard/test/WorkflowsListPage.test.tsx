@@ -154,6 +154,34 @@ describe("WorkflowsPage — list rendering + sort", () => {
       expect(screen.getByTestId("workflows-empty-filtered")).toBeTruthy();
     });
   });
+
+  it("shows the loading skeleton while the workflow list fetch is pending, then removes it on resolve", async () => {
+    // Hold `listWorkflows` in a pending state so the loading branch is
+    // observable. The skeleton then resolves out once the list arrives.
+    let resolveList: (rows: WorkflowHeaderWire[]) => void = () => {};
+    mockListWorkflows.mockReturnValue(
+      new Promise<WorkflowHeaderWire[]>((res) => {
+        resolveList = res;
+      }),
+    );
+
+    renderWorkflows("/workspaces/ws-1/runtime/workflows", agents);
+
+    // Pending → skeleton is in the DOM.
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-list-skeleton")).toBeTruthy();
+    });
+
+    // Resolve with rows and assert the skeleton disappears once data
+    // lands. The skeleton MUST be unmounted (not just hidden) so the
+    // aria-live region's "Loading workflows" announcement isn't
+    // re-narrated by screen readers on every poll tick.
+    resolveList([makeWorkflow({ id: "wf-arrival", brief: "Arrived" })]);
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-row-wf-arrival")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("workflow-list-skeleton")).toBeNull();
+  });
 });
 
 describe("WorkflowsPage — New workflow CTA + create flow", () => {

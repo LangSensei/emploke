@@ -98,7 +98,10 @@ describe("WorkflowsPage — detail header", () => {
     const wf = makeWorkflow({ id: "wf-1", brief: "Headline brief", iterationCount: 7 });
     mockListWorkflows.mockResolvedValue([wf]);
     mockGetWorkflow.mockResolvedValue(wf);
-    // DAG with two distinct phases so we can assert the "2" badge.
+    // DAG with two distinct phases. Both nodes are still running, so
+    // `current` = lowest active phase = 0 and `total` = max(phase) + 1
+    // = 2 — the rendered chip is `Phases 1 / 2` (1-indexed display)
+    // (replacing the prior single number `2` from the max+1 stat).
     mockGetWorkflowDag.mockResolvedValue({
       workflow: wf,
       nodes: [
@@ -130,9 +133,11 @@ describe("WorkflowsPage — detail header", () => {
     const detail = screen.getByTestId("workflow-detail");
     expect(detail.textContent).toContain("Headline brief");
     expect(detail.textContent).toContain("emploke/dev");
-    // v2.2: chip relabeled Iterations → Phases (DAG-derived).
     expect(detail.textContent).toContain("Phases");
-    expect(detail.textContent).toContain("2");
+    // Stat renders 1-indexed `current / total` — both nodes are running,
+    // so `current` = 0 (lowest active phase, 0-indexed) and `total` = 2
+    // (max phase + 1), surfaced as the 1-indexed display `1 / 2`.
+    expect(detail.textContent).toContain("1 / 2");
     // v2.2: iter chip no longer rendered anywhere in the detail pane.
     expect(detail.textContent).not.toContain("Iterations");
     expect(detail.querySelector("[data-testid='workflow-status-badge-running']")).toBeTruthy();
@@ -182,5 +187,31 @@ describe("WorkflowsPage — detail header", () => {
         cancellation: { kind: "user", message: "no longer needed" },
       });
     });
+  });
+
+  it("renders the detail-pane skeleton while the per-workflow fetch is in flight, then swaps for the resolved detail", async () => {
+    const wf = makeWorkflow({ id: "wf-pending-detail", brief: "Pending detail" });
+    mockListWorkflows.mockResolvedValue([wf]);
+    // Hold the per-workflow read in pending so the skeleton branch is
+    // observable, then resolve after asserting it rendered.
+    let resolveWf: (v: WorkflowHeaderWire) => void = () => {};
+    mockGetWorkflow.mockReturnValue(
+      new Promise<WorkflowHeaderWire>((res) => {
+        resolveWf = res;
+      }),
+    );
+    mockGetWorkflowDag.mockResolvedValue(makeDag(wf));
+
+    renderWorkflows(`/workspaces/ws-1/runtime/workflows?workflowId=${wf.id}`, agents);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-detail-skeleton")).toBeTruthy();
+    });
+
+    resolveWf(wf);
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-detail")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("workflow-detail-skeleton")).toBeNull();
   });
 });
