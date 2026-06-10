@@ -1,3 +1,4 @@
+import { AzureDevOpsFetcher } from "./azure-devops-fetcher.js";
 import type { EntryFile, Fetcher } from "./fetcher.js";
 import { FileFetcher } from "./file-fetcher.js";
 import { GitHubFetcher } from "./github-fetcher.js";
@@ -61,11 +62,13 @@ export class FetcherRegistry {
 }
 
 /**
- * Build the default registry shipped by emploke: `file:` + `github:`.
+ * Build the default registry shipped by emploke: `file:`, `github:`,
+ * and `azure-devops:`.
  */
 export function defaultFetcherRegistry(): FetcherRegistry {
   const reg = new FetcherRegistry();
   reg.register(new FileFetcher());
   reg.register(new GitHubFetcher());
+  reg.register(new AzureDevOpsFetcher());
   return reg;
 }
