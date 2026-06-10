@@ -350,7 +350,16 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
             </div>
 
             {(() => {
-              if (showNodeTaskPane && detailWorkflow !== null) {
+              // `!= null` (loose) rather than `!== null` (strict) so an
+              // out-of-contract `undefined` from a buggy mock — or a
+              // future buggy server — falls through to the
+              // `<WorkflowDetailSkeleton />` branch instead of being
+              // handed to `<WorkflowView>` (which dereferences
+              // `workflow.brief` and crashes the root). The hook's
+              // typed shape is `WorkflowHeaderWire | null`, but
+              // accepting `undefined` here keeps the page robust
+              // against contract violations.
+              if (showNodeTaskPane && detailWorkflow != null) {
                 return (
                   <WorkflowNodeTaskPane
                     key={`${effectiveSelectedId}:${nodeTaskId}`}
@@ -363,7 +372,7 @@ export function WorkflowsPage({ agents, currentWorkspaceId, config }: WorkflowsP
                   />
                 );
               }
-              if (effectiveSelectedId !== null && detailWorkflow !== null) {
+              if (effectiveSelectedId !== null && detailWorkflow != null) {
                 return (
                   <WorkflowDetail
                     key={effectiveSelectedId}
