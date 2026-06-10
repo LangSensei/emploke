@@ -242,31 +242,6 @@ export interface WorkflowDagSnapshot {
 }
 
 /**
- * Result of a stuck-coord recovery scan for a single workflow.
- *
- *   - `inserted: false` — workflow was not stuck (still has live
- *     work, no terminal coord to derive the retry from, or already
- *     terminal). Substrate took no write.
- *   - `inserted: true` — substrate inserted a retry coord node;
- *     `retryNodeId` is its id and `reason` carries the classifier
- *     output. The retry node has been dispatched (post-commit) so the
- *     workflow is making forward progress again by the time this
- *     result is observed.
- */
-export type RecoverStuckResult =
-  | {
-      readonly workflowId: string;
-      readonly inserted: false;
-    }
-  | {
-      readonly workflowId: string;
-      readonly inserted: true;
-      readonly retryNodeId: string;
-      readonly reason: RetryReason;
-      readonly attempt: number;
-    };
-
-/**
  * Internal closure-state type used by the eight mutation primitives
  * to capture the {@link WorkflowService.checkStuckAndRecoverInTx}
  * outcome from inside the tx callback. Hoisted to a named alias so
@@ -2152,8 +2127,7 @@ export class WorkflowService {
    *
    * Returns the structured outcome rather than a bare boolean so the
    * caller can dispatch the freshly inserted coord post-commit and
-   * surface the retry id to operator logs / CLI output. The CLI
-   * `recover-stuck` path bubbles this back to the operator.
+   * surface the retry id to operator logs.
    */
   private checkStuckAndRecoverInTx(
     tx: Db,
@@ -2243,54 +2217,6 @@ export class WorkflowService {
   private async dispatchRetryIfInserted(outcome: StuckRecoveryOutcome): Promise<void> {
     if (!outcome.inserted) return;
     await this.dispatchAtomic(outcome.retryNodeId);
-  }
-
-  /**
-   * Apply the stuck-coord detector to a single workflow. Public
-   * sibling of {@link checkStuckAndRecoverInTx} for the admin
-   * `recover-stuck` CLI path; opens its own tx and post-commit
-   * dispatches the retry coord (if one was inserted).
-   *
-   * Idempotent: a non-stuck workflow returns `inserted: false`
-   * without any write.
-   */
-  async recoverStuck(workflowId: string): Promise<RecoverStuckResult> {
-    assertValidWorkflowId(workflowId);
-    const nowIso = this.now().toISOString();
-    const holder: { value: StuckRecoveryOutcome } = { value: { inserted: false } };
-    this.db.transaction((tx) => {
-      holder.value = this.checkStuckAndRecoverInTx(tx, workflowId, nowIso);
-    });
-    const outcome = holder.value;
-    if (outcome.inserted) {
-      await this.dispatchAtomic(outcome.retryNodeId);
-      this.nudgeEngine(workflowId);
-      return {
-        workflowId,
-        inserted: true,
-        retryNodeId: outcome.retryNodeId,
-        reason: outcome.reason,
-        attempt: outcome.attempt,
-      };
-    }
-    return { workflowId, inserted: false };
-  }
-
-  /**
-   * Apply the stuck-coord detector to every currently-running
-   * workflow. Returns one {@link RecoverStuckResult} per scanned
-   * workflow, including the no-op results so callers can confirm the
-   * sweep ran. The list is bounded by the workflow table size, which
-   * is small in practice.
-   */
-  async recoverStuckAll(): Promise<readonly RecoverStuckResult[]> {
-    const running = await this.repo.listWorkflows();
-    const results: RecoverStuckResult[] = [];
-    for (const wf of running) {
-      if (wf.status !== "running") continue;
-      results.push(await this.recoverStuck(wf.id));
-    }
-    return results;
   }
 
   /**

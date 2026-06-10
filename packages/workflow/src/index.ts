@@ -112,7 +112,6 @@ export {
   type CreateWorkflowArgs,
   type CreateWorkflowResult,
   type FinishWorkflowArgs,
-  type RecoverStuckResult,
   type RemoveEdgeArgs,
   type RemoveNodeArgs,
   type ReplaceNodeSpecArgs,

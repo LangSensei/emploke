@@ -26,7 +26,6 @@ import {
   workflowFinish,
   workflowList,
   workflowNodeShow,
-  workflowRecoverStuck,
   workflowRemoveEdge,
   workflowRemoveNode,
   workflowReplaceSpec,
@@ -326,21 +325,6 @@ export function registerWorkflowCommands(program: Command, slot: Slot): void {
         outcome: pickString(opts, "outcome") ?? "",
         ...optionalString(opts, "summary"),
         ...optionalString(opts, "message"),
-      });
-    });
-
-  withWorkspaceFlags(workflowCmd.command("recover-stuck"))
-    .description(
-      "Admin: insert a retry coord for a stuck workflow (--wfid <id>) or sweep all running (--all)",
-    )
-    .option("--wfid <id>", "Recover a single workflow if it's stuck")
-    .option("--all", "Sweep all running workflows; recover any that are stuck")
-    .action(async (opts: Record<string, unknown>) => {
-      const all = opts.all === true;
-      slot.result = await workflowRecoverStuck({
-        ...parseWorkspaceFlags(opts),
-        ...optionalString(opts, "wfid"),
-        ...(all ? { all: true } : {}),
       });
     });
 }

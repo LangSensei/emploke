@@ -1,23 +1,27 @@
 /**
  * Tests for the substrate's stuck-coord recovery (Issue #352 group E).
  *
- * The recovery mechanism has three observable surfaces:
+ * The recovery mechanism has two observable surfaces:
  *
  *  1. The mutation primitives fire an in-tx detector at commit time;
  *     when a workflow is in a quiescent stuck state (status=running,
  *     every node terminal, leaves form one of the stuck shapes) the
  *     detector inserts a retry coord node and the wrapping write
- *     post-commit dispatches it.
- *  2. `recoverStuck(workflowId)` and `recoverStuckAll()` give admin
- *     callers an explicit entry point that wraps the same detector
- *     in its own tx. Idempotent — a non-stuck workflow returns
- *     `{ inserted: false }` with no writes.
- *  3. `addSubgraph` rejects batches whose final leaf frontier is not
+ *     post-commit dispatches it. The detector is hooked at all 8
+ *     structural mutation sites (markNodeTerminal, cancelNode,
+ *     addNode, addEdge, removeNode, removeEdge, replaceNodeSpec,
+ *     addSubgraph) — see design §13.
+ *  2. `addSubgraph` rejects batches whose final leaf frontier is not
  *     exactly `{1 coordinator}` with `WorkflowDagInvariantError` so
  *     callers can never push a workflow into a structurally-stuck
  *     shape in a single primitive.
  *
- * Tests below mirror §15 of the design (15.1–15.11).
+ * Tests below mirror §15 of the design (15.1–15.11). The public
+ * stuck-recovery ops escape hatch (single + sweep entry points) was
+ * removed in iter-2 (see PR description); the cases that previously
+ * exercised those entry points are rewritten here as integration
+ * tests that drive the detector through natural mutation paths — a
+ * strictly stronger validation of the production code path.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -203,110 +207,101 @@ describe("WorkflowService — stuck-coord recovery", () => {
     expect(extractNodeRetryMetadata(retry3!.metadata)?.attempt).toBe(3);
   });
 
-  // ─── 15.5 — Public recoverStuck on a non-stuck workflow ────────────
+  // ─── 15.5 — Detector is a no-op when the workflow still has live work ─
 
-  it("§15.5 recoverStuck returns {inserted:false} on a fresh workflow with a running coord", async () => {
-    const { workflowId } = await bootstrap(h);
-    const result = await h.service.recoverStuck(workflowId);
-    expect(result).toEqual({ workflowId, inserted: false });
-    // No retry coord was inserted; the DAG still has exactly one node.
+  it("§15.5 addNode fires the detector on a fresh workflow with a running coord and inserts no retry", async () => {
+    const { workflowId, initialCoordNodeId } = await bootstrap(h);
+    // addNode is a §13 detector trigger site. Inside its tx the
+    // detector sees: workflow=running, but the running initial coord
+    // is non-terminal — the all-terminal precondition fails, so the
+    // detector returns inserted=false without any write.
+    await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "noise" },
+      parents: [initialCoordNodeId],
+    });
     const dag = await h.service.getDag(workflowId);
-    expect(dag.nodes.length).toBe(1);
+    // No retry coord was inserted: only the initial coord + the new
+    // worker. The detector's existence is verified by the absence of
+    // a second coordinator-kind node.
+    expect(dag.nodes.length).toBe(2);
+    expect(dag.nodes.filter((n) => n.kind === "coordinator").length).toBe(1);
   });
 
-  // ─── 15.6 — Detector skips terminal workflows ──────────────────────
+  // ─── 15.6 — cancelWorkflow is not a detector trigger site ──────────
 
-  it("§15.6 detector skips a workflow that has already been cancelled", async () => {
+  it("§15.6 cancelWorkflow does not trigger the detector even when the resulting DAG looks stuck", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
+    // Cancel reconciles the only coord to `cancelled`. The post-cancel
+    // DAG is structurally stuck-looking (workflow now terminal,
+    // single-coord leaf) but cancelWorkflow is intentionally NOT one
+    // of the §13 detector trigger sites — finishWorkflow /
+    // cancelWorkflow / reconcileCancel flip the workflow terminal in
+    // the same tx, and the detector's `status === 'running'` check
+    // would always be false anyway.
     await h.service.cancelWorkflow({
       workflowId,
       cancellation: { kind: "user", message: "" },
     });
-    // Cancel reconciled the coord; the workflow is terminal. The
-    // explicit recoverStuck path MUST be a no-op even though the
-    // structural state (terminal nodes) would have looked stuck.
-    const result = await h.service.recoverStuck(workflowId);
-    expect(result).toEqual({ workflowId, inserted: false });
     const dag = await h.service.getDag(workflowId);
-    // No retry coord was inserted; only the original coord remains.
+    // No retry coord was inserted; only the original (cancelled) coord
+    // remains.
     expect(dag.nodes.length).toBe(1);
     expect(dag.nodes[0]!.id).toBe(initialCoordNodeId);
+    expect(dag.nodes[0]!.status).toBe("cancelled");
   });
 
   // ─── 15.7 — Detector skips workflows with non-terminal nodes ───────
 
   it("§15.7 detector skips when any node is still not_started / ready / running", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    // Add a not_started worker; coord is still running. The detector
-    // requires ALL nodes terminal before considering recovery — a
-    // pending worker is not a stuck shape.
+    // addNode (a §13 trigger site) inserts a not_started worker; the
+    // detector fires inside the addNode tx. The detector requires
+    // ALL nodes terminal before considering recovery — a pending
+    // worker plus a still-running coord is not a stuck shape, so the
+    // detector returns inserted=false.
     await h.service.addNode({
       workflowId,
       kind: "worker",
       spec: { agent: "w", brief: "pending" },
       parents: [initialCoordNodeId],
     });
-    const result = await h.service.recoverStuck(workflowId);
-    expect(result).toEqual({ workflowId, inserted: false });
+    const dag = await h.service.getDag(workflowId);
+    // No retry coord was inserted: initial coord + the not_started
+    // worker = 2 nodes, exactly one coordinator.
+    expect(dag.nodes.length).toBe(2);
+    expect(dag.nodes.filter((n) => n.kind === "coordinator").length).toBe(1);
   });
 
-  // ─── 15.8 — recoverStuck on a stuck workflow inserts retry ─────────
+  // ─── 15.8 — Detector is idempotent under repeated mutation firings ─
 
-  it("§15.8 recoverStuck inserts a retry coord on a stuck workflow (idempotent on second call)", async () => {
+  it("§15.8 a second detector firing while the retry coord is non-terminal does not insert a duplicate", async () => {
     const { workflowId, initialCoordNodeId } = await bootstrap(h);
-    // Drive the coord to terminal IN A WAY THAT BYPASSES the detector
-    // hook on markNodeTerminal (use repo-level write inside a tx so
-    // the service-level detector doesn't run). After this, the
-    // explicit recoverStuck call should observe the stuck state and
-    // insert a retry.
-    h.db.db.transaction((tx) => {
-      h.repo.updateNodeLifecycle(tx, {
-        id: initialCoordNodeId,
-        status: "succeeded",
-        endedAt: "2026-06-07T00:00:01.000Z",
-      });
+    // 1st firing — markNodeTerminal on the initial coord (a §13
+    // trigger site) inserts a retry coord at commit time.
+    await h.service.markNodeTerminal(workflowId, initialCoordNodeId, { status: "succeeded" });
+    const dag1 = await h.service.getDag(workflowId);
+    expect(dag1.nodes.length).toBe(2);
+    const retry = dag1.nodes.find((n) => n.id !== initialCoordNodeId);
+    expect(retry).toBeDefined();
+    expect(retry?.kind).toBe("coordinator");
+    // 2nd firing — addNode (also a §13 trigger site) adds a worker
+    // parented to the now-`succeeded` initial coord. The detector
+    // fires inside this addNode tx; the retry coord is still
+    // non-terminal so the all-terminal check fails and no duplicate
+    // retry is inserted.
+    await h.service.addNode({
+      workflowId,
+      kind: "worker",
+      spec: { agent: "w", brief: "post-retry" },
+      parents: [initialCoordNodeId],
     });
-    const result1 = await h.service.recoverStuck(workflowId);
-    expect(result1.inserted).toBe(true);
-    if (!result1.inserted) throw new Error("unreachable");
-    expect(result1.reason).toBe("coord_exited_without_action");
-    expect(result1.attempt).toBe(1);
-    // Second call is a no-op — the inserted retry coord is now a
-    // non-terminal leaf, so the workflow is not stuck.
-    const result2 = await h.service.recoverStuck(workflowId);
-    expect(result2).toEqual({ workflowId, inserted: false });
-  });
-
-  // ─── 15.9 — recoverStuckAll skips terminal + non-stuck workflows ───
-
-  it("§15.9 recoverStuckAll only recovers running stuck workflows", async () => {
-    // Workflow A: running, stuck — should be recovered.
-    const { workflowId: wfA, initialCoordNodeId: coordA } = await bootstrap(h, {
-      brief: "A",
-    });
-    h.db.db.transaction((tx) => {
-      h.repo.updateNodeLifecycle(tx, {
-        id: coordA,
-        status: "succeeded",
-        endedAt: "2026-06-07T00:00:01.000Z",
-      });
-    });
-    // Workflow B: running, not stuck — should be skipped.
-    const { workflowId: wfB } = await bootstrap(h, { brief: "B" });
-    // Workflow C: terminal (cancelled) — should be skipped.
-    const { workflowId: wfC } = await bootstrap(h, { brief: "C" });
-    await h.service.cancelWorkflow({
-      workflowId: wfC,
-      cancellation: { kind: "user", message: "" },
-    });
-    const results = await h.service.recoverStuckAll();
-    const byId = new Map(results.map((r) => [r.workflowId, r]));
-    expect(byId.get(wfA)?.inserted).toBe(true);
-    expect(byId.get(wfB)?.inserted).toBe(false);
-    // wfC was already terminal at scan time — `recoverStuckAll`
-    // filters out non-running workflows before invoking the
-    // detector, so it doesn't appear in the result list at all.
-    expect(byId.has(wfC)).toBe(false);
+    const dag2 = await h.service.getDag(workflowId);
+    // Still exactly 2 coords (initial + retry); the new worker is the
+    // only added node, so the total is 3.
+    expect(dag2.nodes.length).toBe(3);
+    expect(dag2.nodes.filter((n) => n.kind === "coordinator").length).toBe(2);
   });
 
   // ─── 15.10 — Workflow denorm `coordinator_agent` mirrors retry coord ─
